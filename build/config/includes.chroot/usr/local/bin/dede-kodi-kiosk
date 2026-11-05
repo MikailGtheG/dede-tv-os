@@ -1,0 +1,7 @@
+#!/bin/sh
+# Dede TV OS alpha: run Kodi as the dedicated unprivileged TV user.
+set -eu
+export HOME=/home/dede
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export XDG_SESSION_TYPE=x11
+exec /usr/bin/xinit /usr/bin/kodi --standalone -- /usr/bin/Xorg :0 -nolisten tcp -noreset vt1
