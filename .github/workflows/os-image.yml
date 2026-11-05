@@ -263,7 +263,7 @@ jobs:
                           magic = fh.readline()
                           dimensions = fh.readline().split()
                           maxval = fh.readline()
-                          if magic != b"P6\\n" or len(dimensions) != 2 or maxval.strip() != b"255":
+                          if magic != b"P6\n" or len(dimensions) != 2 or maxval.strip() != b"255":
                               raise ValueError("incomplete PPM header")
                           width, height = map(int, dimensions)
                           if not (0 < width <= 8192 and 0 < height <= 8192):
