@@ -6,6 +6,8 @@ Description=Dede TV restore last watched channel
 After=kodi.service network-online.target
 Wants=network-online.target
 ConditionPathExists=/var/lib/dede-tv/core.sqlite
+StartLimitIntervalSec=60s
+StartLimitBurst=10
 
 [Service]
 Type=oneshot
@@ -14,8 +16,6 @@ Group=dede
 ExecStart=/usr/local/bin/dede-tv-core --db /var/lib/dede-tv/core.sqlite resume-last /srv/dede-tv/media
 Restart=on-failure
 RestartSec=3s
-StartLimitIntervalSec=60s
-StartLimitBurst=10
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
