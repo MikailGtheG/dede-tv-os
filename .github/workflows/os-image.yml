@@ -252,12 +252,20 @@ jobs:
                   except TimeoutError:
                       pass
               from pathlib import Path
+              # QEMU's HMP screendump is asynchronous relative to the socket
+              # write. Poll for completion instead of racing the file creation.
+              import time
               capture = Path(screenshot)
-              if not capture.is_file() or capture.stat().st_size < 64:
-                  raise OSError("QEMU did not write a usable screenshot")
-              with capture.open("rb") as fh:
-                  if fh.read(2) != b"P6":
-                      raise OSError("QEMU screenshot is not binary PPM")
+              deadline = time.monotonic() + 10
+              while time.monotonic() < deadline:
+                  if capture.is_file() and capture.stat().st_size >= 64:
+                      with capture.open("rb") as fh:
+                          header = fh.read(2)
+                      if header == b"P6":
+                          break
+                  time.sleep(0.2)
+              else:
+                  raise OSError("QEMU did not write a usable binary PPM within 10s")
               print("Verified post-boot VGA capture:", screenshot, capture.stat().st_size, "bytes")
           except OSError as exc:
               print("Post-boot VGA capture unavailable:", exc)
