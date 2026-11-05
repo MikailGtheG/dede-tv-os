@@ -22,6 +22,97 @@ jobs:
           grep -qx 'kodi-pvr-iptvsimple' build/config/package-lists/dede-base.list.chroot
           grep -qx 'linux-image-amd64' build/config/package-lists/dede-base.list.chroot
           ! grep -Eq '^(gnome|kde-plasma-desktop|task-desktop)\$' build/config/package-lists/dede-base.list.chroot
+      - name: Validate Kodi kiosk service and boot hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          kiosk=build/config/includes.chroot/usr/local/bin/dede-kodi-kiosk
+          hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
+          unit=build/config/includes.chroot/etc/systemd/system/dede-kodi.service
+          sh -n "$kiosk" "$hook"
+          test -s "$unit"
+          grep -q '^User=dede
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
+            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv' \
+            | tee /tmp/dede-iso-runs.txt
+          {
+            echo "## Recent ISO/QEMU workflow runs"
+            echo '```'
+            cat /tmp/dede-iso-runs.txt
+            echo '```'
+            echo "These are workflow results; OS boot and playback must be verified separately."
+          } >> "$GITHUB_STEP_SUMMARY"
+ "$unit"
+          grep -q '^NoNewPrivileges=true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
+            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv' \
+            | tee /tmp/dede-iso-runs.txt
+          {
+            echo "## Recent ISO/QEMU workflow runs"
+            echo '```'
+            cat /tmp/dede-iso-runs.txt
+            echo '```'
+            echo "These are workflow results; OS boot and playback must be verified separately."
+          } >> "$GITHUB_STEP_SUMMARY"
+ "$unit"
+          grep -q '^ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
+            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv' \
+            | tee /tmp/dede-iso-runs.txt
+          {
+            echo "## Recent ISO/QEMU workflow runs"
+            echo '```'
+            cat /tmp/dede-iso-runs.txt
+            echo '```'
+            echo "These are workflow results; OS boot and playback must be verified separately."
+          } >> "$GITHUB_STEP_SUMMARY"
+ "$unit"
+          grep -q '^WantedBy=multi-user.target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
+            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv' \
+            | tee /tmp/dede-iso-runs.txt
+          {
+            echo "## Recent ISO/QEMU workflow runs"
+            echo '```'
+            cat /tmp/dede-iso-runs.txt
+            echo '```'
+            echo "These are workflow results; OS boot and playback must be verified separately."
+          } >> "$GITHUB_STEP_SUMMARY"
+ "$unit"
+          grep -q 'xinit.*kodi' "$kiosk"
+          grep -q 'nolisten tcp' "$kiosk"
+          grep -q '^ln -sfn ../dede-kodi.service' "$hook"
+          # These rate limits are Unit directives, not Service directives.
+          python3 - <<'PY'
+          from pathlib import Path
+          content = Path("build/config/includes.chroot/etc/systemd/system/dede-kodi.service").read_text()
+          unit = content.split("[Service]", 1)[0]
+          service = content.split("[Service]", 1)[1].split("[Install]", 1)[0]
+          for directive in ("StartLimitIntervalSec=", "StartLimitBurst="):
+              assert directive in unit, directive + " missing from Unit"
+              assert directive not in service, directive + " incorrectly in Service"
+          assert "XDG_RUNTIME_DIR=/run/user/1000" not in content
+          PY
       - name: Report latest trusted-branch ISO and QEMU results
         env:
           GH_TOKEN: ${{ github.token }}
