@@ -18,7 +18,12 @@ jobs:
           kiosk=build/config/includes.chroot/usr/local/bin/dede-kodi-kiosk
           hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
           unit=build/config/includes.chroot/etc/systemd/system/dede-kodi.service
-          sh -n "$kiosk" "$hook"
+          probe=build/config/includes.chroot/usr/local/bin/dede-kiosk-probe
+          probe_unit=build/config/includes.chroot/etc/systemd/system/dede-kiosk-probe.service
+          probe_timer=build/config/includes.chroot/etc/systemd/system/dede-kiosk-probe.timer
+          sh -n "$kiosk" "$hook" "$probe"
+          test -s "$probe_unit" && test -s "$probe_timer"
+          grep -q "DEDE_KIOSK_PROBE_BEGIN" "$probe"
           test -s "$unit"
           test -s build/config/package-lists/dede-base.list.chroot
           grep -q -- '--distribution trixie' build/auto/config
@@ -36,7 +41,7 @@ jobs:
           ! grep -q -- '--uid 1000' "$hook"
           grep -q 'nolisten tcp' "$kiosk"
           grep -q 'Kodi runtime directory is unavailable' "$kiosk"
-          systemd-analyze verify "$unit"
+          systemd-analyze verify "$unit" "$probe_unit" "$probe_timer"
       - name: Validate image workflow structure and audit
         shell: bash
         run: |
