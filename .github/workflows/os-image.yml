@@ -71,6 +71,22 @@ jobs:
                 grep -Ei 'connected|disconnected|screen 0|virtual size|modeset|fbdev|\\(EE\\)' "$log" | tail -25 || true
               fi
             done
+            # A running Xorg process does not mean its display is visible
+            # through QEMU's emulated VGA. Record the actual X screen and
+            # connector state, without modifying the production kiosk.
+            if command -v xrandr >/dev/null 2>&1; then
+              echo 'DEDE_CI_DIAG: X display probe'
+              if command -v runuser >/dev/null 2>&1; then
+                timeout 8s runuser -u dede -- env DISPLAY=:0 XAUTHORITY=/home/dede/.Xauthority xrandr --query 2>&1 | head -45 || true
+              fi
+            fi
+            echo 'DEDE_CI_DIAG: kernel graphics devices'
+            ls -l /dev/dri /dev/fb0 2>&1 | head -20 || true
+            echo 'DEDE_CI_DIAG: Xorg command line'
+            for pid in $(pgrep -x Xorg || true); do
+              tr '\\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
+              echo
+            done
             echo 'DEDE_CI_DIAG: end'
           } > /run/dede-ci-diagnostics.log 2>&1 || true
           # Keep the report even if the VM has no serial port; QEMU CI
