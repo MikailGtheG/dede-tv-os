@@ -67,7 +67,7 @@ jobs:
 
           status = Path("installed-dpkg-status").read_text()
           packages = []
-          for block in status.split("\\n\\n"):
+          for block in status.split("\n\n"):
               name = re.search(r"(?m)^Package: (.+)$", block)
               installed = re.search(r"(?m)^Status: install ok installed$", block)
               if name and installed:
@@ -75,7 +75,7 @@ jobs:
           packages.sort()
           if not packages:
               raise SystemExit("No installed Debian packages found in SquashFS")
-          Path("installed-packages.txt").write_text("\\n".join(packages) + "\\n")
+          Path("installed-packages.txt").write_text("\n".join(packages) + "\n")
           print(f"Installed packages: {len(packages)}")
           for prefix in ("apache2", "mysql-server", "postgresql", "openssh-server"):
               matches = [p for p in packages if p == prefix or p.startswith(prefix + "-")]
