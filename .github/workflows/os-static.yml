@@ -54,6 +54,22 @@ jobs:
           assert "XDG_RUNTIME_DIR=/run/user/1000" not in content
           PY
           systemd-analyze verify "$unit"
+      - name: Validate ISO package-audit shell wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/os-image.yml
+          # The image audit must extract dpkg/status before the Python parser reads it.
+          grep -Fq 'var/lib/dpkg/status > installed-dpkg-status' "$workflow"
+          grep -Fq 'test -s installed-dpkg-status' "$workflow"
+          grep -Fq "grep -Fq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'" "$workflow"
+          python3 - "$workflow" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          assert text.count("          python3 - <<'PY'") >= 1
+          assert "installed-dpkg-status" in text
+          PY
       - name: Report latest trusted-branch ISO and QEMU results
         env:
           GH_TOKEN: ${{ github.token }}
