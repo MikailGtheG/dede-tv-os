@@ -36,6 +36,7 @@ jobs:
           sh build-image.sh
           test -s live-image-amd64.hybrid.iso
           sha256sum live-image-amd64.hybrid.iso > SHA256SUMS
+          test -s build.log
       - name: Verify ISO integrity and boot metadata
         shell: bash
         run: |
@@ -44,6 +45,11 @@ jobs:
           sha256sum --check --strict SHA256SUMS
           # ISO9660 volume descriptor begins at sector 16 (2048-byte sectors).
           test "$(dd if=live-image-amd64.hybrid.iso bs=1 skip=32769 count=5 status=none)" = CD001
+          # Require a real Linux root filesystem inside the ISO.
+          xorriso -osirrox on -indev live-image-amd64.hybrid.iso \\
+            -extract /live/filesystem.squashfs /tmp/dede-filesystem.squashfs
+          test -s /tmp/dede-filesystem.squashfs
+          unsquashfs -s /tmp/dede-filesystem.squashfs | grep -q "Filesystem size"
           # Require El Torito boot metadata rather than treating any ISO as bootable.
           xorriso -indev live-image-amd64.hybrid.iso -report_el_torito plain > iso-boot-report.txt
           # xorriso reports boot entries with platform-specific wording across versions.
@@ -52,6 +58,9 @@ jobs:
           xorriso -indev live-image-amd64.hybrid.iso -report_el_torito as_mkisofs > iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-c[[:space:]]' iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-b[[:space:]]|(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
+          # Both firmware modes are mandatory for the target hardware profile.
+          grep -Eq -- '(^|[[:space:]])-b[[:space:]]' iso-boot-options.txt
+          grep -Eq -- '(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
       - name: Boot smoke test (BIOS and UEFI)
         shell: bash
         run: |
