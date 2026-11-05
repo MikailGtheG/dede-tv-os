@@ -61,6 +61,7 @@ jobs:
           # Both firmware modes are mandatory for the target hardware profile.
           grep -Eq -- '(^|[[:space:]])-b[[:space:]]' iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
+          echo "ISO integrity, SquashFS and BIOS/UEFI El Torito entries verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Boot smoke test (BIOS and UEFI)
         shell: bash
         run: |
@@ -99,6 +100,15 @@ jobs:
               exit 1
             fi
           done
+          {
+            echo "## QEMU boot smoke test"
+            echo "| Firmware | Result |"
+            echo "| --- | --- |"
+            echo "| BIOS | Boot target/login observed |"
+            echo "| UEFI | Boot target/login observed |"
+            echo ""
+            echo "This confirms a boot smoke test, not Kodi playback or hardware readiness."
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload QEMU boot logs
         if: always()
         uses: actions/upload-artifact@v4
