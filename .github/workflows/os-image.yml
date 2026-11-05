@@ -227,6 +227,14 @@ jobs:
               tail -100 "boot-logs/$mode.log"
               exit 1
             fi
+            # The CI-only guest diagnostic must actually execute and reach
+            # QEMU's serial log for both firmware modes.
+            if ! grep -Fq 'DEDE_CI_DIAG: end' "boot-logs/$mode.log"; then
+              echo "Missing guest Kodi/Xorg diagnostics for $mode" >&2
+              tail -80 "boot-logs/$mode.log"
+              exit 1
+            fi
+            grep -F 'DEDE_CI_DIAG:' "boot-logs/$mode.log" || true
             # A timeout alone is NOT evidence of a successful boot.
             if ! grep -Eqi 'Reached target (Multi-User System|Graphical Interface)|login:' "boot-logs/$mode.log"; then
               echo "No login prompt or systemd boot target observed in $mode" >&2
