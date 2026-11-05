@@ -109,7 +109,10 @@ jobs:
               print("VGA diagnostic capture requested:", screenshot)
               # Debian live-build can wait indefinitely at the boot menu.
               # Confirm the highlighted default entry before checking systemd.
-              sock.sendall(b"sendkey ret\\n")
+              with socket.socket(socket.AF_UNIX) as control:
+                  control.settimeout(5)
+                  control.connect(monitor)
+                  control.sendall(b"sendkey ret\n")
               print("Sent ENTER to boot the default live system")
           except OSError as exc:
               print("VGA capture unavailable:", exc)
