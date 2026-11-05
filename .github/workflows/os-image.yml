@@ -36,6 +36,16 @@ jobs:
           sh build-image.sh
           test -s live-image-amd64.hybrid.iso
           sha256sum live-image-amd64.hybrid.iso > SHA256SUMS
+      - name: Upload build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dede-tv-iso-build-diagnostics
+          path: |
+            build/build.log
+            build/chroot/debootstrap/debootstrap.log
+          retention-days: 3
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: dede-tv-debian13-prototype-iso
