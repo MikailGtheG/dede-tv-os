@@ -77,15 +77,40 @@ jobs:
               test -n "$ovmf"
               firmware=(-bios "$ovmf")
             fi
+            # Keep a VGA snapshot for diagnosing silent bootloaders: serial-only
+            # logs cannot distinguish a GRUB menu from a kernel boot failure.
+            monitor="$PWD/boot-logs/$mode.monitor.sock"
             set +e
             timeout --signal=TERM --kill-after=5s 150s \
               qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
-              -display none -monitor none -serial stdio \
+              -display none -vga std \
+              -monitor "unix:$monitor,server=on,wait=off" -serial stdio \
               -no-reboot -boot d \
               -device ich9-ahci,id=ahci \
               -drive if=none,id=cdrom,media=cdrom,readonly=on,format=raw,file="$iso" \
               -device ide-cd,drive=cdrom,bus=ahci.0 \
-              "${firmware[@]}" > "boot-logs/$mode.log" 2>&1
+              "${firmware[@]}" > "boot-logs/$mode.log" 2>&1 &
+            qemu_pid=$!
+            sleep 25
+            python3 - "$monitor" "$PWD/boot-logs/$mode.ppm" <<'PY'
+          import socket
+          import sys
+
+          monitor, screenshot = sys.argv[1:]
+          try:
+              with socket.socket(socket.AF_UNIX) as sock:
+                  sock.settimeout(5)
+                  sock.connect(monitor)
+                  sock.sendall(("screendump " + screenshot + "\\n").encode())
+                  try:
+                      sock.recv(4096)
+                  except TimeoutError:
+                      pass
+              print("VGA diagnostic capture requested:", screenshot)
+          except OSError as exc:
+              print("VGA capture unavailable:", exc)
+          PY
+            wait "$qemu_pid"
             status=$?
             set -e
             if [ "$status" -ne 124 ] && [ "$status" -ne 0 ]; then
