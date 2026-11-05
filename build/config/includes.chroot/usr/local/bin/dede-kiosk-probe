@@ -8,11 +8,16 @@ systemctl show dede-kodi.service \
   --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,NRestarts \
   --no-pager || :
 for process in Xorg kodi.bin kodi-x11; do
-  if pgrep -x "$process" >/dev/null 2>&1; then
-    printf 'PROCESS_%s=running\n' "$process"
-  else
-    printf 'PROCESS_%s=missing\n' "$process"
-  fi
+  found=no
+  for comm in /proc/[0-9]*/comm; do
+    [ -r "$comm" ] || continue
+    IFS= read -r name < "$comm" || :
+    if [ "$name" = "$process" ]; then
+      found=yes
+      break
+    fi
+  done
+  printf 'PROCESS_%s=%s\n' "$process" "$found"
 done
 if [ -s /home/dede/.kodi/temp/kodi.log ]; then
   echo 'KODI_LOG=present'
