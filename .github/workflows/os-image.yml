@@ -72,7 +72,14 @@ jobs:
               fi
             done
             echo 'DEDE_CI_DIAG: end'
-          } > /dev/ttyS0 2>/dev/null || true
+          } > /run/dede-ci-diagnostics.log 2>&1 || true
+          # Keep the report even if the VM has no serial port; QEMU CI
+          # normally attaches ttyS0 and captures this output.
+          if [ -c /dev/ttyS0 ] && [ -w /dev/ttyS0 ]; then
+            cat /run/dede-ci-diagnostics.log > /dev/ttyS0 || true
+          else
+            cat /run/dede-ci-diagnostics.log
+          fi
           SH
           cat > config/includes.chroot/etc/systemd/system/dede-ci-diagnostics.service <<'UNIT'
           [Unit]
