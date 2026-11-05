@@ -73,8 +73,23 @@ jobs:
             echo "Testing $mode boot"
             firmware=()
             if [ "$mode" = uefi ]; then
-              ovmf="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE*.fd' | head -n 1)"
-              test -n "$ovmf"
+              # Prefer the standard, non-secure-boot OVMF code image.
+              # Debian may ship strict-NX / Secure Boot variants which are
+              # unsuitable for QEMU's legacy -bios loader.
+              ovmf=""
+              for candidate in \
+                /usr/share/OVMF/OVMF_CODE_4M.fd \
+                /usr/share/OVMF/OVMF_CODE.fd; do
+                if [ -r "$candidate" ]; then
+                  ovmf="$candidate"
+                  break
+                fi
+              done
+              if [ -z "$ovmf" ]; then
+                echo "No supported OVMF firmware image found" >&2
+                ls -l /usr/share/OVMF >&2
+                exit 1
+              fi
               firmware=(-bios "$ovmf")
             fi
             # Keep a VGA snapshot for diagnosing silent bootloaders: serial-only
