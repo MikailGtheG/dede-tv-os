@@ -204,12 +204,12 @@ jobs:
 
   report-failure:
     needs: image
-    if: ${{ always() }}
+    if: ${{ always() && needs.image.result == 'failure' }}
     runs-on: ubuntu-24.04
     permissions:
       issues: write
     steps:
-      - name: Publish ISO run ID and result for diagnosis
+      - name: Publish failed ISO run ID and result for diagnosis
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
