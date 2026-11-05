@@ -13,6 +13,8 @@ serial_wants=config/includes.chroot/etc/systemd/system/getty.target.wants
 mkdir -p "$serial_wants"
 ln -sfn /lib/systemd/system/serial-getty@.service \
   "$serial_wants/serial-getty@ttyS0.service"
+# GitHub Contents API creates hook files without executable mode.
+chmod 0755 config/hooks/live/*.hook.chroot
 sh auto/config
 # Preserve lb build's exit code while capturing diagnostics for CI.
 # Bash pipefail is required because POSIX sh pipelines return tee's status.
