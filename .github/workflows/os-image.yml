@@ -233,7 +233,9 @@ jobs:
             }
           done
           unsquashfs -cat "$squashfs" etc/passwd | grep -q '^dede:'
-          unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -q '^ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk
+          unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -Fq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'
+          unsquashfs -cat "$squashfs" var/lib/dpkg/status > installed-dpkg-status
+          test -s installed-dpkg-status
           python3 - <<'PY'
           from pathlib import Path
           import re
