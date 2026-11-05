@@ -79,8 +79,11 @@ jobs:
             set +e
             timeout --signal=TERM --kill-after=5s 150s \
               qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
-              -nodefaults -display none -monitor none -serial stdio \
-              -no-reboot -cdrom "$iso" -boot d \
+              -display none -monitor none -serial stdio \
+              -no-reboot -boot d \
+              -device ich9-ahci,id=ahci \
+              -drive if=none,id=cdrom,media=cdrom,readonly=on,format=raw,file="$iso" \
+              -device ide-cd,drive=cdrom,bus=ahci.0 \
               "${firmware[@]}" > "boot-logs/$mode.log" 2>&1
             status=$?
             set -e
