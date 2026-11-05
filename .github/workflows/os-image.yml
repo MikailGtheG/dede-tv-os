@@ -54,7 +54,7 @@ jobs:
             for log in /home/dede/.local/share/xorg/Xorg.0.log /var/log/Xorg.0.log; do
               if [ -f "$log" ]; then
                 echo "DEDE_CI_DIAG: found Xorg log at $log"
-                grep -E '^\\[[^]]+\\] \\(EE\\)' "$log" | tail -8 || true
+                grep -F '(EE)' "$log" | tail -8 || true
               fi
             done
             echo 'DEDE_CI_DIAG: end'
@@ -63,9 +63,9 @@ jobs:
           cat > config/includes.chroot/etc/systemd/system/dede-ci-diagnostics.service <<'UNIT'
           [Unit]
           Description=CI-only Kodi/Xorg boot diagnostics
-          After=multi-user.target dede-kodi.service
+          After=dede-kodi.service
           [Service]
-          Type=oneshot
+          Type=simple
           ExecStart=/bin/sh /usr/local/sbin/dede-ci-kiosk-diagnostics
           [Install]
           WantedBy=multi-user.target
