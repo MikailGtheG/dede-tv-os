@@ -179,20 +179,21 @@ jobs:
 
   report-failure:
     needs: image
-    if: ${{ always() && needs.image.result == 'failure' }}
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     permissions:
       issues: write
     steps:
-      - name: Publish failed ISO run for diagnosis
+      - name: Publish ISO run ID and result for diagnosis
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT: ${{ github.sha }}
+          RESULT: ${{ needs.image.result }}
         run: |
           set -euo pipefail
           gh issue create \
-            --title "Dede TV OS ISO/QEMU failure (run ${RUN_ID})" \
-            --body "Automated ISO/QEMU validation failed.\n\nRun ID: ${RUN_ID}\nRun: ${RUN_URL}\nCommit: ${COMMIT}\n\nInspect failed job logs and uploaded build diagnostics. This issue does not imply which boot mode failed."
+            --title "Dede TV OS ISO/QEMU ${RESULT} (run ${RUN_ID})" \
+            --body "ISO/QEMU workflow result: ${RESULT}\n\nRun ID: ${RUN_ID}\nRun: ${RUN_URL}\nCommit: ${COMMIT}\n\nA successful job result is only a smoke-test result, not full TV readiness."
