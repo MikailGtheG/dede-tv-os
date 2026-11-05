@@ -27,7 +27,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             live-build debootstrap xorriso squashfs-tools \
             grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common \
-            ca-certificates
+            ca-certificates python3 qemu-system-x86 ovmf
       - name: Build prototype live ISO
         shell: bash
         run: |
@@ -52,6 +52,49 @@ jobs:
           xorriso -indev live-image-amd64.hybrid.iso -report_el_torito as_mkisofs > iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-c[[:space:]]' iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-b[[:space:]]|(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
+      - name: Boot smoke test (BIOS and UEFI)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd build
+          iso="$PWD/live-image-amd64.hybrid.iso"
+          mkdir -p boot-logs
+          for mode in bios uefi; do
+            echo "Testing $mode boot"
+            firmware=()
+            if [ "$mode" = uefi ]; then
+              ovmf="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE*.fd' | head -n 1)"
+              test -n "$ovmf"
+              firmware=(-bios "$ovmf")
+            fi
+            set +e
+            timeout --signal=TERM --kill-after=5s 150s \
+              qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
+              -nodefaults -display none -monitor none -serial stdio \
+              -no-reboot -cdrom "$iso" -boot d \
+              "${firmware[@]}" > "boot-logs/$mode.log" 2>&1
+            status=$?
+            set -e
+            if [ "$status" -ne 124 ] && [ "$status" -ne 0 ]; then
+              echo "QEMU failed for $mode (exit $status)" >&2
+              tail -100 "boot-logs/$mode.log"
+              exit 1
+            fi
+            # A timeout alone is NOT evidence of a successful boot.
+            if ! grep -Eqi 'Reached target (Multi-User System|Graphical Interface)|login:' "boot-logs/$mode.log"; then
+              echo "No login prompt or systemd boot target observed in $mode" >&2
+              tail -100 "boot-logs/$mode.log"
+              exit 1
+            fi
+          done
+      - name: Upload QEMU boot logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dede-tv-qemu-boot-logs
+          path: build/boot-logs/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Audit installed packages and image footprint
         shell: bash
         run: |
