@@ -16,3 +16,6 @@ kodi-inputstream-adaptive
 mesa-va-drivers
 mesa-vulkan-drivers
 alsa-utils
+xserver-xorg-core
+xserver-xorg-video-fbdev
+xinit
