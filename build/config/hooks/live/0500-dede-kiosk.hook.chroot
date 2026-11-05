@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+# A fixed UID is used only by the early live ISO prototype.
+if ! id dede >/dev/null 2>&1; then
+  useradd --uid 1000 --create-home --shell /usr/sbin/nologin --groups video,audio,render,input dede
+fi
+chmod 0755 /usr/local/bin/dede-kodi-kiosk
+mkdir -p /etc/systemd/system/multi-user.target.wants
+ln -sfn ../dede-kodi.service /etc/systemd/system/multi-user.target.wants/dede-kodi.service
