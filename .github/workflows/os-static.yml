@@ -41,12 +41,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ruby -ryaml -rjson -e 'File.write("/tmp/dede-image-workflow.json", JSON.generate(YAML.load_file(".github/workflows/os-image.yml")))'
           python3 - <<'PY'
           from pathlib import Path
-          import yaml
+          import json
           p = Path(".github/workflows/os-image.yml")
           text = p.read_text()
-          document = yaml.safe_load(text)
+          document = json.loads(Path("/tmp/dede-image-workflow.json").read_text())
           jobs = document["jobs"]
           assert set(jobs) == {"image", "report-failure"}, set(jobs)
           assert "var/lib/dpkg/status > installed-dpkg-status" in text
