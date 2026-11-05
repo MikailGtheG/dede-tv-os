@@ -90,7 +90,27 @@ jobs:
                 ls -l /usr/share/OVMF >&2
                 exit 1
               fi
-              firmware=(-bios "$ovmf")
+              # 4 MiB OVMF is a pflash firmware image, not a legacy -bios ROM.
+              # Use a writable copy of the matching VARS template per VM.
+              vars=""
+              for candidate in \
+                /usr/share/OVMF/OVMF_VARS_4M.fd \
+                /usr/share/OVMF/OVMF_VARS.fd; do
+                if [ -r "$candidate" ]; then
+                  vars="$candidate"
+                  break
+                fi
+              done
+              if [ -z "$vars" ]; then
+                echo "No OVMF variables template found" >&2
+                ls -l /usr/share/OVMF >&2
+                exit 1
+              fi
+              cp "$vars" "boot-logs/uefi-vars.fd"
+              firmware=(
+                -drive "if=pflash,format=raw,unit=0,readonly=on,file=$ovmf"
+                -drive "if=pflash,format=raw,unit=1,file=$PWD/boot-logs/uefi-vars.fd"
+              )
             fi
             # Keep a VGA snapshot for diagnosing silent bootloaders: serial-only
             # logs cannot distinguish a GRUB menu from a kernel boot failure.
