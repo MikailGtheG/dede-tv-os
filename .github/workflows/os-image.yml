@@ -46,7 +46,7 @@ jobs:
           # ISO9660 volume descriptor begins at sector 16 (2048-byte sectors).
           test "$(dd if=live-image-amd64.hybrid.iso bs=1 skip=32769 count=5 status=none)" = CD001
           # Require a real Linux root filesystem inside the ISO.
-          xorriso -osirrox on -indev live-image-amd64.hybrid.iso \\
+          xorriso -osirrox on -indev live-image-amd64.hybrid.iso \
             -extract /live/filesystem.squashfs /tmp/dede-filesystem.squashfs
           test -s /tmp/dede-filesystem.squashfs
           unsquashfs -s /tmp/dede-filesystem.squashfs | grep -q "Filesystem size"
