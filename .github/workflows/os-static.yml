@@ -13,6 +13,7 @@ jobs:
         run: |
           bash -n build/auto/config
           bash -n build/auto/build
+          bash -n build/build-image.sh
       - name: Validate suite, package list and appliance invariants
         run: |
           test -s build/config/package-lists/dede-base.list.chroot
