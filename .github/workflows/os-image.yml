@@ -252,20 +252,30 @@ jobs:
                   except TimeoutError:
                       pass
               from pathlib import Path
-              # QEMU's HMP screendump is asynchronous relative to the socket
-              # write. Poll for completion instead of racing the file creation.
+              # HMP screendump is asynchronous. A P6 prefix alone does not
+              # prove the pixel payload is complete; wait for exact PPM size.
               import time
               capture = Path(screenshot)
               deadline = time.monotonic() + 10
               while time.monotonic() < deadline:
-                  if capture.is_file() and capture.stat().st_size >= 64:
+                  try:
                       with capture.open("rb") as fh:
-                          header = fh.read(2)
-                      if header == b"P6":
+                          magic = fh.readline()
+                          dimensions = fh.readline().split()
+                          maxval = fh.readline()
+                          if magic != b"P6\\n" or len(dimensions) != 2 or maxval.strip() != b"255":
+                              raise ValueError("incomplete PPM header")
+                          width, height = map(int, dimensions)
+                          if not (0 < width <= 8192 and 0 < height <= 8192):
+                              raise ValueError("invalid PPM dimensions")
+                          expected = fh.tell() + width * height * 3
+                      if capture.stat().st_size == expected:
                           break
+                  except (FileNotFoundError, ValueError, OSError):
+                      pass
                   time.sleep(0.2)
               else:
-                  raise OSError("QEMU did not write a usable binary PPM within 10s")
+                  raise OSError("QEMU did not finish writing a complete PPM within 10s")
               print("Verified post-boot VGA capture:", screenshot, capture.stat().st_size, "bytes")
           except OSError as exc:
               print("Post-boot VGA capture unavailable:", exc)
