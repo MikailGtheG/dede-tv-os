@@ -13,6 +13,9 @@ Group=dede
 SupplementaryGroups=video audio render input
 WorkingDirectory=/home/dede
 Environment=HOME=/home/dede
+Environment=XDG_RUNTIME_DIR=/run/dede-tv
+RuntimeDirectory=dede-tv
+RuntimeDirectoryMode=0700
 PAMName=login
 TTYPath=/dev/tty1
 StandardInput=tty
@@ -23,7 +26,7 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/home/dede /run/user
+ReadWritePaths=/home/dede /run/dede-tv
 ProtectHome=read-only
 PrivateTmp=true
 
