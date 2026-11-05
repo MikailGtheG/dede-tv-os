@@ -101,7 +101,7 @@ jobs:
               with socket.socket(socket.AF_UNIX) as sock:
                   sock.settimeout(5)
                   sock.connect(monitor)
-                  sock.sendall(("screendump " + screenshot + "\\n").encode())
+                  sock.sendall(("screendump " + screenshot + "\n").encode())
                   try:
                       sock.recv(4096)
                   except TimeoutError:
