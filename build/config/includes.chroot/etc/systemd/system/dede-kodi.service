@@ -1,0 +1,32 @@
+[Unit]
+Description=Dede TV Kodi kiosk (alpha)
+After=systemd-user-sessions.service systemd-logind.service
+Wants=systemd-logind.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+User=dede
+Group=dede
+SupplementaryGroups=video audio render input
+WorkingDirectory=/home/dede
+Environment=HOME=/home/dede
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/dede /run/user/1000
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
