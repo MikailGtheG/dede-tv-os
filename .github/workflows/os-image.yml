@@ -240,6 +240,22 @@ jobs:
                       f"{mode}: completely blank or near-black screen; "
                       "Linux boot alone does not prove Kodi kiosk rendering"
                   )
+              # A stock Kodi splash is not a TV picture. The current Debian
+              # package's splash has a cyan logo at 50% x / 55% y against a
+              # nearly black background at 10% x / 10% y. This is a targeted
+              # regression guard, not a general-purpose visual classifier.
+              def sample(fx, fy):
+                  offset = (int(height * fy) * width + int(width * fx)) * 3
+                  return tuple(pixels[offset:offset + 3])
+              logo = sample(0.50, 0.55)
+              background = sample(0.10, 0.10)
+              if (logo[2] > 140 and logo[1] > 100 and
+                      logo[2] > logo[0] * 1.7 and max(background) < 45):
+                  raise SystemExit(
+                      f"{mode}: stock Kodi splash still visible after boot "
+                      f"(logo={logo}, background={background}); "
+                      "TV playback has not been demonstrated"
+                  )
           PY
       - name: Audit installed packages and image footprint
         shell: bash
