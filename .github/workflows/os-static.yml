@@ -113,6 +113,9 @@ jobs:
               assert directive not in service, directive + " incorrectly in Service"
           assert "XDG_RUNTIME_DIR=/run/user/1000" not in content
           PY
+          # Let systemd validate the full unit syntax and directive placement.
+          # This catches misconfigured sections that grep checks cannot detect.
+          systemd-analyze verify "$unit"
       - name: Report latest trusted-branch ISO and QEMU results
         env:
           GH_TOKEN: ${{ github.token }}
