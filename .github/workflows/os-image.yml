@@ -33,6 +33,45 @@ jobs:
         run: |
           set -euo pipefail
           cd build
+          # CI-only diagnostics. These units are injected into the temporary
+          # builder workspace, never committed to the production OS image tree.
+          mkdir -p config/includes.chroot/etc/systemd/system/multi-user.target.wants
+          mkdir -p config/includes.chroot/usr/local/sbin
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-kiosk-diagnostics <<'SH'
+          #!/bin/sh
+          set -eu
+          sleep 55
+          {
+            echo 'DEDE_CI_DIAG: begin'
+            systemctl show dede-kodi.service -p ActiveState -p SubState -p ExecMainStatus -p NRestarts --no-pager
+            for name in Xorg xinit kodi kodi.bin; do
+              if pgrep -x "$name" >/dev/null 2>&1; then
+                echo "DEDE_CI_DIAG: $name running"
+              else
+                echo "DEDE_CI_DIAG: $name absent"
+              fi
+            done
+            for log in /home/dede/.local/share/xorg/Xorg.0.log /var/log/Xorg.0.log; do
+              if [ -f "$log" ]; then
+                echo "DEDE_CI_DIAG: found Xorg log at $log"
+                grep -E '^\\[[^]]+\\] \\(EE\\)' "$log" | tail -8 || true
+              fi
+            done
+            echo 'DEDE_CI_DIAG: end'
+          } > /dev/ttyS0 2>/dev/null || true
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-diagnostics.service <<'UNIT'
+          [Unit]
+          Description=CI-only Kodi/Xorg boot diagnostics
+          After=multi-user.target dede-kodi.service
+          [Service]
+          Type=oneshot
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-kiosk-diagnostics
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-diagnostics.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-diagnostics.service
           sh build-image.sh
           test -s live-image-amd64.hybrid.iso
           sha256sum live-image-amd64.hybrid.iso > SHA256SUMS
