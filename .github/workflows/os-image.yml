@@ -46,8 +46,12 @@ jobs:
           test "$(dd if=live-image-amd64.hybrid.iso bs=1 skip=32769 count=5 status=none)" = CD001
           # Require El Torito boot metadata rather than treating any ISO as bootable.
           xorriso -indev live-image-amd64.hybrid.iso -report_el_torito plain > iso-boot-report.txt
-          grep -q 'El Torito catalog' iso-boot-report.txt
-          grep -q 'El Torito boot img' iso-boot-report.txt
+          # xorriso reports boot entries with platform-specific wording across versions.
+          # Validate both a boot catalog and at least one boot image via its stable
+          # mkisofs-compatible report flags, not human-readable report phrases.
+          xorriso -indev live-image-amd64.hybrid.iso -report_el_torito as_mkisofs > iso-boot-options.txt
+          grep -Eq -- '(^|[[:space:]])-c[[:space:]]' iso-boot-options.txt
+          grep -Eq -- '(^|[[:space:]])-b[[:space:]]|(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
       - name: Upload build diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -56,6 +60,7 @@ jobs:
           path: |
             build/build.log
             build/iso-boot-report.txt
+            build/iso-boot-options.txt
             build/chroot/debootstrap/debootstrap.log
           retention-days: 3
           if-no-files-found: warn
