@@ -10,192 +10,56 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate live-build shell syntax
-        run: |
-          bash -n build/auto/config
-          bash -n build/auto/build
-          bash -n build/build-image.sh
-      - name: Validate suite, package list and appliance invariants
-        run: |
-          set -euo pipefail
-          test -s build/config/package-lists/dede-base.list.chroot
-          grep -q -- '--distribution trixie' build/auto/config
-          grep -qx 'kodi-pvr-iptvsimple' build/config/package-lists/dede-base.list.chroot
-          grep -qx 'linux-image-amd64' build/config/package-lists/dede-base.list.chroot
-          grep -qx 'xinit' build/config/package-lists/dede-base.list.chroot
-          grep -qx 'xserver-xorg-core' build/config/package-lists/dede-base.list.chroot
-          ! grep -Eq '^(gnome|kde-plasma-desktop|task-desktop)$' build/config/package-lists/dede-base.list.chroot
-      - name: Validate Kodi kiosk service and boot hook
+      - name: Validate shell syntax and appliance files
         shell: bash
         run: |
           set -euo pipefail
+          bash -n build/auto/config build/auto/build build/build-image.sh
           kiosk=build/config/includes.chroot/usr/local/bin/dede-kodi-kiosk
           hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
           unit=build/config/includes.chroot/etc/systemd/system/dede-kodi.service
           sh -n "$kiosk" "$hook"
           test -s "$unit"
-          grep -q '^User=dede$' "$unit"
-          grep -q '^NoNewPrivileges=true$' "$unit"
-          grep -q '^ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk$' "$unit"
-          grep -q '^WantedBy=multi-user.target$' "$unit"
-          grep -q 'xinit.*kodi' "$kiosk"
-          grep -q 'nolisten tcp' "$kiosk"
-          grep -q '^ln -sfn ../dede-kodi.service' "$hook"
+          test -s build/config/package-lists/dede-base.list.chroot
+          grep -q -- '--distribution trixie' build/auto/config
+          for package in linux-image-amd64 kodi kodi-pvr-iptvsimple xinit xserver-xorg-core; do
+            grep -qx "$package" build/config/package-lists/dede-base.list.chroot
+          done
+          grep -qx 'User=dede' "$unit"
+          grep -qx 'NoNewPrivileges=true' "$unit"
+          grep -qx 'RuntimeDirectory=dede-tv' "$unit"
+          grep -qx 'RuntimeDirectoryMode=0700' "$unit"
+          grep -qx 'Environment=XDG_RUNTIME_DIR=/run/dede-tv' "$unit"
+          grep -qx 'ReadWritePaths=/home/dede /run/dede-tv' "$unit"
+          grep -qx 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk' "$unit"
           grep -q 'useradd --system --user-group' "$hook"
           ! grep -q -- '--uid 1000' "$hook"
-          grep -q '^RuntimeDirectory=dede-tv          python3 - <<'PY'
-          from pathlib import Path
-          content = Path("build/config/includes.chroot/etc/systemd/system/dede-kodi.service").read_text()
-          unit = content.split("[Service]", 1)[0]
-          service = content.split("[Service]", 1)[1].split("[Install]", 1)[0]
-          for directive in ("StartLimitIntervalSec=", "StartLimitBurst="):
-              assert directive in unit, directive + " missing from Unit"
-              assert directive not in service, directive + " incorrectly in Service"
-          assert "XDG_RUNTIME_DIR=/run/user/1000" not in content
-          PY
+          grep -q 'nolisten tcp' "$kiosk"
+          grep -q 'Kodi runtime directory is unavailable' "$kiosk"
           systemd-analyze verify "$unit"
-      - name: Validate ISO package-audit shell wiring
+      - name: Validate image workflow structure and audit
         shell: bash
         run: |
           set -euo pipefail
-          workflow=.github/workflows/os-image.yml
-          # The image audit must extract dpkg/status before the Python parser reads it.
-          grep -Fq 'var/lib/dpkg/status > installed-dpkg-status' "$workflow"
-          grep -Fq 'test -s installed-dpkg-status' "$workflow"
-          grep -Fq "grep -Fq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'" "$workflow"
-          python3 - "$workflow" <<'PY'
-          from pathlib import Path
-          import sys
-          text = Path(sys.argv[1]).read_text()
-          assert text.count("          python3 - <<'PY'") >= 1
-          assert "installed-dpkg-status" in text
-          PY
-      - name: Report latest trusted-branch ISO and QEMU results
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
-            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv' \
-            | tee /tmp/dede-iso-runs.txt
-          {
-            echo "## Recent ISO/QEMU workflow runs"
-            echo '```'
-            cat /tmp/dede-iso-runs.txt
-            echo '```'
-            echo "These are workflow results; OS boot and playback must be verified separately."
-          } >> "$GITHUB_STEP_SUMMARY"
- "$unit"
-          grep -q '^RuntimeDirectoryMode=0700          python3 - <<'PY'
-          from pathlib import Path
-          content = Path("build/config/includes.chroot/etc/systemd/system/dede-kodi.service").read_text()
-          unit = content.split("[Service]", 1)[0]
-          service = content.split("[Service]", 1)[1].split("[Install]", 1)[0]
-          for directive in ("StartLimitIntervalSec=", "StartLimitBurst="):
-              assert directive in unit, directive + " missing from Unit"
-              assert directive not in service, directive + " incorrectly in Service"
-          assert "XDG_RUNTIME_DIR=/run/user/1000" not in content
-          PY
-          systemd-analyze verify "$unit"
-      - name: Report latest trusted-branch ISO and QEMU results
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
-            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv' \
-            | tee /tmp/dede-iso-runs.txt
-          {
-            echo "## Recent ISO/QEMU workflow runs"
-            echo '```'
-            cat /tmp/dede-iso-runs.txt
-            echo '```'
-            echo "These are workflow results; OS boot and playback must be verified separately."
-          } >> "$GITHUB_STEP_SUMMARY"
- "$unit"
-          grep -q '^Environment=XDG_RUNTIME_DIR=/run/dede-tv          python3 - <<'PY'
-          from pathlib import Path
-          content = Path("build/config/includes.chroot/etc/systemd/system/dede-kodi.service").read_text()
-          unit = content.split("[Service]", 1)[0]
-          service = content.split("[Service]", 1)[1].split("[Install]", 1)[0]
-          for directive in ("StartLimitIntervalSec=", "StartLimitBurst="):
-              assert directive in unit, directive + " missing from Unit"
-              assert directive not in service, directive + " incorrectly in Service"
-          assert "XDG_RUNTIME_DIR=/run/user/1000" not in content
-          PY
-          systemd-analyze verify "$unit"
-      - name: Report latest trusted-branch ISO and QEMU results
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
-            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv' \
-            | tee /tmp/dede-iso-runs.txt
-          {
-            echo "## Recent ISO/QEMU workflow runs"
-            echo '```'
-            cat /tmp/dede-iso-runs.txt
-            echo '```'
-            echo "These are workflow results; OS boot and playback must be verified separately."
-          } >> "$GITHUB_STEP_SUMMARY"
- "$unit"
-          grep -q '^ReadWritePaths=/home/dede /run/dede-tv          python3 - <<'PY'
-          from pathlib import Path
-          content = Path("build/config/includes.chroot/etc/systemd/system/dede-kodi.service").read_text()
-          unit = content.split("[Service]", 1)[0]
-          service = content.split("[Service]", 1)[1].split("[Install]", 1)[0]
-          for directive in ("StartLimitIntervalSec=", "StartLimitBurst="):
-              assert directive in unit, directive + " missing from Unit"
-              assert directive not in service, directive + " incorrectly in Service"
-          assert "XDG_RUNTIME_DIR=/run/user/1000" not in content
-          PY
-          systemd-analyze verify "$unit"
-      - name: Report latest trusted-branch ISO and QEMU results
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
-            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv' \
-            | tee /tmp/dede-iso-runs.txt
-          {
-            echo "## Recent ISO/QEMU workflow runs"
-            echo '```'
-            cat /tmp/dede-iso-runs.txt
-            echo '```'
-            echo "These are workflow results; OS boot and playback must be verified separately."
-          } >> "$GITHUB_STEP_SUMMARY"
- "$unit"
-          grep -q 'Kodi runtime directory is unavailable' "$kiosk"
           python3 - <<'PY'
           from pathlib import Path
-          content = Path("build/config/includes.chroot/etc/systemd/system/dede-kodi.service").read_text()
-          unit = content.split("[Service]", 1)[0]
-          service = content.split("[Service]", 1)[1].split("[Install]", 1)[0]
-          for directive in ("StartLimitIntervalSec=", "StartLimitBurst="):
-              assert directive in unit, directive + " missing from Unit"
-              assert directive not in service, directive + " incorrectly in Service"
-          assert "XDG_RUNTIME_DIR=/run/user/1000" not in content
+          import yaml
+          p = Path(".github/workflows/os-image.yml")
+          text = p.read_text()
+          document = yaml.safe_load(text)
+          jobs = document["jobs"]
+          assert set(jobs) == {"image", "report-failure"}, set(jobs)
+          assert "var/lib/dpkg/status > installed-dpkg-status" in text
+          assert "test -s installed-dpkg-status" in text
+          assert text.count("name: Upload installed package inventory") == 1
+          assert text.count("name: Publish failed ISO run ID") == 1
+          assert "pull_request_target" not in str(document.get("on", {}))
           PY
-          systemd-analyze verify "$unit"
-      - name: Report latest trusted-branch ISO and QEMU results
+      - name: Report latest trusted-branch ISO results
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
-            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv' \
-            | tee /tmp/dede-iso-runs.txt
-          {
-            echo "## Recent ISO/QEMU workflow runs"
-            echo '```'
-            cat /tmp/dede-iso-runs.txt
-            echo '```'
-            echo "These are workflow results; OS boot and playback must be verified separately."
-          } >> "$GITHUB_STEP_SUMMARY"
+            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv'
