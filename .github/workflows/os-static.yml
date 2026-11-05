@@ -1,0 +1,22 @@
+name: OS source validation
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate live-build shell syntax
+        run: |
+          bash -n build/auto/config
+          bash -n build/auto/build
+      - name: Validate suite, package list and appliance invariants
+        run: |
+          test -s build/config/package-lists/dede-base.list.chroot
+          grep -q -- '--distribution trixie' build/auto/config
+          grep -qx 'kodi-pvr-iptvsimple' build/config/package-lists/dede-base.list.chroot
+          grep -qx 'linux-image-amd64' build/config/package-lists/dede-base.list.chroot
+          ! grep -Eq '^(gnome|kde-plasma-desktop|task-desktop)\$' build/config/package-lists/dede-base.list.chroot
