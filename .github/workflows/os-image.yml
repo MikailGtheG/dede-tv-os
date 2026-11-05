@@ -212,6 +212,35 @@ jobs:
           path: build/boot-logs/
           retention-days: 7
           if-no-files-found: warn
+      - name: Reject blank post-boot VGA display
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          for mode in ("bios", "uefi"):
+              path = Path(f"build/boot-logs/{mode}-after-boot.ppm")
+              if not path.is_file():
+                  raise SystemExit(f"{mode}: no post-boot display captured")
+              with path.open("rb") as image:
+                  magic = image.readline().strip()
+                  dimensions = image.readline().split()
+                  max_value = image.readline().strip()
+                  if magic != b"P6" or len(dimensions) != 2 or max_value != b"255":
+                      raise SystemExit(f"{mode}: unexpected PPM header")
+                  width, height = map(int, dimensions)
+                  pixels = image.read()
+              if len(pixels) != width * height * 3:
+                  raise SystemExit(f"{mode}: incomplete display capture")
+              illuminated = sum(value != 0 for value in pixels)
+              coverage = illuminated / len(pixels)
+              print(f"{mode}: visible nonblack byte fraction {coverage:.4%}")
+              if coverage < 0.001:
+                  raise SystemExit(
+                      f"{mode}: completely blank or near-black screen; "
+                      "Linux boot alone does not prove Kodi kiosk rendering"
+                  )
+          PY
       - name: Audit installed packages and image footprint
         shell: bash
         run: |
