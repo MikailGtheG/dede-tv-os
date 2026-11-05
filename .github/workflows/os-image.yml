@@ -192,6 +192,100 @@ jobs:
           # Inspect the built filesystem, not merely the requested package list.
           squashfs="$(find binary/live -maxdepth 1 -type f -name 'filesystem.squashfs' -print -quit)"
           test -n "$squashfs"
+          # Validate the actual appliance wiring inside SquashFS, not only
+          # that packages were requested by the manifest.
+          for embedded in \
+            etc/systemd/system/dede-kodi.service \
+            etc/systemd/system/multi-user.target.wants/dede-kodi.service \
+            usr/local/bin/dede-kodi-kiosk \
+            etc/passwd; do
+            unsquashfs -cat "$squashfs" "$embedded" >/dev/null || {
+              echo "Missing kiosk image component: $embedded" >&2
+              exit 1
+            }
+          done
+          unsquashfs -cat "$squashfs" etc/passwd | grep -q '^dede:'
+          unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -q '^ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          status = Path("installed-dpkg-status").read_text()
+          packages = []
+          for block in status.split("\n\n"):
+              name = re.search(r"(?m)^Package: (.+)$", block)
+              installed = re.search(r"(?m)^Status: install ok installed$", block)
+              if name and installed:
+                  packages.append(name.group(1))
+          packages.sort()
+          if not packages:
+              raise SystemExit("No installed Debian packages found in SquashFS")
+          # An ISO without the playback engine is not a useful TV prototype.
+          required = ("linux-image-amd64", "kodi", "kodi-pvr-iptvsimple")
+          missing = [name for name in required if name not in packages]
+          if missing:
+              raise SystemExit("Missing installed TV packages: " + ", ".join(missing))
+          Path("installed-packages.txt").write_text("\n".join(packages) + "\n")
+          print(f"Installed packages: {len(packages)}")
+          for prefix in ("apache2", "mysql-server", "postgresql", "openssh-server"):
+              matches = [p for p in packages if p == prefix or p.startswith(prefix + "-")]
+              if matches:
+                  print(f"Review potentially unnecessary service: {', '.join(matches)}")
+          PY
+          du -h "$squashfs" live-image-amd64.hybrid.iso
+      - name: Upload installed package inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: dede-tv-package-inventory
+          path: build/installed-packages.txt
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dede-tv-iso-build-diagnostics
+          path: |
+            build/build.log
+            build/iso-boot-report.txt
+            build/iso-boot-options.txt
+            build/installed-dpkg-status
+            build/chroot/debootstrap/debootstrap.log
+          retention-days: 3
+          if-no-files-found: warn
+      # Keep the built ISO available even if QEMU fails: this allows
+      # reproducing firmware/boot regressions locally without rebuilding.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dede-tv-debian13-prototype-iso
+          path: |
+            build/live-image-amd64.hybrid.iso
+            build/SHA256SUMS
+          retention-days: 1
+          if-no-files-found: warn
+
+  report-failure:
+    needs: image
+    if: ${{ always() && needs.image.result == 'failure' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Publish failed ISO run ID and result for diagnosis
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+          RESULT: ${{ needs.image.result }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --title "Dede TV OS ISO/QEMU ${RESULT} (run ${RUN_ID})" \
+            --body "ISO/QEMU workflow result: ${RESULT}\n\nRun ID: ${RUN_ID}\nRun: ${RUN_URL}\nCommit: ${COMMIT}\n\nA successful job result is only a smoke-test result, not full TV readiness."
+
           unsquashfs -cat "$squashfs" var/lib/dpkg/status > installed-dpkg-status
           python3 - <<'PY'
           from pathlib import Path
