@@ -191,10 +191,16 @@ jobs:
             # Keep a VGA snapshot for diagnosing silent bootloaders: serial-only
             # logs cannot distinguish a GRUB menu from a kernel boot failure.
             monitor="$PWD/boot-logs/$mode.monitor.sock"
+            # The guest previously had no audio hardware and Kodi repeatedly
+            # logged ActiveAE::InitSink errors. Provide emulated Intel HDA with
+            # a silent host backend (no host sound server required).
             set +e
             timeout --signal=TERM --kill-after=5s 150s \
               qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
               -display none -vga std \
+              -audiodev none,id=ci_audio \
+              -device ich9-intel-hda \
+              -device hda-duplex,audiodev=ci_audio \
               -monitor "unix:$monitor,server=on,wait=off" -serial stdio \
               -no-reboot -boot d \
               -device ich9-ahci,id=ahci \
