@@ -2,6 +2,10 @@
 # Dede TV OS alpha: run Kodi as the dedicated unprivileged TV user.
 set -eu
 export HOME=/home/dede
-export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/dede-tv}
+if [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
+  echo "Kodi runtime directory is unavailable or not writable" >&2
+  exit 1
+fi
 export XDG_SESSION_TYPE=x11
 exec /usr/bin/xinit /usr/bin/kodi --standalone -- /usr/bin/Xorg :0 -nolisten tcp -noreset vt1
