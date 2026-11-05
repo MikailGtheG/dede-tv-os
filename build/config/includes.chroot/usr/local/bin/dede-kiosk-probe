@@ -1,0 +1,22 @@
+#!/bin/sh
+# Diagnostic-only boot probe for the experimental ISO.
+# No credentials, Kodi logs, command-line arguments or environment are printed.
+set -eu
+exec >/dev/ttyS0 2>&1
+printf '\nDEDE_KIOSK_PROBE_BEGIN\n'
+systemctl show dede-kodi.service \
+  --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,NRestarts \
+  --no-pager || :
+for process in Xorg kodi.bin kodi-x11; do
+  if pgrep -x "$process" >/dev/null 2>&1; then
+    printf 'PROCESS_%s=running\n' "$process"
+  else
+    printf 'PROCESS_%s=missing\n' "$process"
+  fi
+done
+if [ -s /home/dede/.kodi/temp/kodi.log ]; then
+  echo 'KODI_LOG=present'
+else
+  echo 'KODI_LOG=missing'
+fi
+printf 'DEDE_KIOSK_PROBE_END\n'
