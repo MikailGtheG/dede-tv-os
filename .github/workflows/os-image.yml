@@ -152,6 +152,27 @@ jobs:
           except OSError as exc:
               print("VGA capture unavailable:", exc)
           PY
+            # A boot-menu screenshot cannot demonstrate that the kiosk ran.
+            # Capture the display again after Linux has had time to boot.
+            sleep 65
+            python3 - "$monitor" "$PWD/boot-logs/$mode-after-boot.ppm" <<'PY'
+          import socket
+          import sys
+
+          monitor, screenshot = sys.argv[1:]
+          try:
+              with socket.socket(socket.AF_UNIX) as sock:
+                  sock.settimeout(5)
+                  sock.connect(monitor)
+                  sock.sendall(("screendump " + screenshot + "\n").encode())
+                  try:
+                      sock.recv(4096)
+                  except TimeoutError:
+                      pass
+              print("Requested post-boot VGA capture:", screenshot)
+          except OSError as exc:
+              print("Post-boot VGA capture unavailable:", exc)
+          PY
             wait "$qemu_pid"
             status=$?
             set -e
