@@ -52,6 +52,44 @@ jobs:
           xorriso -indev live-image-amd64.hybrid.iso -report_el_torito as_mkisofs > iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-c[[:space:]]' iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-b[[:space:]]|(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
+      - name: Audit installed packages and image footprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd build
+          # Inspect the built filesystem, not merely the requested package list.
+          squashfs="$(find binary/live -maxdepth 1 -type f -name 'filesystem.squashfs' -print -quit)"
+          test -n "$squashfs"
+          unsquashfs -cat "$squashfs" var/lib/dpkg/status > installed-dpkg-status
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          status = Path("installed-dpkg-status").read_text()
+          packages = []
+          for block in status.split("\\n\\n"):
+              name = re.search(r"(?m)^Package: (.+)$", block)
+              installed = re.search(r"(?m)^Status: install ok installed$", block)
+              if name and installed:
+                  packages.append(name.group(1))
+          packages.sort()
+          if not packages:
+              raise SystemExit("No installed Debian packages found in SquashFS")
+          Path("installed-packages.txt").write_text("\\n".join(packages) + "\\n")
+          print(f"Installed packages: {len(packages)}")
+          for prefix in ("apache2", "mysql-server", "postgresql", "openssh-server"):
+              matches = [p for p in packages if p == prefix or p.startswith(prefix + "-")]
+              if matches:
+                  print(f"Review potentially unnecessary service: {', '.join(matches)}")
+          PY
+          du -h "$squashfs" live-image-amd64.hybrid.iso
+      - name: Upload installed package inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: dede-tv-package-inventory
+          path: build/installed-packages.txt
+          retention-days: 7
+          if-no-files-found: error
       - name: Upload build diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -61,6 +99,7 @@ jobs:
             build/build.log
             build/iso-boot-report.txt
             build/iso-boot-options.txt
+            build/installed-dpkg-status
             build/chroot/debootstrap/debootstrap.log
           retention-days: 3
           if-no-files-found: warn
