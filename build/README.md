@@ -15,8 +15,7 @@ sudo apt-get install -y --no-install-recommends \
   live-build debootstrap xorriso squashfs-tools \
   grub-pc-bin grub-efi-amd64-bin
 cd build
-sudo lb config
-sudo lb build
+sudo sh build-image.sh
 ```
 
 The generated ISO is usually `live-image-amd64.hybrid.iso`. Validate
