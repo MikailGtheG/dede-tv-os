@@ -169,7 +169,14 @@ jobs:
                       sock.recv(4096)
                   except TimeoutError:
                       pass
-              print("Requested post-boot VGA capture:", screenshot)
+              from pathlib import Path
+              capture = Path(screenshot)
+              if not capture.is_file() or capture.stat().st_size < 64:
+                  raise OSError("QEMU did not write a usable screenshot")
+              with capture.open("rb") as fh:
+                  if fh.read(2) != b"P6":
+                      raise OSError("QEMU screenshot is not binary PPM")
+              print("Verified post-boot VGA capture:", screenshot, capture.stat().st_size, "bytes")
           except OSError as exc:
               print("Post-boot VGA capture unavailable:", exc)
           PY
