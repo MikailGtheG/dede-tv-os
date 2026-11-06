@@ -1,40 +1,42 @@
 #!/bin/sh
-# First-boot Kodi appliance defaults. Never overwrite administrator changes.
+# First boot only: configure local Kodi playback API and the packaged TV skin.
+# Respect existing administrator-managed Kodi settings on subsequent boots.
 set -eu
 umask 077
 : "${HOME:?Kodi HOME is not set}"
 profile="$HOME/.kodi/userdata"
 mkdir -p "$profile"
-if [ -e "$profile/advancedsettings.xml" ] || [ -L "$profile/advancedsettings.xml" ]; then
-  exit 0
-fi
-tmp="$(mktemp "$profile/.dede-advancedsettings.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT HUP INT TERM
-cat > "$tmp" <<'XML'
+advanced="$profile/advancedsettings.xml"
+settings="$profile/guisettings.xml"
+skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
+tmp_advanced=
+tmp_settings=
+cleanup() {
+  [ -z "$tmp_advanced" ] || rm -f "$tmp_advanced"
+  [ -z "$tmp_settings" ] || rm -f "$tmp_settings"
+}
+trap cleanup EXIT HUP INT TERM
+
+if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
+  tmp_advanced="$(mktemp "$profile/.dede-advancedsettings.XXXXXX")"
+  cat > "$tmp_advanced" <<'XML'
 <advancedsettings version="1.0">
   <splash>false</splash>
   <fullscreen>true</fullscreen>
   <showexitbutton>false</showexitbutton>
 </advancedsettings>
 XML
-# Do not clobber a file created by an administrator during provisioning.
-if [ ! -e "$profile/advancedsettings.xml" ] && [ ! -L "$profile/advancedsettings.xml" ]; then
-  mv -n "$tmp" "$profile/advancedsettings.xml"
+  if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
+    mv -n "$tmp_advanced" "$advanced"
+  fi
 fi
 
-
-# The built-in Kodi add-on is installed in the image by the pinned skin build.
-# Restrict JSON-RPC to this machine: TCP control is unauthenticated.
-# Never replace an existing administrator-managed Kodi profile.
-settings="$profile/guisettings.xml"
-skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
 if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
-  skin="skin.estuary"
+  skin=skin.estuary
   if [ -f "$skin_addon" ] && grep -Fq 'id="skin.dede-tv"' "$skin_addon"; then
-    skin="skin.dede-tv"
+    skin=skin.dede-tv
   fi
   tmp_settings="$(mktemp "$profile/.dede-guisettings.XXXXXX")"
-  trap 'rm -f "$tmp" "$tmp_settings"' EXIT HUP INT TERM
   cat > "$tmp_settings" <<XML
 <settings version="2">
   <setting id="services.esenabled">true</setting>
