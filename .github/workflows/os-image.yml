@@ -161,6 +161,21 @@ jobs:
                 timeout 8s runuser -u dede -- env DISPLAY=:0 XAUTHORITY=/home/dede/.Xauthority xrandr --query 2>&1 | head -45 || true
               fi
             fi
+            echo 'DEDE_CI_DIAG: X11 display and graphics diagnostics'
+            if command -v xrandr >/dev/null 2>&1; then
+              timeout 8s runuser -u dede -- env DISPLAY=:0 XAUTHORITY=/home/dede/.Xauthority xrandr --verbose 2>&1 | head -80 || true
+            fi
+            for path in /sys/class/drm/card*-*/status; do
+              [ -r "$path" ] || continue
+              printf 'DEDE_CI_DIAG: %s: ' "$path"
+              cat "$path" || true
+            done
+            echo 'DEDE_CI_DIAG: Kodi recent log'
+            if [ -r /home/dede/.kodi/temp/kodi.log ]; then
+              tail -75 /home/dede/.kodi/temp/kodi.log || true
+            fi
+            echo 'DEDE_CI_DIAG: Kodi service recent journal'
+            journalctl --no-pager -u dede-kodi.service -n 40 || true
             echo 'DEDE_CI_DIAG: Kodi local playback API'
             if [ -f /home/dede/.kodi/userdata/guisettings.xml ]; then
               for key in services.esenabled services.esallinterfaces services.webserver lookandfeel.skin; do
