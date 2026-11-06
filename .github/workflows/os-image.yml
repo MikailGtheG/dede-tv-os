@@ -70,7 +70,7 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: c5e07904894e733a3129a01582a74f0370a0c10c
+          DEDE_SKIN_SHA: 9b29fbd2187e902cebe715aa389cd95b17dea622
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
@@ -95,6 +95,9 @@ jobs:
             /tmp/dede-estuary-src/addons/skin.estuary \
             "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv"
           test -f "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv/addon.xml"
+          for font in notosans-regular.ttf notomono-regular.ttf roboto-thin.ttf; do
+            test -s "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv/fonts/$font"
+          done
       - name: Build prototype live ISO
         shell: bash
         run: |
@@ -583,6 +586,7 @@ jobs:
           assert addon.get("id") == "skin.dede-tv", "Unexpected bundled skin"
           gui=addon.find("./requires/import[@addon='xbmc.gui']")
           assert gui is not None and gui.get("version") == "5.17.0", "Wrong Kodi 21.2 skin ABI"
+          # The Linux runtime must be able to resolve its lowercase font paths.
           PY
           unsquashfs -cat "$squashfs" usr/share/kodi/addons/skin.dede-tv/xml/Home.xml > /tmp/dede-tv-home.xml
           python3 - <<'PY'
