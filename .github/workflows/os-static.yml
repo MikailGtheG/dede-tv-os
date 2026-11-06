@@ -163,6 +163,8 @@ jobs:
           document = json.loads(Path("/tmp/dede-image-workflow.json").read_text())
           jobs = document["jobs"]
           assert set(jobs) == {"image", "report-failure"}, set(jobs)
+          assert document["concurrency"]["cancel-in-progress"] is True
+          assert "dede-os-image-" in document["concurrency"]["group"]
           assert "var/lib/dpkg/status > installed-dpkg-status" in text
           assert "test -s installed-dpkg-status" in text
           assert text.count("name: Upload installed package inventory") == 1
