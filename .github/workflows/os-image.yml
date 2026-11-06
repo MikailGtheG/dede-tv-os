@@ -43,7 +43,7 @@ jobs:
           sleep 55
           {
             echo 'DEDE_CI_DIAG: begin'
-            systemctl show dede-kodi.service -p ActiveState -p SubState -p ExecMainStatus -p NRestarts --no-pager
+            systemctl show dede-kodi.service -p ActiveState -p SubState -p ExecMainStatus -p NRestarts --no-pager || echo 'DEDE_CI_DIAG: systemctl show unavailable'
             for name in Xorg xinit kodi kodi.bin; do
               if pgrep -x "$name" >/dev/null 2>&1; then
                 echo "DEDE_CI_DIAG: $name running"
@@ -87,8 +87,8 @@ jobs:
               tr '\\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
               echo
             done
-            echo 'DEDE_CI_DIAG: end'
-          } > /run/dede-ci-diagnostics.log 2>&1 || true
+          } > /run/dede-ci-diagnostics.log 2>&1 || echo 'DEDE_CI_DIAG: probe failed' >> /run/dede-ci-diagnostics.log
+          echo 'DEDE_CI_DIAG: end' >> /run/dede-ci-diagnostics.log
           # Keep the report even if the VM has no serial port; QEMU CI
           # normally attaches ttyS0 and captures this output.
           if [ -c /dev/ttyS0 ] && [ -w /dev/ttyS0 ]; then
