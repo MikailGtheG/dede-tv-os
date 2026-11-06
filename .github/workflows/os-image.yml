@@ -232,7 +232,8 @@ jobs:
                   control.sendall(b"sendkey ret\n")
               print("Sent ENTER to boot the default live system")
           except OSError as exc:
-              print("VGA capture unavailable:", exc)
+              print("Boot-menu VGA capture/control unavailable:", exc, file=sys.stderr)
+              sys.exit(1)
           PY
             # A boot-menu screenshot cannot demonstrate that the kiosk ran.
             # Capture the display again after Linux has had time to boot.
