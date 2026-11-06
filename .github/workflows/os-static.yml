@@ -127,9 +127,10 @@ jobs:
           assert "NoNewPrivileges=true" in service
           assert "ProtectSystem=strict" in service
           assert "dede-kodi-skin.service" in hook
-          assert '"method": "Settings.GetSkinSettings"' in image
-          assert 'document.get("result", {}).get("skin")' in image
-          assert '"method": "Settings.GetSettingValue"' not in image
+          assert '"method": "Settings.GetSettingValue"' in image
+          assert '"params": {"setting": "lookandfeel.skin"}' in image
+          assert 'document.get("result", {}).get("value")' in image
+          assert '"method": "Settings.GetSkinSettings"' not in image
           PY
       - name: Regression - Kodi default attribute in GUI settings
         shell: bash
