@@ -1,0 +1,24 @@
+[Unit]
+Description=Dede TV restore last channel after Kodi startup
+After=dede-kodi.service
+Requires=dede-kodi.service
+ConditionPathIsExecutable=/usr/local/bin/dede-tv-core
+ConditionPathExists=/home/dede/.local/share/dede-tv/channels.db
+
+[Service]
+Type=oneshot
+User=dede
+Group=dede
+WorkingDirectory=/home/dede
+Environment=HOME=/home/dede
+ExecStart=/bin/sh /usr/local/libexec/dede-tv-resume
+TimeoutStartSec=100
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+ReadWritePaths=/home/dede/.local/share/dede-tv
+
+[Install]
+WantedBy=multi-user.target
