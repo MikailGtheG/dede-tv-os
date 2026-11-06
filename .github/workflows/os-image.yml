@@ -451,8 +451,8 @@ jobs:
             }
           done
           # Validate the actual bundled ELF executable, not just a file name.
-          unsquashfs -cat "$squashfs" usr/local/bin/dede-tv-core | head -c 4 \
-            | od -An -tx1 | tr -d ' \n' | grep -qx '7f454c46'
+          unsquashfs -cat "$squashfs" usr/local/bin/dede-tv-core > /tmp/dede-core-audit
+          test "$(od -An -tx1 -N4 /tmp/dede-core-audit | tr -d '[:space:]')" = '7f454c46'
           unsquashfs -cat "$squashfs" etc/passwd | grep -q '^dede:'
           unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -Fq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'
           unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -Fq 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core'
