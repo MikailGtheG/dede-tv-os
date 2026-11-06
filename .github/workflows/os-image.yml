@@ -393,6 +393,26 @@ jobs:
               exit 1
             fi
             grep -F 'DEDE_CI_DIAG:' "boot-logs/$mode.log" || true
+            # Integration is not complete if the new profile was ignored.
+            for expected in \
+              'id="services.esenabled">true<' \
+              'id="services.esallinterfaces">false<' \
+              'id="services.webserver">false<' \
+              'id="lookandfeel.skin">skin.dede-tv<'; do
+              if ! grep -Fq "$expected" "boot-logs/$mode.log"; then
+                echo "$mode: expected Kodi first-boot configuration missing: $expected" >&2
+                exit 1
+              fi
+            done
+            # Kodi raw TCP control must never bind to the LAN.
+            if grep -Eq 'DEDE_CI_DIAG: JSONRPC_SOCKET=(00000000|[^0][0-9A-F]{7}):2382' "boot-logs/$mode.log"; then
+              echo "$mode: insecure Kodi JSON-RPC listener detected" >&2
+              exit 1
+            fi
+            if ! grep -Fq 'DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382' "boot-logs/$mode.log"; then
+              echo "$mode: local Kodi JSON-RPC is not listening on 127.0.0.1:9090" >&2
+              exit 1
+            fi
             # A reached boot target is insufficient if the kiosk service
             # never launches its actual Xorg and Kodi processes.
             for process in Xorg kodi.bin; do
