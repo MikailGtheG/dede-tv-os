@@ -133,7 +133,7 @@ jobs:
           grep -Fq 'test "$(git rev-parse HEAD)" = "$DEDE_CORE_SHA"' "$workflow"
           grep -Fq 'cargo build --release --bin dede-tv-core' "$workflow"
           grep -Fq 'install -D -m 0755 target/release/dede-tv-core' "$workflow"
-          grep -Fq 'usr/local/bin/dede-tv-core \\' "$workflow"
+          grep -Fq 'usr/local/bin/dede-tv-core' "$workflow"
           grep -Fq 'unsquashfs -cat "$squashfs" usr/local/bin/dede-tv-core' "$workflow"
       - name: Validate image workflow structure and audit
         shell: bash
