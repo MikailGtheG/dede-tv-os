@@ -1,0 +1,22 @@
+[Unit]
+Description=Activate and verify Dede TV skin on initial Kodi start
+After=dede-kodi.service
+Requires=dede-kodi.service
+ConditionPathExists=/usr/share/kodi/addons/skin.dede-tv/addon.xml
+
+[Service]
+Type=oneshot
+User=dede
+Group=dede
+WorkingDirectory=/home/dede
+Environment=HOME=/home/dede
+ExecStart=/usr/bin/python3 /usr/local/libexec/dede-kodi-activate-skin
+TimeoutStartSec=180
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/dede
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
