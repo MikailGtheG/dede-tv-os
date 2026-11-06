@@ -1,0 +1,23 @@
+#!/bin/sh
+# First-boot Kodi appliance defaults. Never overwrite administrator changes.
+set -eu
+umask 077
+: "${HOME:?Kodi HOME is not set}"
+profile="$HOME/.kodi/userdata"
+mkdir -p "$profile"
+if [ -e "$profile/advancedsettings.xml" ] || [ -L "$profile/advancedsettings.xml" ]; then
+  exit 0
+fi
+tmp="$(mktemp "$profile/.dede-advancedsettings.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+cat > "$tmp" <<'XML'
+<advancedsettings version="1.0">
+  <splash>false</splash>
+  <fullscreen>true</fullscreen>
+  <showexitbutton>false</showexitbutton>
+</advancedsettings>
+XML
+# Do not clobber a file created by an administrator during provisioning.
+if [ ! -e "$profile/advancedsettings.xml" ] && [ ! -L "$profile/advancedsettings.xml" ]; then
+  mv -n "$tmp" "$profile/advancedsettings.xml"
+fi
