@@ -194,8 +194,7 @@ jobs:
           import json
           import socket
           request = json.dumps({"jsonrpc": "2.0",
-                                "method": "Settings.GetSettingValue",
-                                "params": {"setting": "lookandfeel.skin"},
+                                "method": "Settings.GetSkinSettings",
                                 "id": 7331}).encode() + b"\n"
           try:
               with socket.create_connection(("127.0.0.1", 9090), timeout=4) as conn:
@@ -218,7 +217,7 @@ jobs:
                               break
                           remaining = remaining.lstrip()[size:]
                           if document.get("id") == 7331:
-                              active = document.get("result", {}).get("value")
+                              active = document.get("result", {}).get("skin")
                               print("DEDE_CI_DIAG: ACTIVE_SKIN=" + str(active))
                               raise SystemExit(0)
                   print("DEDE_CI_DIAG: ACTIVE_SKIN=unavailable")
