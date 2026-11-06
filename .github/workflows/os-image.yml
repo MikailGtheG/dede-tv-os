@@ -6,6 +6,10 @@ on:
       - 'build/**'
       - '.github/workflows/os-image.yml'
   workflow_dispatch:
+# Only the newest expensive ISO build for a branch should consume runners.
+concurrency:
+  group: dede-os-image-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
