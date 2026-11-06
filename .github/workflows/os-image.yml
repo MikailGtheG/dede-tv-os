@@ -324,6 +324,7 @@ jobs:
               print("Boot-menu VGA capture/control unavailable:", exc, file=sys.stderr)
               sys.exit(1)
           PY
+            boot_menu_status=$?
             # A boot-menu screenshot cannot demonstrate that the kiosk ran.
             # Capture the display again after Linux has had time to boot.
             sleep 65
@@ -375,6 +376,11 @@ jobs:
             wait "$qemu_pid"
             status=$?
             set -e
+            if [ "$boot_menu_status" -ne 0 ]; then
+              echo "$mode: boot-menu VGA capture/control failed (exit $boot_menu_status)" >&2
+              tail -100 "boot-logs/$mode.log"
+              exit 1
+            fi
             if [ "$capture_status" -ne 0 ]; then
               echo "$mode: post-boot VGA capture validation failed (exit $capture_status)" >&2
               tail -100 "boot-logs/$mode.log"
