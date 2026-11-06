@@ -59,6 +59,27 @@ class RpcDeadlineTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "malformed error response"):
                 module.rpc("Settings.GetSettingValue", timeout=1)
 
+    def test_notification_before_reply_is_ignored(self):
+        connection = FakeConnection()
+        connection.recv = lambda size: (
+            b'{"jsonrpc":"2.0","method":"Player.OnPlay","params":{}}\\n'
+            b'{"jsonrpc":"2.0","id":24011,"result":{"value":"skin.dede-tv"}}\\n'
+        )
+        with patch.object(module.socket, "create_connection", return_value=connection):
+            result = module.rpc("Settings.GetSettingValue", timeout=1)
+        self.assertEqual(result["value"], "skin.dede-tv")
+
+    def test_wrong_reply_id_is_not_accepted(self):
+        connection = FakeConnection()
+        replies = iter([
+            b'{"jsonrpc":"2.0","id":24012,"result":{"value":"wrong"}}\\n',
+            b'',
+        ])
+        connection.recv = lambda size: next(replies)
+        with patch.object(module.socket, "create_connection", return_value=connection):
+            with self.assertRaisesRegex(RuntimeError, "No bounded JSON-RPC reply"):
+                module.rpc("Settings.GetSettingValue", timeout=1)
+
     def test_blocked_send_is_bounded(self):
         connection = FakeConnection(stall=True)
         with patch.object(module.socket, "create_connection", return_value=connection):
