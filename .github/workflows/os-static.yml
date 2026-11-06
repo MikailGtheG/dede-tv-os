@@ -109,6 +109,28 @@ jobs:
           printf '%s\n' '<addon id="skin.dede-tv"/>' > "$tmp/fake-skin/addon.xml"
           HOME="$tmp" DEDE_SKIN_ADDON="$tmp/fake-skin/addon.xml" sh "$init"
           grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
+      - name: Validate first-boot skin activation and real Kodi skin detection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin
+          python3 - <<'PY'
+          from pathlib import Path
+          script = Path("build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin").read_text()
+          service = Path("build/config/includes.chroot/etc/systemd/system/dede-kodi-skin.service").read_text()
+          hook = Path("build/config/hooks/live/0500-dede-kiosk.hook.chroot").read_text()
+          image = Path(".github/workflows/os-image.yml").read_text()
+          assert "Addons.SetAddonEnabled" in script
+          assert "Settings.SetSettingValue" in script
+          assert "Settings.GetSkinSettings" in script
+          assert "127.0.0.1" in script
+          assert "NoNewPrivileges=true" in service
+          assert "ProtectSystem=strict" in service
+          assert "dede-kodi-skin.service" in hook
+          assert '"method": "Settings.GetSkinSettings"' in image
+          assert 'document.get("result", {}).get("skin")' in image
+          assert '"method": "Settings.GetSettingValue"' not in image
+          PY
       - name: Regression - Kodi default attribute in GUI settings
         shell: bash
         run: |
