@@ -42,6 +42,11 @@ jobs:
           grep -q 'nolisten tcp' "$kiosk"
           grep -q 'Kodi runtime directory is unavailable' "$kiosk"
           systemd-analyze verify "$unit" "$probe_unit" "$probe_timer"
+          # Debug login and diagnostic timer are only enabled inside CI.
+          ! grep -q 'serial-getty@ttyS0.service' build/build-image.sh
+          ! grep -q 'timers.target.wants' "$hook"
+          grep -Fq 'serial-getty@ttyS0.service' .github/workflows/os-image.yml
+          grep -Fq 'dede-kiosk-probe.timer' .github/workflows/os-image.yml
       - name: Validate image workflow structure and audit
         shell: bash
         run: |
