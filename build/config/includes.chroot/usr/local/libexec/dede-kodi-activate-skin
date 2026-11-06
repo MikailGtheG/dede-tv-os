@@ -27,7 +27,13 @@ def rpc(method, params=None, *, timeout=4):
         request["params"] = params
     raw = json.dumps(request, separators=(",", ":")).encode() + b"\n"
     deadline = time.monotonic() + timeout
-    with socket.create_connection((HOST, PORT), timeout=timeout) as connection:
+    with socket.create_connection((HOST, PORT), timeout=max(0.001, deadline - time.monotonic())) as connection:
+        # sendall() also needs the remaining whole-request budget. A peer that
+        # accepts a connection but stops reading must not stall activation.
+        remaining_time = deadline - time.monotonic()
+        if remaining_time <= 0:
+            raise TimeoutError(f"{method}: JSON-RPC deadline exceeded before send")
+        connection.settimeout(remaining_time)
         connection.sendall(raw)
         response = b""
         while len(response) < 131072:
