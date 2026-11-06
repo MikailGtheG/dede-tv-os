@@ -1,0 +1,113 @@
+#!/usr/bin/python3
+"""One-time, loopback-only Kodi skin activation for the Dede TV appliance.
+
+Kodi discovers addons after process start. Writing lookandfeel.skin before the
+addon manager has enabled a new skin is not enough to render it. Use Kodi's
+own public JSON-RPC API and verify the *loaded* skin, not the desired setting.
+"""
+import json
+import os
+from pathlib import Path
+import socket
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+HOME = Path(os.environ.get("HOME", "/home/dede"))
+PROFILE = HOME / ".kodi" / "userdata"
+MARKER = PROFILE / ".dede-skin-activated"
+SETTINGS = PROFILE / "guisettings.xml"
+HOST, PORT = "127.0.0.1", 9090
+
+
+def rpc(method, params=None, *, timeout=4):
+    request_id = 24011
+    request = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        request["params"] = params
+    raw = json.dumps(request, separators=(",", ":")).encode() + b"\n"
+    with socket.create_connection((HOST, PORT), timeout=timeout) as connection:
+        connection.settimeout(timeout)
+        connection.sendall(raw)
+        response = b""
+        while len(response) < 131072:
+            part = connection.recv(4096)
+            if not part:
+                break
+            response += part
+            try:
+                # Kodi may send a JSON-RPC notification ahead of the reply.
+                decoder = json.JSONDecoder()
+                remaining = response.decode("utf-8").lstrip()
+                while remaining:
+                    try:
+                        document, consumed = decoder.raw_decode(remaining)
+                    except json.JSONDecodeError:
+                        break
+                    remaining = remaining[consumed:].lstrip()
+                    if document.get("id") == request_id:
+                        if "error" in document:
+                            raise RuntimeError(
+                                f"{method}: error {document['error'].get('code')}"
+                            )
+                        return document.get("result")
+            except UnicodeDecodeError:
+                continue
+    raise RuntimeError(f"No bounded JSON-RPC reply for {method}")
+
+
+def desired_skin():
+    if SETTINGS.is_symlink() or not SETTINGS.is_file():
+        return None
+    root = ET.parse(SETTINGS).getroot()
+    for item in root.findall("setting"):
+        if item.get("id") == "lookandfeel.skin":
+            return item.text
+    return None
+
+
+def run():
+    if MARKER.exists():
+        print("DEDE_SETUP: already initialized")
+        return 0
+    if desired_skin() != "skin.dede-tv":
+        print("DEDE_SETUP: administrator skin preference respected")
+        return 0
+    if not Path("/usr/share/kodi/addons/skin.dede-tv/addon.xml").is_file():
+        print("DEDE_SETUP: packaged skin missing", file=sys.stderr)
+        return 1
+    # Under software QEMU, the addon manager may need time to initialize.
+    for attempt in range(75):
+        try:
+            details = rpc("Addons.GetAddonDetails", {
+                "addonid": "skin.dede-tv", "properties": ["enabled"]
+            })
+            addon = (details or {}).get("addon", {})
+            if not addon.get("enabled", False):
+                rpc("Addons.SetAddonEnabled", {
+                    "addonid": "skin.dede-tv", "enabled": True
+                })
+            rpc("Settings.SetSettingValue", {
+                "setting": "lookandfeel.skin", "value": "skin.dede-tv"
+            })
+            actual = rpc("Settings.GetSkinSettings")
+            skin = (actual or {}).get("skin")
+            if skin == "skin.dede-tv":
+                MARKER.write_text("skin.dede-tv\n", encoding="ascii")
+                print("DEDE_SETUP: actual loaded skin=skin.dede-tv")
+                return 0
+            print(f"DEDE_SETUP: awaiting active skin ({skin})")
+        except (OSError, TimeoutError, RuntimeError) as error:
+            if attempt in (0, 10, 30, 60, 74):
+                print(f"DEDE_SETUP: startup retry {attempt + 1}: {type(error).__name__}")
+        time.sleep(2)
+    print("DEDE_SETUP: skin activation failed", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(run())
+    except (ET.ParseError, ValueError) as error:
+        print(f"DEDE_SETUP: invalid settings ({type(error).__name__})", file=sys.stderr)
+        raise SystemExit(1)
