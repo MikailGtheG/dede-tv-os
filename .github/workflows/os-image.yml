@@ -281,9 +281,15 @@ jobs:
               print("Post-boot VGA capture unavailable:", exc, file=sys.stderr)
               sys.exit(1)
           PY
+            capture_status=$?
             wait "$qemu_pid"
             status=$?
             set -e
+            if [ "$capture_status" -ne 0 ]; then
+              echo "$mode: post-boot VGA capture validation failed (exit $capture_status)" >&2
+              tail -100 "boot-logs/$mode.log"
+              exit 1
+            fi
             if [ "$status" -ne 124 ] && [ "$status" -ne 0 ]; then
               echo "QEMU failed for $mode (exit $status)" >&2
               tail -100 "boot-logs/$mode.log"
