@@ -2,7 +2,7 @@
 Description=Dede TV restore last channel after Kodi startup
 After=dede-kodi.service
 Requires=dede-kodi.service
-ConditionPathIsExecutable=/usr/local/bin/dede-tv-core
+ConditionFileIsExecutable=/usr/local/bin/dede-tv-core
 ConditionPathExists=/home/dede/.local/share/dede-tv/channels.db
 
 [Service]
