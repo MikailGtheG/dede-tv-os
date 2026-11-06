@@ -52,6 +52,13 @@ class RpcDeadlineTests(unittest.TestCase):
         self.assertLessEqual(connection.timeouts[0], 1)
         self.assertIn(b"Settings.GetSettingValue", connection.sent)
 
+    def test_malformed_error_payload_is_handled(self):
+        connection = FakeConnection()
+        connection.recv = lambda size: b'{"jsonrpc":"2.0","id":24011,"error":"invalid"}\n'
+        with patch.object(module.socket, "create_connection", return_value=connection):
+            with self.assertRaisesRegex(RuntimeError, "malformed error response"):
+                module.rpc("Settings.GetSettingValue", timeout=1)
+
     def test_blocked_send_is_bounded(self):
         connection = FakeConnection(stall=True)
         with patch.object(module.socket, "create_connection", return_value=connection):
