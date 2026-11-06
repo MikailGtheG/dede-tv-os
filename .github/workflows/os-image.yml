@@ -278,7 +278,8 @@ jobs:
                   raise OSError("QEMU did not finish writing a complete PPM within 10s")
               print("Verified post-boot VGA capture:", screenshot, capture.stat().st_size, "bytes")
           except OSError as exc:
-              print("Post-boot VGA capture unavailable:", exc)
+              print("Post-boot VGA capture unavailable:", exc, file=sys.stderr)
+              sys.exit(1)
           PY
             wait "$qemu_pid"
             status=$?
