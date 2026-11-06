@@ -296,6 +296,15 @@ jobs:
               exit 1
             fi
             grep -F 'DEDE_CI_DIAG:' "boot-logs/$mode.log" || true
+            # A reached boot target is insufficient if the kiosk service
+            # never launches its actual Xorg and Kodi processes.
+            for process in Xorg kodi.bin; do
+              if ! grep -Fq "DEDE_CI_DIAG: $process running" "boot-logs/$mode.log"; then
+                echo "$mode: kiosk process $process was not running at diagnostic time" >&2
+                tail -100 "boot-logs/$mode.log"
+                exit 1
+              fi
+            done
             # A timeout alone is NOT evidence of a successful boot.
             if ! grep -Eqi 'Reached target (Multi-User System|Graphical Interface)|login:' "boot-logs/$mode.log"; then
               echo "No login prompt or systemd boot target observed in $mode" >&2
