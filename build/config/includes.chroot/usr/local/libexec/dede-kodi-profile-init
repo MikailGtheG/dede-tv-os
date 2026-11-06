@@ -21,3 +21,29 @@ XML
 if [ ! -e "$profile/advancedsettings.xml" ] && [ ! -L "$profile/advancedsettings.xml" ]; then
   mv -n "$tmp" "$profile/advancedsettings.xml"
 fi
+
+
+# The built-in Kodi add-on is installed in the image by the pinned skin build.
+# Restrict JSON-RPC to this machine: TCP control is unauthenticated.
+# Never replace an existing administrator-managed Kodi profile.
+settings="$profile/guisettings.xml"
+skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
+if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
+  skin="skin.estuary"
+  if [ -f "$skin_addon" ] && grep -Fq 'id="skin.dede-tv"' "$skin_addon"; then
+    skin="skin.dede-tv"
+  fi
+  tmp_settings="$(mktemp "$profile/.dede-guisettings.XXXXXX")"
+  trap 'rm -f "$tmp" "$tmp_settings"' EXIT HUP INT TERM
+  cat > "$tmp_settings" <<XML
+<settings version="2">
+  <setting id="services.esenabled">true</setting>
+  <setting id="services.esallinterfaces">false</setting>
+  <setting id="services.webserver">false</setting>
+  <setting id="lookandfeel.skin">$skin</setting>
+</settings>
+XML
+  if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
+    mv -n "$tmp_settings" "$settings"
+  fi
+fi
