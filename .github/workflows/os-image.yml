@@ -28,6 +28,31 @@ jobs:
             live-build debootstrap xorriso squashfs-tools \
             grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common \
             ca-certificates python3 qemu-system-x86 ovmf
+      - name: Build pinned Rust TV core for the Debian 13 appliance
+        shell: bash
+        env:
+          DEDE_CORE_SHA: ba8b88009c64689d8bdf2ad5f871016b6deddf46
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get install -y --no-install-recommends git cargo rustc build-essential pkg-config
+          # Fetch an exact audited commit; never compile an arbitrary moving branch.
+          mkdir -p /tmp/dede-core-source
+          cd /tmp/dede-core-source
+          git init -q
+          git remote add origin https://github.com/MikailGtheG/dede-tv-core.git
+          git fetch --depth 1 origin "$DEDE_CORE_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$DEDE_CORE_SHA"
+          # The core currently has no committed Cargo.lock. Build only
+          # a pinned source revision; dependency locking is a separate
+          # remaining release gate, not a claim of reproducibility.
+          cargo build --release --bin dede-tv-core
+          test -x target/release/dede-tv-core
+          install -D -m 0755 target/release/dede-tv-core \
+            "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-core"
+          "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-core" --help \
+            >/dev/null 2>&1 || test "$?" -eq 2
       - name: Build prototype live ISO
         shell: bash
         run: |
