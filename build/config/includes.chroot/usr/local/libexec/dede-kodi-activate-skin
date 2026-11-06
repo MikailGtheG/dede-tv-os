@@ -58,7 +58,7 @@ def rpc(method, params=None, *, timeout=4):
                     if isinstance(document, dict) and document.get("id") == request_id:
                         if "error" in document:
                             raise RuntimeError(
-                                f"{method}: error {document['error'].get('code')}"
+                                f"{method}: error {document['error'].get('code') if isinstance(document['error'], dict) else 'malformed error response'}"
                             )
                         return document.get("result")
             except UnicodeDecodeError:
