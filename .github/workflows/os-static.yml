@@ -199,6 +199,14 @@ jobs:
           assert text.count("name: Upload installed package inventory") == 1
           assert text.count("name: Publish failed ISO run ID") == 1
           assert "pull_request_target" not in str(document.get("on", {}))
+          # Shell comments between QEMU line continuations caused a real
+          # failure: -audiodev was executed as a separate command.
+          qemu = text.split("timeout --signal=TERM --kill-after=5s 150s", 1)[1]
+          qemu = qemu.split("qemu_pid=$!", 1)[0].splitlines()
+          for previous, current in zip(qemu, qemu[1:]):
+              assert not (previous.rstrip().endswith(chr(92)) and
+                          current.lstrip().startswith("#")), (
+                  "Shell-breaking comment inside continued QEMU command", current)
           PY
       - name: Report latest trusted-branch ISO results
         env:
