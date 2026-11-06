@@ -80,6 +80,49 @@ jobs:
           HOME="$tmp" sh "$init"
           grep -qx protected "$tmp/protected"
           test -L "$settings"
+      - name: Validate bounded channel resume integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          script=build/config/includes.chroot/usr/local/libexec/dede-tv-resume
+          service=build/config/includes.chroot/etc/systemd/system/dede-tv-resume.service
+          hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
+          sh -n "$script"
+          systemd-analyze verify "$service"
+          grep -qx 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core' "$service"
+          grep -qx 'After=dede-kodi.service' "$service"
+          grep -Fq 'dede-tv-resume.service' "$hook"
+          grep -Fq 'chmod 0755 /usr/local/libexec/dede-tv-resume' "$hook"
+          temp="$(mktemp -d)"
+          trap 'rm -rf "$temp"' EXIT
+          export DEDE_CORE_BIN="$temp/core"
+          export DEDE_DB_PATH="$temp/channels.db"
+          export DEDE_MEDIA_ROOT="$temp/media"
+          export DEDE_RESUME_ATTEMPTS=3
+          export DEDE_RESUME_DELAY=0
+          # Missing binary or database is not a boot-time failure.
+          sh "$script"
+          cat > "$DEDE_CORE_BIN" <<'SH'
+          #!/bin/sh
+          count_file="${DEDE_DB_PATH}.attempts"
+          count=0
+          [ ! -f "$count_file" ] || count="$(cat "$count_file")"
+          count=$((count + 1))
+          printf '%s\n' "$count" > "$count_file"
+          [ "$1" = '--db' ] && [ "$3" = 'resume-last' ] || exit 8
+          [ "$count" -ge 3 ]
+          SH
+          chmod 755 "$DEDE_CORE_BIN"
+          touch "$DEDE_DB_PATH"
+          sh "$script"
+          test "$(cat "$DEDE_DB_PATH.attempts")" = 3
+          rm "$DEDE_DB_PATH.attempts"
+          export DEDE_RESUME_ATTEMPTS=2
+          if sh "$script"; then
+            echo 'Core failure was unexpectedly reported as successful' >&2
+            exit 1
+          fi
+          test "$(cat "$DEDE_DB_PATH.attempts")" = 2
       - name: Validate image workflow structure and audit
         shell: bash
         run: |
