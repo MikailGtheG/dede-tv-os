@@ -199,10 +199,11 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_SKIN_SHA: 5bcf74902a56426856933e3f09467bcb9b420c25' "$workflow"
-          grep -Fq 'DEDE_ESTUARY_SHA: e3b0c18450bf8a6d9129642f4371a03c72371646' "$workflow"
+          grep -Fq 'DEDE_SKIN_SHA: c5e07904894e733a3129a01582a74f0370a0c10c' "$workflow"
+          grep -Fq 'DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27' "$workflow"
           grep -Fq 'git sparse-checkout set addons/skin.estuary' "$workflow"
           grep -Fq 'usr/share/kodi/addons/skin.dede-tv/addon.xml' "$workflow"
+          grep -Fq 'gui.get("version") == "5.17.0"' "$workflow"
           grep -Fq 'assert addon.get("id") == "skin.dede-tv"' "$workflow"
           # A packaged skin must not become the default until Kodi can load it.
           ! grep -Riq 'skin.dede-tv' build/config/includes.chroot/home/ 2>/dev/null || {
