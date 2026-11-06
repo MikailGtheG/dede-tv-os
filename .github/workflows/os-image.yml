@@ -53,8 +53,17 @@ jobs:
           test -x target/release/dede-tv-core
           install -D -m 0755 target/release/dede-tv-core \
             "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-core"
-          "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-core" --help \
-            >/dev/null 2>&1 || test "$?" -eq 2
+          # Execute the packaged binary against a disposable SQLite DB.
+          # Do not require Kodi networking or provision a real subscriber URL.
+          core="$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-core"
+          smoke="$(mktemp -d)"
+          trap 'rm -rf "$smoke"' EXIT
+          touch "$smoke/film.mkv"
+          "$core" --db "$smoke/state.db" add "CI channel" "$smoke/film.mkv" 60000
+          test "$("$core" --db "$smoke/state.db" list)" = 'CI channel'
+          "$core" --db "$smoke/state.db" select 'CI channel'
+          test "$("$core" --db "$smoke/state.db" last)" = 'CI channel'
+          "$core" --db "$smoke/state.db" request-pvr 12 | grep -Fq '"channelid":12'
       - name: Build prototype live ISO
         shell: bash
         run: |
