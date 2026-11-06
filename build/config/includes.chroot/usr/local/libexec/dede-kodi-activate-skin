@@ -60,7 +60,8 @@ def desired_skin():
     if SETTINGS.is_symlink() or not SETTINGS.is_file():
         return None
     root = ET.parse(SETTINGS).getroot()
-    for item in root.findall("setting"):
+    # Kodi may rewrite guisettings.xml with settings nested in sections/categories.
+    for item in root.iter("setting"):
         if item.get("id") == "lookandfeel.skin":
             return item.text
     return None
