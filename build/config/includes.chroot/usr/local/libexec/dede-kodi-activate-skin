@@ -90,8 +90,8 @@ def run():
             rpc("Settings.SetSettingValue", {
                 "setting": "lookandfeel.skin", "value": "skin.dede-tv"
             })
-            actual = rpc("Settings.GetSkinSettings")
-            skin = (actual or {}).get("skin")
+            actual = rpc("Settings.GetSettingValue", {"setting": "lookandfeel.skin"})
+            skin = (actual or {}).get("value")
             if skin == "skin.dede-tv":
                 MARKER.write_text("skin.dede-tv\n", encoding="ascii")
                 print("DEDE_SETUP: actual loaded skin=skin.dede-tv")
