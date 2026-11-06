@@ -33,6 +33,17 @@ jobs:
         run: |
           set -euo pipefail
           cd build
+          # Serial login and boot probe are test fixtures only. Never enable
+          # them from build-image.sh or from the normal image boot hook.
+          serial_wants=config/includes.chroot/etc/systemd/system/getty.target.wants
+          mkdir -p "$serial_wants"
+          ln -sfn /lib/systemd/system/serial-getty@.service \
+            "$serial_wants/serial-getty@ttyS0.service"
+          timer_wants=config/includes.chroot/etc/systemd/system/timers.target.wants
+          mkdir -p "$timer_wants"
+          ln -sfn ../dede-kiosk-probe.timer \
+            "$timer_wants/dede-kiosk-probe.timer"
+          chmod 0755 config/includes.chroot/usr/local/bin/dede-kiosk-probe
           # CI-only diagnostics. These units are injected into the temporary
           # builder workspace, never committed to the production OS image tree.
           mkdir -p config/includes.chroot/etc/systemd/system/multi-user.target.wants
