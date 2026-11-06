@@ -325,7 +325,7 @@ jobs:
             set +e
             timeout --signal=TERM --kill-after=5s 150s \
               qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
-              -display none -vga std \
+              # Exercise the DRM/KMS path used by modern Linux guests rather than\n              # QEMU std VGA's legacy framebuffer. This is an experimental\n              # fix for the reproducible all-black post-boot capture.\n              -display none -vga none -device virtio-vga \
               -audiodev none,id=ci_audio \
               -device ich9-intel-hda \
               -device hda-duplex,audiodev=ci_audio \
