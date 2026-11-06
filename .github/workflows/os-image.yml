@@ -31,7 +31,7 @@ jobs:
       - name: Build pinned Rust TV core for the Debian 13 appliance
         shell: bash
         env:
-          DEDE_CORE_SHA: f52bc51e13acdcfa2347428f47f48bfc57512617
+          DEDE_CORE_SHA: 19a70d4ec4cbf1c85fdeaa494d4c74b40e52a36b
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
@@ -46,10 +46,9 @@ jobs:
           git fetch --depth 1 origin "$DEDE_CORE_SHA"
           git checkout -q --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$DEDE_CORE_SHA"
-          # The core currently has no committed Cargo.lock. Build only
-          # a pinned source revision; dependency locking is a separate
-          # remaining release gate, not a claim of reproducibility.
-          cargo build --release --bin dede-tv-core
+          # Both source revision and transitive dependency graph are pinned.
+          test -s Cargo.lock
+          cargo build --release --locked --bin dede-tv-core
           test -x target/release/dede-tv-core
           install -D -m 0755 target/release/dede-tv-core \
             "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-core"
