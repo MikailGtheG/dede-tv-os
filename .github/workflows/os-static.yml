@@ -109,6 +109,36 @@ jobs:
           printf '%s\n' '<addon id="skin.dede-tv"/>' > "$tmp/fake-skin/addon.xml"
           HOME="$tmp" DEDE_SKIN_ADDON="$tmp/fake-skin/addon.xml" sh "$init"
           grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
+      - name: Regression - Kodi default attribute in GUI settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This is Kodi's actual rewritten setting format observed in QEMU.
+          settings="$(mktemp)"
+          trap 'rm -f "$settings"' EXIT
+          cat > "$settings" <<'XML'
+          <setting id="services.esenabled" default="true">true</setting>
+          <setting id="services.esallinterfaces" default="true">false</setting>
+          <setting id="services.webserver" default="true">false</setting>
+          <setting id="lookandfeel.skin">skin.dede-tv</setting>
+          XML
+          for expected in \
+            'id="services.esenabled">true<' \
+            'id="services.esallinterfaces">false<' \
+            'id="services.webserver">false<' \
+            'id="lookandfeel.skin">skin.dede-tv<'; do
+            key="${expected%%>*}"
+            value="${expected#*>}"
+            grep -Eiq "${key//./\\.}[^>]*>${value}" "$settings"
+          done
+          # Must still reject an actually unsafe remote-control setting.
+          sed -i 's/id="services.esallinterfaces" default="true">false</id="services.esallinterfaces" default="true">true</' "$settings"
+          key='id="services.esallinterfaces"'
+          value='false<'
+          if grep -Eiq "${key//./\\.}[^>]*>${value}" "$settings"; then
+            echo 'Insecure remote-control setting was incorrectly accepted' >&2
+            exit 1
+          fi
       - name: Validate bounded channel resume integration
         shell: bash
         run: |
