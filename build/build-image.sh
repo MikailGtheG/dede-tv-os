@@ -6,13 +6,8 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "live-build must run as root inside an isolated builder" >&2
   exit 1
 fi
-# Surface the live-system login prompt on QEMU's serial port so the CI
-# verifies real userspace boot rather than relying on an opaque VGA console.
-# This is diagnostic access only; production images require a separate policy.
-serial_wants=config/includes.chroot/etc/systemd/system/getty.target.wants
-mkdir -p "$serial_wants"
-ln -sfn /lib/systemd/system/serial-getty@.service \
-  "$serial_wants/serial-getty@ttyS0.service"
+# No debug login consoles are enabled by the production-oriented builder.
+# GitHub CI injects any required serial-getty into its temporary workspace.
 # GitHub Contents API creates hook files without executable mode.
 chmod 0755 config/hooks/live/*.hook.chroot
 sh auto/config
