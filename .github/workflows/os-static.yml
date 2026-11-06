@@ -199,7 +199,7 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_SKIN_SHA: a226ed0b2f53e442ca018cca4379b50b50fbb7b7' "$workflow"
+          grep -Fq 'DEDE_SKIN_SHA: 5bcf74902a56426856933e3f09467bcb9b420c25' "$workflow"
           grep -Fq 'DEDE_ESTUARY_SHA: e3b0c18450bf8a6d9129642f4371a03c72371646' "$workflow"
           grep -Fq 'git sparse-checkout set addons/skin.estuary' "$workflow"
           grep -Fq 'usr/share/kodi/addons/skin.dede-tv/addon.xml' "$workflow"
