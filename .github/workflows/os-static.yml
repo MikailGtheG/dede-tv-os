@@ -47,6 +47,39 @@ jobs:
           ! grep -q 'timers.target.wants' "$hook"
           grep -Fq 'serial-getty@ttyS0.service' .github/workflows/os-image.yml
           grep -Fq 'dede-kiosk-probe.timer' .github/workflows/os-image.yml
+      - name: Test first-boot Kodi profile provisioning
+        shell: bash
+        run: |
+          set -euo pipefail
+          init=build/config/includes.chroot/usr/local/libexec/dede-kodi-profile-init
+          kiosk=build/config/includes.chroot/usr/local/bin/dede-kodi-kiosk
+          hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
+          sh -n "$init"
+          grep -Fq '/usr/local/libexec/dede-kodi-profile-init' "$kiosk"
+          grep -Fq 'chmod 0755 /usr/local/libexec/dede-kodi-profile-init' "$hook"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          HOME="$tmp" sh "$init"
+          settings="$tmp/.kodi/userdata/advancedsettings.xml"
+          test -s "$settings"
+          python3 - "$settings" <<'PY'
+          import sys
+          from xml.etree import ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          assert root.tag == "advancedsettings"
+          for key, expected in (("splash", "false"), ("fullscreen", "true"), ("showexitbutton", "false")):
+              assert root.findtext(key) == expected
+          PY
+          test "$(stat -c '%a' "$settings")" = 600
+          printf '%s\n' '<advancedsettings>custom</advancedsettings>' > "$settings"
+          HOME="$tmp" sh "$init"
+          grep -qx '<advancedsettings>custom</advancedsettings>' "$settings"
+          rm "$settings"
+          printf '%s\n' 'protected' > "$tmp/protected"
+          ln -s "$tmp/protected" "$settings"
+          HOME="$tmp" sh "$init"
+          grep -qx protected "$tmp/protected"
+          test -L "$settings"
       - name: Validate image workflow structure and audit
         shell: bash
         run: |
