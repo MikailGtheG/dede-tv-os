@@ -38,7 +38,7 @@ class FakeConnection:
         self.sent = data
 
     def recv(self, size):
-        return b'{"jsonrpc":"2.0","id":24011,"result":{"value":"skin.dede-tv"}}\\n'
+        return b'{"jsonrpc":"2.0","id":24011,"result":{"value":"skin.dede-tv"}}\n'
 
 
 class RpcDeadlineTests(unittest.TestCase):
