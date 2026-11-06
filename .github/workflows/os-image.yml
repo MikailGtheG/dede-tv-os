@@ -70,8 +70,8 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: 5bcf74902a56426856933e3f09467bcb9b420c25
-          DEDE_ESTUARY_SHA: e3b0c18450bf8a6d9129642f4371a03c72371646
+          DEDE_SKIN_SHA: c5e07904894e733a3129a01582a74f0370a0c10c
+          DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
           # Keep the custom skin opt-in until a Kodi runtime loading test is
@@ -85,7 +85,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$DEDE_SKIN_SHA"
           cd /tmp/dede-estuary-src
           git init -q
-          git remote add origin https://github.com/MikailGtheG/xbmc.git
+          git remote add origin https://github.com/xbmc/xbmc.git
           git sparse-checkout init --cone
           git sparse-checkout set addons/skin.estuary
           git fetch --depth 1 origin "$DEDE_ESTUARY_SHA"
@@ -581,6 +581,8 @@ jobs:
           from xml.etree import ElementTree as ET
           addon = ET.parse("/tmp/dede-skin-addon.xml").getroot()
           assert addon.get("id") == "skin.dede-tv", "Unexpected bundled skin"
+          gui=addon.find("./requires/import[@addon='xbmc.gui']")
+          assert gui is not None and gui.get("version") == "5.17.0", "Wrong Kodi 21.2 skin ABI"
           PY
           unsquashfs -cat "$squashfs" usr/share/kodi/addons/skin.dede-tv/xml/Home.xml > /tmp/dede-tv-home.xml
           python3 - <<'PY'
