@@ -31,17 +31,12 @@ jobs:
       - name: Build pinned Rust TV core for the Debian 13 appliance
         shell: bash
         env:
-          DEDE_CORE_SHA: ba8b88009c64689d8bdf2ad5f871016b6deddf46
+          DEDE_CORE_SHA: 1f5fc2b6d76553b0efa0f12ff1bfd13dcbf19eb6
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
-          apt-get install -y --no-install-recommends git curl ca-certificates build-essential pkg-config
-          # Debian 13's distro compiler can be older than APIs used by
-          # the core. Keep the CI toolchain explicit instead.
-          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
-            https://sh.rustup.rs -o /tmp/dede-rustup-init.sh
-          sh /tmp/dede-rustup-init.sh -y --profile minimal --default-toolchain 1.91.1
-          . "$HOME/.cargo/env"
+          apt-get install -y --no-install-recommends git cargo rustc ca-certificates build-essential pkg-config
+          # Core source supports Debian 13's compiler; avoid remote rustup bootstrapping.
           rustc --version
           # Fetch an exact audited commit; never compile an arbitrary moving branch.
           mkdir -p /tmp/dede-core-source
