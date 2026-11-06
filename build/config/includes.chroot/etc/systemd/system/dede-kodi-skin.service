@@ -11,7 +11,7 @@ Group=dede
 WorkingDirectory=/home/dede
 Environment=HOME=/home/dede
 ExecStart=/usr/bin/python3 /usr/local/libexec/dede-kodi-activate-skin
-TimeoutStartSec=180
+TimeoutStartSec=360
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/home/dede
