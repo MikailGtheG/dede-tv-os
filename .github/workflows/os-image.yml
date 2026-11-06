@@ -444,7 +444,12 @@ jobs:
               'id="services.esallinterfaces">false<' \
               'id="services.webserver">false<' \
               'id="lookandfeel.skin">skin.dede-tv<'; do
-              if ! grep -Fq "$expected" "boot-logs/$mode.log"; then
+              # Kodi normalizes GUI settings and may add default="true"
+              # between the id attribute and the setting value. Accept that
+              # harmless metadata without weakening the expected value.
+              key="${expected%%>*}"
+              value="${expected#*>}"
+              if ! grep -Eiq "${key//./\\.}[^>]*>${value}" "boot-logs/$mode.log"; then
                 echo "$mode: expected Kodi first-boot configuration missing: $expected" >&2
                 exit 1
               fi
