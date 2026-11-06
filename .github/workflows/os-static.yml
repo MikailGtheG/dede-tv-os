@@ -122,7 +122,9 @@ jobs:
           image = Path(".github/workflows/os-image.yml").read_text()
           assert "Addons.SetAddonEnabled" in script
           assert "Settings.SetSettingValue" in script
-          assert "Settings.GetSkinSettings" in script
+          assert 'rpc("Settings.GetSettingValue", {"setting": "lookandfeel.skin"})' in script
+          assert 'skin = (actual or {}).get("value")' in script
+          assert "Settings.GetSkinSettings" not in script
           assert "127.0.0.1" in script
           assert "NoNewPrivileges=true" in service
           assert "ProtectSystem=strict" in service
