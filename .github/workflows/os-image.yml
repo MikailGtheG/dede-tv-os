@@ -169,6 +169,45 @@ jobs:
             if [ -r /proc/net/tcp ]; then
               awk '$2 ~ /:2382$/ && $4 == "0A" {print "DEDE_CI_DIAG: JSONRPC_SOCKET=" $2}' /proc/net/tcp
             fi
+            # Inspect the active runtime setting via Kodi itself. A configured
+            # skin XML value does not prove the skin was loaded.
+            if command -v python3 >/dev/null 2>&1; then
+              python3 - <<'PY' || true
+          import json
+          import socket
+          request = json.dumps({"jsonrpc": "2.0",
+                                "method": "Settings.GetSettingValue",
+                                "params": {"setting": "lookandfeel.skin"},
+                                "id": 7331}).encode() + b"\\n"
+          try:
+              with socket.create_connection(("127.0.0.1", 9090), timeout=4) as conn:
+                  conn.settimeout(4)
+                  conn.sendall(request)
+                  response = b""
+                  for _ in range(32):
+                      chunk = conn.recv(4096)
+                      if not chunk:
+                          break
+                      response += chunk
+                      if len(response) > 131072:
+                          raise ValueError("response too large")
+                      decoder = json.JSONDecoder()
+                      remaining = response.decode("utf-8")
+                      while remaining.strip():
+                          try:
+                              document, size = decoder.raw_decode(remaining.lstrip())
+                          except json.JSONDecodeError:
+                              break
+                          remaining = remaining.lstrip()[size:]
+                          if document.get("id") == 7331:
+                              active = document.get("result", {}).get("value")
+                              print("DEDE_CI_DIAG: ACTIVE_SKIN=" + str(active))
+                              raise SystemExit(0)
+                  print("DEDE_CI_DIAG: ACTIVE_SKIN=unavailable")
+          except Exception as error:
+              print("DEDE_CI_DIAG: ACTIVE_SKIN=unavailable (" + type(error).__name__ + ")")
+          PY
+            fi
             echo 'DEDE_CI_DIAG: kernel graphics devices'
             ls -l /dev/dri /dev/fb0 2>&1 | head -20 || true
             echo 'DEDE_CI_DIAG: Xorg command line'
