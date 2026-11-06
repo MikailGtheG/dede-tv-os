@@ -115,6 +115,19 @@ jobs:
           set -euo pipefail
           python3 -m py_compile build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin
           python3 - <<'PY'
+          import runpy
+          import tempfile
+          from pathlib import Path
+          script = runpy.run_path("build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin")
+          with tempfile.TemporaryDirectory() as directory:
+              settings = Path(directory) / "guisettings.xml"
+              script["desired_skin"].__globals__["SETTINGS"] = settings
+              settings.write_text('<settings><section id="lookandfeel"><category id="lookandfeel"><setting id="lookandfeel.skin">skin.dede-tv</setting></category></section></settings>')
+              assert script["desired_skin"]() == "skin.dede-tv", "Nested Kodi skin preference not detected"
+              settings.write_text('<settings><section><setting id="lookandfeel.skin">skin.estuary</setting></section></settings>')
+              assert script["desired_skin"]() == "skin.estuary", "Administrator skin preference not respected"
+          PY
+          python3 - <<'PY'
           from pathlib import Path
           script = Path("build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin").read_text()
           service = Path("build/config/includes.chroot/etc/systemd/system/dede-kodi-skin.service").read_text()
