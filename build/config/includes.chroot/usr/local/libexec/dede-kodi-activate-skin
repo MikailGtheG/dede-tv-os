@@ -26,12 +26,16 @@ def rpc(method, params=None, *, timeout=4):
     if params is not None:
         request["params"] = params
     raw = json.dumps(request, separators=(",", ":")).encode() + b"\n"
+    deadline = time.monotonic() + timeout
     with socket.create_connection((HOST, PORT), timeout=timeout) as connection:
-        connection.settimeout(timeout)
         connection.sendall(raw)
         response = b""
         while len(response) < 131072:
-            part = connection.recv(4096)
+            remaining_time = deadline - time.monotonic()
+            if remaining_time <= 0:
+                raise TimeoutError(f"{method}: JSON-RPC deadline exceeded")
+            connection.settimeout(remaining_time)
+            part = connection.recv(min(4096, 131072 - len(response)))
             if not part:
                 break
             response += part
@@ -45,7 +49,7 @@ def rpc(method, params=None, *, timeout=4):
                     except json.JSONDecodeError:
                         break
                     remaining = remaining[consumed:].lstrip()
-                    if document.get("id") == request_id:
+                    if isinstance(document, dict) and document.get("id") == request_id:
                         if "error" in document:
                             raise RuntimeError(
                                 f"{method}: error {document['error'].get('code')}"
