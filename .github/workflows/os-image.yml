@@ -35,7 +35,14 @@ jobs:
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
-          apt-get install -y --no-install-recommends git cargo rustc build-essential pkg-config
+          apt-get install -y --no-install-recommends git curl ca-certificates build-essential pkg-config
+          # Debian 13's distro compiler can be older than APIs used by
+          # the core. Keep the CI toolchain explicit instead.
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            https://sh.rustup.rs -o /tmp/dede-rustup-init.sh
+          sh /tmp/dede-rustup-init.sh -y --profile minimal --default-toolchain 1.91.1
+          . "$HOME/.cargo/env"
+          rustc --version
           # Fetch an exact audited commit; never compile an arbitrary moving branch.
           mkdir -p /tmp/dede-core-source
           cd /tmp/dede-core-source
@@ -434,6 +441,7 @@ jobs:
             usr/local/bin/dede-kodi-kiosk \
             usr/local/libexec/dede-kodi-profile-init \
             usr/local/libexec/dede-tv-resume \
+            usr/local/bin/dede-tv-core \
             etc/systemd/system/dede-tv-resume.service \
             etc/systemd/system/multi-user.target.wants/dede-tv-resume.service \
             etc/passwd; do
@@ -442,6 +450,9 @@ jobs:
               exit 1
             }
           done
+          # Validate the actual bundled ELF executable, not just a file name.
+          unsquashfs -cat "$squashfs" usr/local/bin/dede-tv-core | head -c 4 \
+            | od -An -tx1 | tr -d ' \n' | grep -qx '7f454c46'
           unsquashfs -cat "$squashfs" etc/passwd | grep -q '^dede:'
           unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -Fq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'
           unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -Fq 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core'
