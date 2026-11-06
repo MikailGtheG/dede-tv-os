@@ -8,4 +8,5 @@ if [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
   exit 1
 fi
 export XDG_SESSION_TYPE=x11
+/usr/local/libexec/dede-kodi-profile-init
 exec /usr/bin/xinit /usr/bin/kodi --standalone -- /usr/bin/Xorg :0 -nolisten tcp -noreset vt1
