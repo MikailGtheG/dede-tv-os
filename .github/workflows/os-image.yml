@@ -178,7 +178,7 @@ jobs:
           request = json.dumps({"jsonrpc": "2.0",
                                 "method": "Settings.GetSettingValue",
                                 "params": {"setting": "lookandfeel.skin"},
-                                "id": 7331}).encode() + b"\\n"
+                                "id": 7331}).encode() + b"\n"
           try:
               with socket.create_connection(("127.0.0.1", 9090), timeout=4) as conn:
                   conn.settimeout(4)
