@@ -123,6 +123,18 @@ jobs:
             exit 1
           fi
           test "$(cat "$DEDE_DB_PATH.attempts")" = 2
+      - name: Validate pinned Rust core supply and ISO packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/os-image.yml
+          grep -Fq 'DEDE_CORE_SHA: ba8b88009c64689d8bdf2ad5f871016b6deddf46' "$workflow"
+          grep -Fq 'git fetch --depth 1 origin "$DEDE_CORE_SHA"' "$workflow"
+          grep -Fq 'test "$(git rev-parse HEAD)" = "$DEDE_CORE_SHA"' "$workflow"
+          grep -Fq 'cargo build --release --bin dede-tv-core' "$workflow"
+          grep -Fq 'install -D -m 0755 target/release/dede-tv-core' "$workflow"
+          grep -Fq 'usr/local/bin/dede-tv-core \\' "$workflow"
+          grep -Fq 'unsquashfs -cat "$squashfs" usr/local/bin/dede-tv-core' "$workflow"
       - name: Validate image workflow structure and audit
         shell: bash
         run: |
