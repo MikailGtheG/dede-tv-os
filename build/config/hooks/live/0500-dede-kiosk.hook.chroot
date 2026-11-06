@@ -6,6 +6,7 @@ if ! id dede >/dev/null 2>&1; then
     --shell /usr/sbin/nologin --groups video,audio,render,input dede
 fi
 chmod 0755 /usr/local/bin/dede-kodi-kiosk
+chmod 0755 /usr/local/libexec/dede-kodi-profile-init
 mkdir -p /etc/systemd/system/multi-user.target.wants
 ln -sfn ../dede-kodi.service /etc/systemd/system/multi-user.target.wants/dede-kodi.service
 # Optional boot probe stays disabled in normal images.
