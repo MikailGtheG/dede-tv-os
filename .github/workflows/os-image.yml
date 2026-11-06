@@ -70,7 +70,7 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: 815cede46dd8e786abf49962b06182bd673ae226
+          DEDE_SKIN_SHA: 4adf75816201c5dd4d1ca990731c49b70d64f8dc
           DEDE_ESTUARY_SHA: e3b0c18450bf8a6d9129642f4371a03c72371646
         run: |
           set -euo pipefail
@@ -559,6 +559,7 @@ jobs:
             usr/local/bin/dede-tv-core \
             usr/share/kodi/addons/skin.dede-tv/addon.xml \
             usr/share/kodi/addons/skin.dede-tv/xml/DialogPVRChannelsOSD.xml \
+            usr/share/kodi/addons/skin.dede-tv/xml/Home.xml \
             etc/systemd/system/dede-tv-resume.service \
             etc/systemd/system/multi-user.target.wants/dede-tv-resume.service \
             etc/passwd; do
@@ -575,6 +576,14 @@ jobs:
           from xml.etree import ElementTree as ET
           addon = ET.parse("/tmp/dede-skin-addon.xml").getroot()
           assert addon.get("id") == "skin.dede-tv", "Unexpected bundled skin"
+          PY
+          unsquashfs -cat "$squashfs" usr/share/kodi/addons/skin.dede-tv/xml/Home.xml > /tmp/dede-tv-home.xml
+          python3 - <<'PY'
+          from xml.etree import ElementTree as ET
+          home = ET.parse("/tmp/dede-tv-home.xml").getroot()
+          assert "DEDE TV" in [n.text for n in home.findall(".//label")]
+          assert "ActivateWindow(TVChannels)" in [n.text for n in home.findall(".//onclick")]
+          assert len(home.findall(".//control")) <= 8
           PY
           unsquashfs -cat "$squashfs" etc/passwd | grep -q '^dede:'
           unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -Fq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'
