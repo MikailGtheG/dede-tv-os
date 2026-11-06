@@ -67,15 +67,14 @@ def desired_skin():
 
 
 def run():
-    if MARKER.exists():
-        print("DEDE_SETUP: already initialized")
-        return 0
     if desired_skin() != "skin.dede-tv":
         print("DEDE_SETUP: administrator skin preference respected")
         return 0
     if not Path("/usr/share/kodi/addons/skin.dede-tv/addon.xml").is_file():
         print("DEDE_SETUP: packaged skin missing", file=sys.stderr)
         return 1
+    # A persisted marker is not proof that Kodi loaded the skin this boot.
+    # Always verify the live setting and recover after profile/addon changes.
     # Under software QEMU, the addon manager may need time to initialize.
     for attempt in range(75):
         try:
