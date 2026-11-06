@@ -7,7 +7,9 @@ if ! id dede >/dev/null 2>&1; then
 fi
 chmod 0755 /usr/local/bin/dede-kodi-kiosk
 chmod 0755 /usr/local/libexec/dede-kodi-profile-init
+chmod 0755 /usr/local/libexec/dede-tv-resume
 mkdir -p /etc/systemd/system/multi-user.target.wants
 ln -sfn ../dede-kodi.service /etc/systemd/system/multi-user.target.wants/dede-kodi.service
+ln -sfn ../dede-tv-resume.service /etc/systemd/system/multi-user.target.wants/dede-tv-resume.service
 # Optional boot probe stays disabled in normal images.
 # CI explicitly enables its timer when collecting diagnostic evidence.
