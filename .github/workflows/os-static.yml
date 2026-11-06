@@ -80,6 +80,35 @@ jobs:
           HOME="$tmp" sh "$init"
           grep -qx protected "$tmp/protected"
           test -L "$settings"
+          # The graphical settings and JSON-RPC permissions are independent
+          # of an administrator's advancedsettings.xml.
+          gui="$tmp/.kodi/userdata/guisettings.xml"
+          test -s "$gui"
+          python3 - "$gui" <<'PY'
+          import sys
+          from xml.etree import ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          values = {s.attrib["id"]: s.text for s in root.findall("setting")}
+          assert values["services.esenabled"] == "true"
+          assert values["services.esallinterfaces"] == "false"
+          assert values["services.webserver"] == "false"
+          assert values["lookandfeel.skin"] == "skin.estuary"
+          PY
+          test "$(stat -c '%a' "$gui")" = 600
+          printf '%s\n' '<settings>admin choice</settings>' > "$gui"
+          HOME="$tmp" sh "$init"
+          grep -qx '<settings>admin choice</settings>' "$gui"
+          rm "$gui"
+          printf '%s\n' 'protected gui' > "$tmp/gui-protected"
+          ln -s "$tmp/gui-protected" "$gui"
+          HOME="$tmp" sh "$init"
+          grep -qx 'protected gui' "$tmp/gui-protected"
+          test -L "$gui"
+          rm "$gui"
+          mkdir -p "$tmp/fake-skin"
+          printf '%s\n' '<addon id="skin.dede-tv"/>' > "$tmp/fake-skin/addon.xml"
+          HOME="$tmp" DEDE_SKIN_ADDON="$tmp/fake-skin/addon.xml" sh "$init"
+          grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
       - name: Validate bounded channel resume integration
         shell: bash
         run: |
