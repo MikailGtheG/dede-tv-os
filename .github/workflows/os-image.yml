@@ -449,6 +449,10 @@ jobs:
                 exit 1
               fi
             done
+            if ! grep -Fq 'DEDE_CI_DIAG: ACTIVE_SKIN=skin.dede-tv' "boot-logs/$mode.log"; then
+              echo "$mode: Kodi did not activate Dede TV skin at runtime" >&2
+              exit 1
+            fi
             # Kodi raw TCP control must never bind to the LAN.
             if grep -Eq 'DEDE_CI_DIAG: JSONRPC_SOCKET=(00000000|[^0][0-9A-F]{7}):2382' "boot-logs/$mode.log"; then
               echo "$mode: insecure Kodi JSON-RPC listener detected" >&2
