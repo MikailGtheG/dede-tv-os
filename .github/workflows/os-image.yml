@@ -325,7 +325,7 @@ jobs:
             set +e
             timeout --signal=TERM --kill-after=5s 150s \
               qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
-              -display none -vga none -device virtio-vga \
+              -display none -vga std \
               -audiodev none,id=ci_audio \
               -device ich9-intel-hda \
               -device hda-duplex,audiodev=ci_audio \
