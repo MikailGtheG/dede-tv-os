@@ -135,6 +135,21 @@ jobs:
           grep -Fq 'install -D -m 0755 target/release/dede-tv-core' "$workflow"
           grep -Fq 'usr/local/bin/dede-tv-core' "$workflow"
           grep -Fq 'unsquashfs -cat "$squashfs" usr/local/bin/dede-tv-core' "$workflow"
+      - name: Verify pinned skin integration remains opt-in
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/os-image.yml
+          grep -Fq 'DEDE_SKIN_SHA: 130ef3a8d8e084af2f5d9b27025250b7b41694cc' "$workflow"
+          grep -Fq 'DEDE_ESTUARY_SHA: e3b0c18450bf8a6d9129642f4371a03c72371646' "$workflow"
+          grep -Fq 'git sparse-checkout set addons/skin.estuary' "$workflow"
+          grep -Fq 'usr/share/kodi/addons/skin.dede-tv/addon.xml' "$workflow"
+          grep -Fq 'assert addon.get("id") == "skin.dede-tv"' "$workflow"
+          # A packaged skin must not become the default until Kodi can load it.
+          ! grep -Riq 'skin.dede-tv' build/config/includes.chroot/home/ 2>/dev/null || {
+            echo 'Skin was activated before a runtime loading test' >&2
+            exit 1
+          }
       - name: Validate image workflow structure and audit
         shell: bash
         run: |
