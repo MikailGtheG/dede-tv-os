@@ -128,10 +128,10 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_CORE_SHA: f52bc51e13acdcfa2347428f47f48bfc57512617' "$workflow"
+          grep -Fq 'DEDE_CORE_SHA: 19a70d4ec4cbf1c85fdeaa494d4c74b40e52a36b' "$workflow"
           grep -Fq 'git fetch --depth 1 origin "$DEDE_CORE_SHA"' "$workflow"
           grep -Fq 'test "$(git rev-parse HEAD)" = "$DEDE_CORE_SHA"' "$workflow"
-          grep -Fq 'cargo build --release --bin dede-tv-core' "$workflow"
+          grep -Fq 'cargo build --release --locked --bin dede-tv-core' "$workflow"
           grep -Fq 'install -D -m 0755 target/release/dede-tv-core' "$workflow"
           grep -Fq 'usr/local/bin/dede-tv-core' "$workflow"
           grep -Fq 'unsquashfs -cat "$squashfs" usr/local/bin/dede-tv-core' "$workflow"
