@@ -63,6 +63,34 @@ jobs:
           "$core" --db "$smoke/state.db" select 'CI channel'
           test "$("$core" --db "$smoke/state.db" last)" = 'CI channel'
           "$core" --db "$smoke/state.db" request-pvr 12 | grep -Fq '"channelid":12'
+      - name: Package pinned experimental Dede TV skin
+        shell: bash
+        env:
+          DEDE_SKIN_SHA: 130ef3a8d8e084af2f5d9b27025250b7b41694cc
+          DEDE_ESTUARY_SHA: e3b0c18450bf8a6d9129642f4371a03c72371646
+        run: |
+          set -euo pipefail
+          # Keep the custom skin opt-in until a Kodi runtime loading test is
+          # green; packaging alone must not replace a working fallback UI.
+          mkdir -p /tmp/dede-skin-src /tmp/dede-estuary-src
+          cd /tmp/dede-skin-src
+          git init -q
+          git remote add origin https://github.com/MikailGtheG/dede-tv-skin.git
+          git fetch --depth 1 origin "$DEDE_SKIN_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$DEDE_SKIN_SHA"
+          cd /tmp/dede-estuary-src
+          git init -q
+          git remote add origin https://github.com/MikailGtheG/xbmc.git
+          git sparse-checkout init --cone
+          git sparse-checkout set addons/skin.estuary
+          git fetch --depth 1 origin "$DEDE_ESTUARY_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$DEDE_ESTUARY_SHA"
+          python3 /tmp/dede-skin-src/scripts/build_skin.py \
+            /tmp/dede-estuary-src/addons/skin.estuary \
+            "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv"
+          test -f "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv/addon.xml"
       - name: Build prototype live ISO
         shell: bash
         run: |
