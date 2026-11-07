@@ -193,7 +193,11 @@ jobs:
           hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
           sh -n "$script"
           systemd-analyze verify "$service"
-          grep -qx "TimeoutStartSec=1000" "$service"
+          # Keep systemd's start deadline above the worst allowed retry budget:
+          # 60 calls * (10s timeout + 2s SIGKILL grace) + 59 * 10s delay.
+          max_runtime=$((60 * (10 + 2) + 59 * 10))
+          service_timeout="$(sed -n 's/^TimeoutStartSec=//p' "$service")"
+          test "$service_timeout" -gt "$max_runtime"
           grep -Fq 'timeout --signal=TERM --kill-after=2s "${call_timeout}s"' "$script"
           grep -qx 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core' "$service"
           grep -qx 'After=dede-kodi.service' "$service"
