@@ -19,6 +19,11 @@ cat > "$gui" <<'XML'
 <setting id='services.webserver'>true</setting></section></settings>
 XML
 reject 'single quotes and nested webserver'
+# Rejected profiles must not cause partial first-boot provisioning.
+if [ -e "$HOME/.kodi/userdata/advancedsettings.xml" ]; then
+  echo 'FAIL: unsafe GUI profile caused advancedsettings.xml to be written' >&2
+  exit 1
+fi
 cat > "$gui" <<'XML'
 <settings><setting id="lookandfeel.skin">skin.dede-tv</setting>
 <setting id="lookandfeel.skin">skin.dede-tv</setting></settings>
