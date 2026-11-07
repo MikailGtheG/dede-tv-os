@@ -184,6 +184,33 @@ jobs:
             echo 'Insecure remote-control setting was incorrectly accepted' >&2
             exit 1
           fi
+      - name: Regression - JSON-RPC socket allowlist in QEMU diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          # IPv6 ::1 is encoded as 000...01000000 in /proc/net/tcp6.
+          # All other IPv6 listeners (including :: and ::ffff:127.0.0.1)
+          # must fail the same filter used by the boot smoke test.
+          check_ipv6() {
+            printf '%s\\n' "$1" |
+              grep -aF 'DEDE_CI_DIAG: JSONRPC_SOCKET6=' |
+              grep -aEv 'JSONRPC_SOCKET6=00000000000000000000000001000000:2382([[:space:]]|$)'
+          }
+          if check_ipv6 'DEDE_CI_DIAG: JSONRPC_SOCKET6=00000000000000000000000001000000:2382'; then
+            echo 'IPv6 loopback was rejected' >&2
+            exit 1
+          fi
+          for address in \\
+            00000000000000000000000000000000 \\
+            00000000000000000000000002000000 \\
+            0000000000000000FFFF00000100007F; do
+            if ! check_ipv6 "DEDE_CI_DIAG: JSONRPC_SOCKET6=${address}:2382"; then
+              echo "Unsafe IPv6 listener was accepted: $address" >&2
+              exit 1
+            fi
+          done
+          # Require the actual image workflow to retain this precise check.
+          grep -Fq 'JSONRPC_SOCKET6=00000000000000000000000001000000:2382' .github/workflows/os-image.yml
       - name: Validate bounded channel resume integration
         shell: bash
         run: |
