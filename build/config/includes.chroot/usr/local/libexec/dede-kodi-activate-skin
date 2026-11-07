@@ -95,8 +95,10 @@ def run():
             details = rpc("Addons.GetAddonDetails", {
                 "addonid": "skin.dede-tv", "properties": ["enabled"]
             })
-            addon = (details or {}).get("addon", {})
-            if not addon.get("enabled", False):
+            addon = details.get("addon")
+            if not isinstance(addon, dict) or not isinstance(addon.get("enabled"), bool):
+                raise RuntimeError("Addons.GetAddonDetails: malformed addon response")
+            if not addon["enabled"]:
                 rpc("Addons.SetAddonEnabled", {
                     "addonid": "skin.dede-tv", "enabled": True
                 })
