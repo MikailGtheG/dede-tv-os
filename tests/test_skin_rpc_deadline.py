@@ -64,7 +64,7 @@ class RpcDeadlineTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 connection = FakeConnection()
                 reply = (b'{"jsonrpc":"2.0","id":24011,"result":'
-                         + payload + b'}\\n')
+                         + payload + b'}\n')
                 connection.recv = lambda size, reply=reply: reply
                 with patch.object(module.socket, "create_connection", return_value=connection):
                     with self.assertRaisesRegex(RuntimeError, "malformed result response"):
