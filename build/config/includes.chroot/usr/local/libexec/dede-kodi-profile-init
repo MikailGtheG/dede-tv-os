@@ -50,6 +50,12 @@ if [ -e "$settings" ] || [ -L "$settings" ]; then
     echo "Existing Kodi profile does not select the Dede TV skin; refusing kiosk startup" >&2
     exit 1
   fi
+  # Existing profiles must not expose Kodi control APIs to the LAN.
+  # Reject enabled webserver or non-loopback EventServer bindings.
+  if grep -Eq 'id="services\.(webserver|esallinterfaces)"[^>]*>[[:space:]]*true[[:space:]]*</setting>' "$settings"; then
+    echo "Existing Kodi profile enables network-facing control; refusing kiosk startup" >&2
+    exit 1
+  fi
 fi
 
 if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
