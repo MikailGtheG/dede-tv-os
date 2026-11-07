@@ -193,6 +193,8 @@ jobs:
           hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
           sh -n "$script"
           systemd-analyze verify "$service"
+          grep -qx "TimeoutStartSec=1000" "$service"
+          grep -Fq 'timeout --signal=TERM --kill-after=2s "${call_timeout}s"' "$script"
           grep -qx 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core' "$service"
           grep -qx 'After=dede-kodi.service' "$service"
           grep -Fq 'dede-tv-resume.service' "$hook"
@@ -227,6 +229,20 @@ jobs:
             exit 1
           fi
           test "$(cat "$DEDE_DB_PATH.attempts")" = 2
+          # A hung core must not block the kiosk resume service indefinitely.
+          cat > "$DEDE_CORE_BIN" <<'SH'
+          #!/bin/sh
+          sleep 30
+          SH
+          chmod 755 "$DEDE_CORE_BIN"
+          export DEDE_RESUME_ATTEMPTS=1
+          export DEDE_RESUME_CALL_TIMEOUT=1
+          start="$SECONDS"
+          if sh "$script"; then
+            echo "Hung core unexpectedly succeeded" >&2
+            exit 1
+          fi
+          test "$((SECONDS - start))" -le 5
       - name: Validate pinned Rust core supply and ISO packaging
         shell: bash
         run: |
