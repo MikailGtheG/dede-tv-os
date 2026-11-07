@@ -66,6 +66,15 @@ jobs:
           grep -Fq 'chmod 0755 /usr/local/libexec/dede-kodi-profile-init' "$hook"
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
+          # Missing skin must fail before creating any persistent Kodi profile.
+          if HOME="$tmp" DEDE_SKIN_ADDON="$tmp/missing.xml" sh "$init"; then
+            echo "Profile initialized without the Dede TV skin" >&2
+            exit 1
+          fi
+          test ! -e "$tmp/.kodi/userdata/guisettings.xml"
+          mkdir -p "$tmp/fake-skin"
+          printf '%s\n' '<addon id="skin.dede-tv"/>' > "$tmp/fake-skin/addon.xml"
+          export DEDE_SKIN_ADDON="$tmp/fake-skin/addon.xml"
           HOME="$tmp" sh "$init"
           settings="$tmp/.kodi/userdata/advancedsettings.xml"
           test -s "$settings"
@@ -99,7 +108,7 @@ jobs:
           assert values["services.esenabled"] == "true"
           assert values["services.esallinterfaces"] == "false"
           assert values["services.webserver"] == "false"
-          assert values["lookandfeel.skin"] == "skin.estuary"
+          assert values["lookandfeel.skin"] == "skin.dede-tv"
           PY
           test "$(stat -c '%a' "$gui")" = 600
           printf '%s\n' '<settings>admin choice</settings>' > "$gui"
@@ -112,9 +121,7 @@ jobs:
           grep -qx 'protected gui' "$tmp/gui-protected"
           test -L "$gui"
           rm "$gui"
-          mkdir -p "$tmp/fake-skin"
-          printf '%s\n' '<addon id="skin.dede-tv"/>' > "$tmp/fake-skin/addon.xml"
-          HOME="$tmp" DEDE_SKIN_ADDON="$tmp/fake-skin/addon.xml" sh "$init"
+          HOME="$tmp" sh "$init"
           grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
       - name: Test bounded Kodi JSON-RPC socket send
         run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
