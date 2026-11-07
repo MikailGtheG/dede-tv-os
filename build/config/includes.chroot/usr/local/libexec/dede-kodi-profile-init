@@ -5,6 +5,11 @@ set -eu
 umask 077
 : "${HOME:?Kodi HOME is not set}"
 profile="$HOME/.kodi/userdata"
+# Never follow a redirected profile directory into an arbitrary location.
+if [ -L "$HOME/.kodi" ] || [ -L "$profile" ]; then
+  echo "Symlinked Kodi profile directory; refusing kiosk startup" >&2
+  exit 1
+fi
 mkdir -p "$profile"
 advanced="$profile/advancedsettings.xml"
 settings="$profile/guisettings.xml"
