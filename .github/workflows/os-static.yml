@@ -167,7 +167,10 @@ jobs:
       - name: Regression - duplicate skin settings on one XML line
         shell: bash
         run: sh tests/test_profile_duplicate_skin.sh
-      - name: Regression - Kodi XML profile security\n        shell: bash\n        run: sh tests/test_profile_xml_security.sh\n      - name: Test bounded Kodi JSON-RPC socket send
+      - name: Regression - Kodi XML profile security
+        shell: bash
+        run: sh tests/test_profile_xml_security.sh
+      - name: Test bounded Kodi JSON-RPC socket send
         run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
       - name: Regression - malformed Kodi addon metadata
         run: python3 -m unittest discover -s tests -p "test_skin_addon_response.py" -v
