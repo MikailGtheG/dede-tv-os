@@ -148,6 +148,16 @@ jobs:
           grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
           HOME="$tmp" sh "$init"
           grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
+          # A valid skin alone must not permit network-facing Kodi controls.
+          for unsafe in services.webserver services.esallinterfaces; do
+            printf '%s\n' '<settings><setting id="lookandfeel.skin">skin.dede-tv</setting><setting id="'"$unsafe"'">true</setting></settings>' > "$gui"
+            if HOME="$tmp" sh "$init"; then
+              echo "Unsafe Kodi control setting accepted: $unsafe" >&2
+              exit 1
+            fi
+          done
+          rm "$gui"
+          HOME="$tmp" sh "$init"
           # Duplicate skin settings must be rejected, even if one is valid.
           sed -i 's@</settings>@<setting id="lookandfeel.skin">skin.estuary</setting></settings>@' "$gui"
           if HOME="$tmp" sh "$init"; then
