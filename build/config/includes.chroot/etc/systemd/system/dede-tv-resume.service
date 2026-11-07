@@ -12,7 +12,7 @@ Group=dede
 WorkingDirectory=/home/dede
 Environment=HOME=/home/dede
 ExecStart=/bin/sh /usr/local/libexec/dede-tv-resume
-TimeoutStartSec=1000
+TimeoutStartSec=1200
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
