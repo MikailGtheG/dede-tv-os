@@ -14,7 +14,7 @@ mkdir -p "$profile"
 advanced="$profile/advancedsettings.xml"
 settings="$profile/guisettings.xml"
 skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
-# Fail closed before writing any persistent Kodi settings. Never seed Estuary.
+# Validate the skin and existing GUI settings before creating any profile files. Never seed Estuary.
 if [ ! -f "$skin_addon" ] || ! grep -Fq 'id="skin.dede-tv"' "$skin_addon"; then
   echo "Dede TV skin metadata missing or invalid; refusing profile initialization" >&2
   exit 1
@@ -26,20 +26,6 @@ cleanup() {
   [ -z "$tmp_settings" ] || rm -f "$tmp_settings"
 }
 trap cleanup EXIT HUP INT TERM
-
-if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
-  tmp_advanced="$(mktemp "$profile/.dede-advancedsettings.XXXXXX")"
-  cat > "$tmp_advanced" <<'XML'
-<advancedsettings version="1.0">
-  <splash>false</splash>
-  <fullscreen>true</fullscreen>
-  <showexitbutton>false</showexitbutton>
-</advancedsettings>
-XML
-  if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
-    mv -n "$tmp_advanced" "$advanced"
-  fi
-fi
 
 # An existing profile may have been created by stock Kodi or an administrator.
 # Never launch the kiosk with a saved non-Dede skin selection.
@@ -73,6 +59,20 @@ PY
   then
     echo "Existing Kodi profile failed security validation; refusing kiosk startup" >&2
     exit 1
+  fi
+fi
+
+if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
+  tmp_advanced="$(mktemp "$profile/.dede-advancedsettings.XXXXXX")"
+  cat > "$tmp_advanced" <<'XML'
+<advancedsettings version="1.0">
+  <splash>false</splash>
+  <fullscreen>true</fullscreen>
+  <showexitbutton>false</showexitbutton>
+</advancedsettings>
+XML
+  if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
+    mv -n "$tmp_advanced" "$advanced"
   fi
 fi
 
