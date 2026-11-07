@@ -69,6 +69,18 @@ class RpcDeadlineTests(unittest.TestCase):
             result = module.rpc("Settings.GetSettingValue", timeout=1)
         self.assertEqual(result["value"], "skin.dede-tv")
 
+    def test_fragmented_reply_is_reassembled(self):
+        connection = FakeConnection()
+        chunks = iter([
+            b'{"jsonrpc":"2.0","id":24011,"res',
+            b'ult":{"value":"skin.dede-tv"}}',
+            b'\\n',
+        ])
+        connection.recv = lambda size: next(chunks)
+        with patch.object(module.socket, "create_connection", return_value=connection):
+            result = module.rpc("Settings.GetSettingValue", timeout=1)
+        self.assertEqual(result["value"], "skin.dede-tv")
+
     def test_wrong_reply_id_is_not_accepted(self):
         connection = FakeConnection()
         replies = iter([
