@@ -1,0 +1,21 @@
+# Explicit Debian 13 appliance baseline.
+# Kodi is initially the Debian-packaged version for integration testing;
+# our patched Kodi/PVR packages will be integrated only after their builds pass.
+linux-image-amd64
+live-boot
+live-boot-initramfs-tools
+live-config
+live-config-systemd
+systemd-sysv
+dbus
+udev
+ca-certificates
+kodi
+kodi-pvr-iptvsimple
+kodi-inputstream-adaptive
+mesa-va-drivers
+mesa-vulkan-drivers
+alsa-utils
+xserver-xorg-core
+xserver-xorg-video-fbdev
+xinit

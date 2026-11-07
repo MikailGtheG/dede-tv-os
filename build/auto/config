@@ -1,0 +1,15 @@
+#!/bin/sh
+# Debian 13 (trixie) exploratory live image; target: amd64 UEFI + BIOS.
+# Not an A/B production image. No custom Kodi fork is shipped in this phase.
+set -eu
+lb config noauto \
+  --mode debian \
+  --distribution trixie \
+  --architectures amd64 \
+  --binary-images iso-hybrid \
+  --debian-installer none \
+  --archive-areas "main non-free-firmware" \
+  --apt-recommends false \
+  --checksums sha256 \
+  --bootappend-live "boot=live components console=tty0 console=ttyS0,115200n8" \
+  "${@}"

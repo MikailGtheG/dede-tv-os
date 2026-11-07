@@ -1,0 +1,30 @@
+#!/bin/sh
+# Resume the selected channel after Kodi has started. No unattended writes
+# to the TV database are performed when the core is unavailable.
+set -eu
+core="${DEDE_CORE_BIN:-/usr/local/bin/dede-tv-core}"
+db="${DEDE_DB_PATH:-/home/dede/.local/share/dede-tv/channels.db}"
+media="${DEDE_MEDIA_ROOT:-/srv/dede-tv/media}"
+attempts="${DEDE_RESUME_ATTEMPTS:-20}"
+delay="${DEDE_RESUME_DELAY:-2}"
+call_timeout="${DEDE_RESUME_CALL_TIMEOUT:-5}"
+case "$attempts" in ''|*[!0-9]*) echo "Invalid resume attempt count" >&2; exit 2;; esac
+[ "$attempts" -ge 1 ] && [ "$attempts" -le 60 ] || exit 2
+case "$delay" in ''|*[!0-9]*) echo "Invalid resume delay" >&2; exit 2;; esac
+[ "$delay" -le 10 ] || exit 2
+case "$call_timeout" in ''|*[!0-9]*) echo "Invalid resume call timeout" >&2; exit 2;; esac
+[ "$call_timeout" -ge 1 ] && [ "$call_timeout" -le 10 ] || exit 2
+[ -x "$core" ] || { echo "Dede TV core not installed; skipping resume"; exit 0; }
+[ -f "$db" ] || { echo "No saved TV channel database; skipping resume"; exit 0; }
+attempt=1
+while [ "$attempt" -le "$attempts" ]; do
+  if timeout --signal=TERM --kill-after=2s "${call_timeout}s" "$core" --db "$db" resume-last "$media"; then
+    exit 0
+  fi
+  if [ "$attempt" -lt "$attempts" ]; then
+    sleep "$delay"
+  fi
+  attempt=$((attempt + 1))
+done
+echo "Dede TV resume failed after $attempts attempts" >&2
+exit 1

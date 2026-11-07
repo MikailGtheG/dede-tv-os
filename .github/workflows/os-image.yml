@@ -1,0 +1,716 @@
+name: Debian 13 prototype ISO
+on:
+  push:
+    branches: [feat/initial-foundation]
+    paths:
+      - 'build/**'
+      - '.github/workflows/os-image.yml'
+  workflow_dispatch:
+# Only the newest expensive ISO build for a branch should consume runners.
+concurrency:
+  group: dede-os-image-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  image:
+    # Privileged build chroots are ONLY allowed from owner-controlled branch.
+    # Never run this job with pull_request or pull_request_target events.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container:
+      image: debian:trixie
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Debian 13 live-build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            live-build debootstrap xorriso squashfs-tools \
+            grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common \
+            ca-certificates python3 qemu-system-x86 ovmf
+      - name: Build pinned Rust TV core for the Debian 13 appliance
+        shell: bash
+        env:
+          DEDE_CORE_SHA: 012ac5993c8ca7a70f8112e6ca3a5e7d4b4b54f9
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get install -y --no-install-recommends git cargo rustc ca-certificates build-essential pkg-config
+          # Core source supports Debian 13's compiler; avoid remote rustup bootstrapping.
+          rustc --version
+          # Fetch an exact audited commit; never compile an arbitrary moving branch.
+          mkdir -p /tmp/dede-core-source
+          cd /tmp/dede-core-source
+          git init -q
+          git remote add origin https://github.com/MikailGtheG/dede-tv-core.git
+          git fetch --depth 1 origin "$DEDE_CORE_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$DEDE_CORE_SHA"
+          # Both source revision and transitive dependency graph are pinned.
+          test -s Cargo.lock
+          cargo build --release --locked --bin dede-tv-core
+          test -x target/release/dede-tv-core
+          install -D -m 0755 target/release/dede-tv-core \
+            "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-core"
+          # Execute the packaged binary against a disposable SQLite DB.
+          # Do not require Kodi networking or provision a real subscriber URL.
+          core="$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-core"
+          smoke="$(mktemp -d)"
+          trap 'rm -rf "$smoke"' EXIT
+          touch "$smoke/film.mkv"
+          "$core" --db "$smoke/state.db" add "CI channel" "$smoke/film.mkv" 60000
+          test "$("$core" --db "$smoke/state.db" list)" = 'CI channel'
+          "$core" --db "$smoke/state.db" select 'CI channel'
+          test "$("$core" --db "$smoke/state.db" last)" = 'CI channel'
+          "$core" --db "$smoke/state.db" request-pvr 12 | grep -Fq '"channelid":12'
+      - name: Package pinned experimental Dede TV skin
+        shell: bash
+        env:
+          DEDE_SKIN_SHA: 9b29fbd2187e902cebe715aa389cd95b17dea622
+          DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
+        run: |
+          set -euo pipefail
+          # Keep the custom skin opt-in until a Kodi runtime loading test is
+          # green; packaging alone must not replace a working fallback UI.
+          mkdir -p /tmp/dede-skin-src /tmp/dede-estuary-src
+          cd /tmp/dede-skin-src
+          git init -q
+          git remote add origin https://github.com/MikailGtheG/dede-tv-skin.git
+          git fetch --depth 1 origin "$DEDE_SKIN_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$DEDE_SKIN_SHA"
+          cd /tmp/dede-estuary-src
+          git init -q
+          git remote add origin https://github.com/xbmc/xbmc.git
+          git sparse-checkout init --cone
+          git sparse-checkout set addons/skin.estuary
+          git fetch --depth 1 origin "$DEDE_ESTUARY_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$DEDE_ESTUARY_SHA"
+          python3 /tmp/dede-skin-src/scripts/build_skin.py \
+            /tmp/dede-estuary-src/addons/skin.estuary \
+            "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv"
+          test -f "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv/addon.xml"
+          for font in notosans-regular.ttf notomono-regular.ttf roboto-thin.ttf; do
+            test -s "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv/fonts/$font"
+          done
+      - name: Build prototype live ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd build
+          # Serial login and boot probe are test fixtures only. Never enable
+          # them from build-image.sh or from the normal image boot hook.
+          serial_wants=config/includes.chroot/etc/systemd/system/getty.target.wants
+          mkdir -p "$serial_wants"
+          ln -sfn /lib/systemd/system/serial-getty@.service \
+            "$serial_wants/serial-getty@ttyS0.service"
+          timer_wants=config/includes.chroot/etc/systemd/system/timers.target.wants
+          mkdir -p "$timer_wants"
+          ln -sfn ../dede-kiosk-probe.timer \
+            "$timer_wants/dede-kiosk-probe.timer"
+          chmod 0755 config/includes.chroot/usr/local/bin/dede-kiosk-probe
+          # CI-only diagnostics. These units are injected into the temporary
+          # builder workspace, never committed to the production OS image tree.
+          mkdir -p config/includes.chroot/etc/systemd/system/multi-user.target.wants
+          mkdir -p config/includes.chroot/usr/local/sbin
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-kiosk-diagnostics <<'SH'
+          #!/bin/sh
+          set -eu
+          sleep 55
+          {
+            echo 'DEDE_CI_DIAG: begin'
+            systemctl show dede-kodi.service -p ActiveState -p SubState -p ExecMainStatus -p NRestarts --no-pager || echo 'DEDE_CI_DIAG: systemctl show unavailable'
+            for name in Xorg xinit kodi kodi.bin; do
+              if pgrep -x "$name" >/dev/null 2>&1; then
+                echo "DEDE_CI_DIAG: $name running"
+              else
+                echo "DEDE_CI_DIAG: $name absent"
+              fi
+            done
+            for log in /home/dede/.local/share/xorg/Xorg.0.log /var/log/Xorg.0.log; do
+              if [ -f "$log" ]; then
+                echo "DEDE_CI_DIAG: found Xorg log at $log"
+                grep -F '(EE)' "$log" | tail -8 || true
+              fi
+            done
+            # Running processes are insufficient: a black VGA frame may
+            # indicate a Kodi renderer failure or an Xorg output mismatch.
+            for log in /home/dede/.kodi/temp/kodi.log /home/dede/.kodi/temp/kodi.old.log; do
+              if [ -r "$log" ]; then
+                echo "DEDE_CI_DIAG: Kodi log $log"
+                grep -Ei 'error|fatal|failed|render|display|glx|egl' "$log" | tail -25 || true
+              fi
+            done
+            for log in /home/dede/.local/share/xorg/Xorg.0.log /var/log/Xorg.0.log; do
+              if [ -r "$log" ]; then
+                echo "DEDE_CI_DIAG: Xorg display summary $log"
+                grep -Ei 'connected|disconnected|screen 0|virtual size|modeset|fbdev|\\(EE\\)' "$log" | tail -25 || true
+              fi
+            done
+            # A running Xorg process does not mean its display is visible
+            # through QEMU's emulated VGA. Record the actual X screen and
+            # connector state, without modifying the production kiosk.
+            if command -v xrandr >/dev/null 2>&1; then
+              echo 'DEDE_CI_DIAG: X display probe'
+              if command -v runuser >/dev/null 2>&1; then
+                timeout 8s runuser -u dede -- env DISPLAY=:0 XAUTHORITY=/home/dede/.Xauthority xrandr --query 2>&1 | head -45 || true
+              fi
+            fi
+            echo 'DEDE_CI_DIAG: X11 display and graphics diagnostics'
+            if command -v xrandr >/dev/null 2>&1; then
+              timeout 8s runuser -u dede -- env DISPLAY=:0 XAUTHORITY=/home/dede/.Xauthority xrandr --verbose 2>&1 | head -80 || true
+            fi
+            for path in /sys/class/drm/card*-*/status; do
+              [ -r "$path" ] || continue
+              printf 'DEDE_CI_DIAG: %s: ' "$path"
+              cat "$path" || true
+            done
+            echo 'DEDE_CI_DIAG: Kodi recent log'
+            if [ -r /home/dede/.kodi/temp/kodi.log ]; then
+              tail -75 /home/dede/.kodi/temp/kodi.log || true
+            fi
+            echo 'DEDE_CI_DIAG: Kodi service recent journal'
+            journalctl --no-pager -u dede-kodi.service -n 40 || true
+            echo 'DEDE_CI_DIAG: Kodi local playback API'
+            if [ -f /home/dede/.kodi/userdata/guisettings.xml ]; then
+              for key in services.esenabled services.esallinterfaces services.webserver lookandfeel.skin; do
+                grep -F "id=\"$key\"" /home/dede/.kodi/userdata/guisettings.xml | head -1 || true
+              done
+            fi
+            # The raw JSON-RPC TCP protocol is unauthenticated. Assert no
+            # non-loopback listener even if settings are accidentally changed.
+            if [ -r /proc/net/tcp ]; then
+              awk '$2 ~ /:2382$/ && $4 == "0A" {print "DEDE_CI_DIAG: JSONRPC_SOCKET=" $2}' /proc/net/tcp
+            fi
+            # IPv6 sockets are separate from /proc/net/tcp. Any IPv6
+            # listener violates the IPv4-loopback-only control boundary.
+            if [ -r /proc/net/tcp6 ]; then
+              awk '$2 ~ /:2382$/ && $4 == "0A" {print "DEDE_CI_DIAG: JSONRPC_SOCKET6=" $2}' /proc/net/tcp6
+            fi
+            # Inspect the active runtime setting via Kodi itself. A configured
+            # skin XML value does not prove the skin was loaded.
+            if command -v python3 >/dev/null 2>&1; then
+              python3 - <<'PY' || true
+          import json
+          import socket
+          request = json.dumps({"jsonrpc": "2.0",
+                                "method": "Settings.GetSettingValue",
+                                "params": {"setting": "lookandfeel.skin"},
+                                "id": 7331}).encode() + b"\n"
+          try:
+              with socket.create_connection(("127.0.0.1", 9090), timeout=4) as conn:
+                  conn.settimeout(4)
+                  conn.sendall(request)
+                  response = b""
+                  for _ in range(32):
+                      chunk = conn.recv(4096)
+                      if not chunk:
+                          break
+                      response += chunk
+                      if len(response) > 131072:
+                          raise ValueError("response too large")
+                      decoder = json.JSONDecoder()
+                      remaining = response.decode("utf-8")
+                      while remaining.strip():
+                          try:
+                              document, size = decoder.raw_decode(remaining.lstrip())
+                          except json.JSONDecodeError:
+                              break
+                          remaining = remaining.lstrip()[size:]
+                          if document.get("id") == 7331:
+                              active = document.get("result", {}).get("value")
+                              print("DEDE_CI_DIAG: ACTIVE_SKIN=" + str(active))
+                              raise SystemExit(0)
+                  print("DEDE_CI_DIAG: ACTIVE_SKIN=unavailable")
+          except Exception as error:
+              print("DEDE_CI_DIAG: ACTIVE_SKIN=unavailable (" + type(error).__name__ + ")")
+          PY
+            fi
+            echo 'DEDE_CI_DIAG: kernel graphics devices'
+            ls -l /dev/dri /dev/fb0 2>&1 | head -20 || true
+            echo 'DEDE_CI_DIAG: Xorg command line'
+            for pid in $(pgrep -x Xorg || true); do
+              tr '\\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
+              echo
+            done
+          } > /run/dede-ci-diagnostics.log 2>&1 || echo 'DEDE_CI_DIAG: probe failed' >> /run/dede-ci-diagnostics.log
+          echo 'DEDE_CI_DIAG: end' >> /run/dede-ci-diagnostics.log
+          # Keep the report even if the VM has no serial port; QEMU CI
+          # normally attaches ttyS0 and captures this output.
+          if [ -c /dev/ttyS0 ] && [ -w /dev/ttyS0 ]; then
+            cat /run/dede-ci-diagnostics.log > /dev/ttyS0 || true
+          else
+            cat /run/dede-ci-diagnostics.log
+          fi
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-diagnostics.service <<'UNIT'
+          [Unit]
+          Description=CI-only Kodi/Xorg boot diagnostics
+          After=dede-kodi.service
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-kiosk-diagnostics
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-diagnostics.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-diagnostics.service
+          sh build-image.sh
+          test -s live-image-amd64.hybrid.iso
+          sha256sum live-image-amd64.hybrid.iso > SHA256SUMS
+          test -s build.log
+      - name: Verify ISO integrity and boot metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd build
+          sha256sum --check --strict SHA256SUMS
+          # ISO9660 volume descriptor begins at sector 16 (2048-byte sectors).
+          test "$(dd if=live-image-amd64.hybrid.iso bs=1 skip=32769 count=5 status=none)" = CD001
+          # Require a real Linux root filesystem inside the ISO.
+          xorriso -osirrox on -indev live-image-amd64.hybrid.iso \
+            -extract /live/filesystem.squashfs /tmp/dede-filesystem.squashfs
+          test -s /tmp/dede-filesystem.squashfs
+          unsquashfs -s /tmp/dede-filesystem.squashfs | grep -q "Filesystem size"
+          # Require El Torito boot metadata rather than treating any ISO as bootable.
+          xorriso -indev live-image-amd64.hybrid.iso -report_el_torito plain > iso-boot-report.txt
+          # xorriso reports boot entries with platform-specific wording across versions.
+          # Validate both a boot catalog and at least one boot image via its stable
+          # mkisofs-compatible report flags, not human-readable report phrases.
+          xorriso -indev live-image-amd64.hybrid.iso -report_el_torito as_mkisofs > iso-boot-options.txt
+          grep -Eq -- '(^|[[:space:]])-c[[:space:]]' iso-boot-options.txt
+          grep -Eq -- '(^|[[:space:]])-b[[:space:]]|(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
+          # Both firmware modes are mandatory for the target hardware profile.
+          grep -Eq -- '(^|[[:space:]])-b[[:space:]]' iso-boot-options.txt
+          grep -Eq -- '(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
+          echo "ISO integrity, SquashFS and BIOS/UEFI El Torito entries verified" >> "$GITHUB_STEP_SUMMARY"
+      - name: Boot smoke test (BIOS and UEFI)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd build
+          iso="$PWD/live-image-amd64.hybrid.iso"
+          mkdir -p boot-logs
+          for mode in bios uefi; do
+            echo "Testing $mode boot"
+            firmware=()
+            if [ "$mode" = uefi ]; then
+              # Prefer the standard, non-secure-boot OVMF code image.
+              # Debian may ship strict-NX / Secure Boot variants which are
+              # unsuitable for QEMU's legacy -bios loader.
+              ovmf=""
+              for candidate in \
+                /usr/share/OVMF/OVMF_CODE_4M.fd \
+                /usr/share/OVMF/OVMF_CODE.fd; do
+                if [ -r "$candidate" ]; then
+                  ovmf="$candidate"
+                  break
+                fi
+              done
+              if [ -z "$ovmf" ]; then
+                echo "No supported OVMF firmware image found" >&2
+                ls -l /usr/share/OVMF >&2
+                exit 1
+              fi
+              # 4 MiB OVMF is a pflash firmware image, not a legacy -bios ROM.
+              # Use a writable copy of the matching VARS template per VM.
+              vars=""
+              for candidate in \
+                /usr/share/OVMF/OVMF_VARS_4M.fd \
+                /usr/share/OVMF/OVMF_VARS.fd; do
+                if [ -r "$candidate" ]; then
+                  vars="$candidate"
+                  break
+                fi
+              done
+              if [ -z "$vars" ]; then
+                echo "No OVMF variables template found" >&2
+                ls -l /usr/share/OVMF >&2
+                exit 1
+              fi
+              cp "$vars" "boot-logs/uefi-vars.fd"
+              firmware=(
+                -drive "if=pflash,format=raw,unit=0,readonly=on,file=$ovmf"
+                -drive "if=pflash,format=raw,unit=1,file=$PWD/boot-logs/uefi-vars.fd"
+              )
+            fi
+            # Keep a VGA snapshot for diagnosing silent bootloaders: serial-only
+            # logs cannot distinguish a GRUB menu from a kernel boot failure.
+            monitor="$PWD/boot-logs/$mode.monitor.sock"
+            # The guest previously had no audio hardware and Kodi repeatedly
+            # logged ActiveAE::InitSink errors. Provide emulated Intel HDA with
+            # a silent host backend (no host sound server required).
+            set +e
+            timeout --signal=TERM --kill-after=5s 150s \
+              qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
+              -display none -vga std \
+              -audiodev none,id=ci_audio \
+              -device ich9-intel-hda \
+              -device hda-duplex,audiodev=ci_audio \
+              -monitor "unix:$monitor,server=on,wait=off" -serial stdio \
+              -no-reboot -boot d \
+              -device ich9-ahci,id=ahci \
+              -drive if=none,id=cdrom,media=cdrom,readonly=on,format=raw,file="$iso" \
+              -device ide-cd,drive=cdrom,bus=ahci.0 \
+              "${firmware[@]}" > "boot-logs/$mode.log" 2>&1 &
+            qemu_pid=$!
+            sleep 25
+            python3 - "$monitor" "$PWD/boot-logs/$mode.ppm" <<'PY'
+          import socket
+          import sys
+
+          monitor, screenshot = sys.argv[1:]
+          try:
+              with socket.socket(socket.AF_UNIX) as sock:
+                  sock.settimeout(5)
+                  sock.connect(monitor)
+                  sock.sendall(("screendump " + screenshot + "\n").encode())
+                  try:
+                      sock.recv(4096)
+                  except TimeoutError:
+                      pass
+              print("VGA diagnostic capture requested:", screenshot)
+              # Debian live-build can wait indefinitely at the boot menu.
+              # Confirm the highlighted default entry before checking systemd.
+              with socket.socket(socket.AF_UNIX) as control:
+                  control.settimeout(5)
+                  control.connect(monitor)
+                  control.sendall(b"sendkey ret\n")
+              print("Sent ENTER to boot the default live system")
+          except OSError as exc:
+              print("Boot-menu VGA capture/control unavailable:", exc, file=sys.stderr)
+              sys.exit(1)
+          PY
+            boot_menu_status=$?
+            # A boot-menu screenshot cannot demonstrate that the kiosk ran.
+            # Capture the display again after Linux has had time to boot.
+            sleep 65
+            python3 - "$monitor" "$PWD/boot-logs/$mode-after-boot.ppm" <<'PY'
+          import socket
+          import sys
+
+          monitor, screenshot = sys.argv[1:]
+          try:
+              with socket.socket(socket.AF_UNIX) as sock:
+                  sock.settimeout(5)
+                  sock.connect(monitor)
+                  sock.sendall(("screendump " + screenshot + "\n").encode())
+                  try:
+                      sock.recv(4096)
+                  except TimeoutError:
+                      pass
+              from pathlib import Path
+              # HMP screendump is asynchronous. A P6 prefix alone does not
+              # prove the pixel payload is complete; wait for exact PPM size.
+              import time
+              capture = Path(screenshot)
+              deadline = time.monotonic() + 10
+              while time.monotonic() < deadline:
+                  try:
+                      with capture.open("rb") as fh:
+                          magic = fh.readline()
+                          dimensions = fh.readline().split()
+                          maxval = fh.readline()
+                          if magic != b"P6\n" or len(dimensions) != 2 or maxval.strip() != b"255":
+                              raise ValueError("incomplete PPM header")
+                          width, height = map(int, dimensions)
+                          if not (0 < width <= 8192 and 0 < height <= 8192):
+                              raise ValueError("invalid PPM dimensions")
+                          expected = fh.tell() + width * height * 3
+                      if capture.stat().st_size == expected:
+                          break
+                  except (FileNotFoundError, ValueError, OSError):
+                      pass
+                  time.sleep(0.2)
+              else:
+                  raise OSError("QEMU did not finish writing a complete PPM within 10s")
+              print("Verified post-boot VGA capture:", screenshot, capture.stat().st_size, "bytes")
+          except OSError as exc:
+              print("Post-boot VGA capture unavailable:", exc, file=sys.stderr)
+              sys.exit(1)
+          PY
+            capture_status=$?
+            wait "$qemu_pid"
+            status=$?
+            set -e
+            if [ "$boot_menu_status" -ne 0 ]; then
+              echo "$mode: boot-menu VGA capture/control failed (exit $boot_menu_status)" >&2
+              tail -100 "boot-logs/$mode.log"
+              exit 1
+            fi
+            if [ "$capture_status" -ne 0 ]; then
+              echo "$mode: post-boot VGA capture validation failed (exit $capture_status)" >&2
+              tail -100 "boot-logs/$mode.log"
+              exit 1
+            fi
+            if [ "$status" -ne 124 ] && [ "$status" -ne 0 ]; then
+              echo "QEMU failed for $mode (exit $status)" >&2
+              tail -100 "boot-logs/$mode.log"
+              exit 1
+            fi
+            # The CI-only guest diagnostic must actually execute and reach
+            # QEMU's serial log for both firmware modes.
+            if ! grep -Fq 'DEDE_CI_DIAG: end' "boot-logs/$mode.log"; then
+              echo "Missing guest Kodi/Xorg diagnostics for $mode" >&2
+              tail -80 "boot-logs/$mode.log"
+              exit 1
+            fi
+            grep -F 'DEDE_CI_DIAG:' "boot-logs/$mode.log" || true
+            # Integration is not complete if the new profile was ignored.
+            for expected in \
+              'id="services.esenabled">true<' \
+              'id="services.esallinterfaces">false<' \
+              'id="services.webserver">false<' \
+              'id="lookandfeel.skin">skin.dede-tv<'; do
+              # Kodi normalizes GUI settings and may add default="true"
+              # between the id attribute and the setting value. Accept that
+              # harmless metadata without weakening the expected value.
+              key="${expected%%>*}"
+              value="${expected#*>}"
+              if ! grep -Eiq "${key//./\\.}[^>]*>${value}" "boot-logs/$mode.log"; then
+                echo "$mode: expected Kodi first-boot configuration missing: $expected" >&2
+                exit 1
+              fi
+            done
+            if ! grep -Fq 'DEDE_CI_DIAG: ACTIVE_SKIN=skin.dede-tv' "boot-logs/$mode.log"; then
+              echo "$mode: Kodi did not activate Dede TV skin at runtime" >&2
+              exit 1
+            fi
+            # Kodi may legitimately open an IPv6 loopback listener even
+            # with esallinterfaces=false. Loopback is local-only; reject
+            # wildcard and non-loopback IPv6 bindings, not IPv6 itself.
+            # /proc/net/tcp6 encodes ::1 as 000...01000000.
+            if grep -aF 'DEDE_CI_DIAG: JSONRPC_SOCKET6=' "boot-logs/$mode.log" \
+              | grep -aEv 'JSONRPC_SOCKET6=00000000000000000000000001000000:2382([[:space:]]|$)'; then
+              echo "$mode: unexpected non-loopback IPv6 Kodi JSON-RPC listener detected" >&2
+              exit 1
+            fi
+            # Deny every IPv4 listener except the single approved loopback
+            # address. The previous regex missed addresses starting with 0,
+            # including 0200007F (127.0.0.2), and other unexpected bindings.
+            if grep -E 'DEDE_CI_DIAG: JSONRPC_SOCKET=[0-9A-F]{8}:2382' "boot-logs/$mode.log" \
+              | grep -Fv 'DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382'; then
+              echo "$mode: unexpected Kodi JSON-RPC IPv4 listener detected" >&2
+              exit 1
+            fi
+            if ! grep -Fq 'DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382' "boot-logs/$mode.log"; then
+              echo "$mode: local Kodi JSON-RPC is not listening on 127.0.0.1:9090" >&2
+              exit 1
+            fi
+            # A reached boot target is insufficient if the kiosk service
+            # never launches its actual Xorg and Kodi processes.
+            for process in Xorg kodi.bin; do
+              if ! grep -Fq "DEDE_CI_DIAG: $process running" "boot-logs/$mode.log"; then
+                echo "$mode: kiosk process $process was not running at diagnostic time" >&2
+                tail -100 "boot-logs/$mode.log"
+                exit 1
+              fi
+            done
+            # A timeout alone is NOT evidence of a successful boot.
+            if ! grep -Eqi 'Reached target (Multi-User System|Graphical Interface)|login:' "boot-logs/$mode.log"; then
+              echo "No login prompt or systemd boot target observed in $mode" >&2
+              tail -100 "boot-logs/$mode.log"
+              exit 1
+            fi
+          done
+          {
+            echo "## QEMU boot smoke test"
+            echo "| Firmware | Result |"
+            echo "| --- | --- |"
+            echo "| BIOS | Boot target/login observed |"
+            echo "| UEFI | Boot target/login observed |"
+            echo ""
+            echo "This confirms a boot smoke test, not Kodi playback or hardware readiness."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload QEMU boot logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dede-tv-qemu-boot-logs
+          path: build/boot-logs/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Reject blank post-boot VGA display
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          for mode in ("bios", "uefi"):
+              path = Path(f"build/boot-logs/{mode}-after-boot.ppm")
+              if not path.is_file():
+                  raise SystemExit(f"{mode}: no post-boot display captured")
+              with path.open("rb") as image:
+                  magic = image.readline().strip()
+                  dimensions = image.readline().split()
+                  max_value = image.readline().strip()
+                  if magic != b"P6" or len(dimensions) != 2 or max_value != b"255":
+                      raise SystemExit(f"{mode}: unexpected PPM header")
+                  width, height = map(int, dimensions)
+                  pixels = image.read()
+              if len(pixels) != width * height * 3:
+                  raise SystemExit(f"{mode}: incomplete display capture")
+              illuminated = sum(value != 0 for value in pixels)
+              coverage = illuminated / len(pixels)
+              print(f"{mode}: visible nonblack byte fraction {coverage:.4%}")
+              if coverage < 0.001:
+                  raise SystemExit(
+                      f"{mode}: completely blank or near-black screen; "
+                      "Linux boot alone does not prove Kodi kiosk rendering"
+                  )
+              # A stock Kodi splash is not a TV picture. The current Debian
+              # package's splash has a cyan logo at 50% x / 55% y against a
+              # nearly black background at 10% x / 10% y. This is a targeted
+              # regression guard, not a general-purpose visual classifier.
+              def sample(fx, fy):
+                  offset = (int(height * fy) * width + int(width * fx)) * 3
+                  return tuple(pixels[offset:offset + 3])
+              logo = sample(0.50, 0.55)
+              background = sample(0.10, 0.10)
+              if (logo[2] > 140 and logo[1] > 100 and
+                      logo[2] > logo[0] * 1.7 and max(background) < 45):
+                  raise SystemExit(
+                      f"{mode}: stock Kodi splash still visible after boot "
+                      f"(logo={logo}, background={background}); "
+                      "TV playback has not been demonstrated"
+                  )
+          PY
+      - name: Audit installed packages and image footprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd build
+          # Inspect the built filesystem, not merely the requested package list.
+          squashfs="$(find binary/live -maxdepth 1 -type f -name 'filesystem.squashfs' -print -quit)"
+          test -n "$squashfs"
+          # Validate the actual appliance wiring inside SquashFS, not only
+          # that packages were requested by the manifest.
+          for embedded in \
+            etc/systemd/system/dede-kodi.service \
+            etc/systemd/system/multi-user.target.wants/dede-kodi.service \
+            usr/local/bin/dede-kodi-kiosk \
+            usr/local/libexec/dede-kodi-profile-init \
+            usr/local/libexec/dede-tv-resume \
+            usr/local/bin/dede-tv-core \
+            usr/share/kodi/addons/skin.dede-tv/addon.xml \
+            usr/share/kodi/addons/skin.dede-tv/xml/DialogPVRChannelsOSD.xml \
+            usr/share/kodi/addons/skin.dede-tv/xml/Home.xml \
+            etc/systemd/system/dede-tv-resume.service \
+            etc/systemd/system/multi-user.target.wants/dede-tv-resume.service \
+            etc/passwd; do
+            unsquashfs -cat "$squashfs" "$embedded" >/dev/null || {
+              echo "Missing kiosk image component: $embedded" >&2
+              exit 1
+            }
+          done
+          # Validate the actual bundled ELF executable, not just a file name.
+          unsquashfs -cat "$squashfs" usr/local/bin/dede-tv-core > /tmp/dede-core-audit
+          test "$(od -An -tx1 -N4 /tmp/dede-core-audit | tr -d '[:space:]')" = '7f454c46'
+          unsquashfs -cat "$squashfs" usr/share/kodi/addons/skin.dede-tv/addon.xml > /tmp/dede-skin-addon.xml
+          python3 - <<'PY'
+          from xml.etree import ElementTree as ET
+          addon = ET.parse("/tmp/dede-skin-addon.xml").getroot()
+          assert addon.get("id") == "skin.dede-tv", "Unexpected bundled skin"
+          gui=addon.find("./requires/import[@addon='xbmc.gui']")
+          assert gui is not None and gui.get("version") == "5.17.0", "Wrong Kodi 21.2 skin ABI"
+          # The Linux runtime must be able to resolve its lowercase font paths.
+          PY
+          unsquashfs -cat "$squashfs" usr/share/kodi/addons/skin.dede-tv/xml/Home.xml > /tmp/dede-tv-home.xml
+          python3 - <<'PY'
+          from xml.etree import ElementTree as ET
+          home = ET.parse("/tmp/dede-tv-home.xml").getroot()
+          assert "DEDE TV" in [n.text for n in home.findall(".//label")]
+          assert "ActivateWindow(TVChannels)" in [n.text for n in home.findall(".//onclick")]
+          assert len(home.findall(".//control")) <= 8
+          PY
+          unsquashfs -cat "$squashfs" etc/passwd | grep -q '^dede:'
+          unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -Fq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'
+          unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -Fq 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core'
+          unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -Fq 'ExecStart=/bin/sh /usr/local/libexec/dede-tv-resume'
+          unsquashfs -cat "$squashfs" var/lib/dpkg/status > installed-dpkg-status
+          test -s installed-dpkg-status
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          status = Path("installed-dpkg-status").read_text()
+          packages = []
+          for block in status.split("\n\n"):
+              name = re.search(r"(?m)^Package: (.+)$", block)
+              installed = re.search(r"(?m)^Status: install ok installed$", block)
+              if name and installed:
+                  packages.append(name.group(1))
+          packages.sort()
+          if not packages:
+              raise SystemExit("No installed Debian packages found in SquashFS")
+          # An ISO without the playback engine is not a useful TV prototype.
+          required = ("linux-image-amd64", "kodi", "kodi-pvr-iptvsimple")
+          missing = [name for name in required if name not in packages]
+          if missing:
+              raise SystemExit("Missing installed TV packages: " + ", ".join(missing))
+          Path("installed-packages.txt").write_text("\n".join(packages) + "\n")
+          print(f"Installed packages: {len(packages)}")
+          for prefix in ("apache2", "mysql-server", "postgresql", "openssh-server"):
+              matches = [p for p in packages if p == prefix or p.startswith(prefix + "-")]
+              if matches:
+                  print(f"Review potentially unnecessary service: {', '.join(matches)}")
+          PY
+          du -h "$squashfs" live-image-amd64.hybrid.iso
+      - name: Upload installed package inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: dede-tv-package-inventory
+          path: build/installed-packages.txt
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dede-tv-iso-build-diagnostics
+          path: |
+            build/build.log
+            build/iso-boot-report.txt
+            build/iso-boot-options.txt
+            build/installed-dpkg-status
+            build/chroot/debootstrap/debootstrap.log
+          retention-days: 3
+          if-no-files-found: warn
+      # Keep the built ISO available even if QEMU fails: this allows
+      # reproducing firmware/boot regressions locally without rebuilding.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dede-tv-debian13-prototype-iso
+          path: |
+            build/live-image-amd64.hybrid.iso
+            build/SHA256SUMS
+          retention-days: 1
+          if-no-files-found: warn
+
+  report-failure:
+    needs: image
+    if: ${{ always() && needs.image.result == 'failure' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Publish failed ISO run ID and result for diagnosis
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+          RESULT: ${{ needs.image.result }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --title "Dede TV OS ISO/QEMU ${RESULT} (run ${RUN_ID})" \
+            --body "ISO/QEMU workflow result: ${RESULT}\n\nRun ID: ${RUN_ID}\nRun: ${RUN_URL}\nCommit: ${COMMIT}\n\nA successful job result is only a smoke-test result, not full TV readiness."
+

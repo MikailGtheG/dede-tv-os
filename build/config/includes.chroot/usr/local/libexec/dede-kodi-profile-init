@@ -1,0 +1,74 @@
+#!/bin/sh
+# First boot only: configure local Kodi playback API and the packaged TV skin.
+# Respect existing administrator-managed Kodi settings on subsequent boots.
+set -eu
+umask 077
+: "${HOME:?Kodi HOME is not set}"
+profile="$HOME/.kodi/userdata"
+# Never follow a redirected profile directory into an arbitrary location.
+if [ -L "$HOME/.kodi" ] || [ -L "$profile" ]; then
+  echo "Symlinked Kodi profile directory; refusing kiosk startup" >&2
+  exit 1
+fi
+mkdir -p "$profile"
+advanced="$profile/advancedsettings.xml"
+settings="$profile/guisettings.xml"
+skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
+# Fail closed before writing any persistent Kodi settings. Never seed Estuary.
+if [ ! -f "$skin_addon" ] || ! grep -Fq 'id="skin.dede-tv"' "$skin_addon"; then
+  echo "Dede TV skin metadata missing or invalid; refusing profile initialization" >&2
+  exit 1
+fi
+tmp_advanced=
+tmp_settings=
+cleanup() {
+  [ -z "$tmp_advanced" ] || rm -f "$tmp_advanced"
+  [ -z "$tmp_settings" ] || rm -f "$tmp_settings"
+}
+trap cleanup EXIT HUP INT TERM
+
+if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
+  tmp_advanced="$(mktemp "$profile/.dede-advancedsettings.XXXXXX")"
+  cat > "$tmp_advanced" <<'XML'
+<advancedsettings version="1.0">
+  <splash>false</splash>
+  <fullscreen>true</fullscreen>
+  <showexitbutton>false</showexitbutton>
+</advancedsettings>
+XML
+  if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
+    mv -n "$tmp_advanced" "$advanced"
+  fi
+fi
+
+# An existing profile may have been created by stock Kodi or an administrator.
+# Never launch the kiosk with a saved non-Dede skin selection.
+if [ -e "$settings" ] || [ -L "$settings" ]; then
+  # Reject ambiguous duplicate skin settings as well as stock-skin profiles.
+  skin_entries=$(grep -Ec 'id="lookandfeel\.skin"' "$settings" 2>/dev/null || true)
+  if [ "$skin_entries" != 1 ] || [ ! -f "$settings" ] || ! grep -Eq '<setting[[:space:]]+id="lookandfeel\.skin"[^>]*>skin\.dede-tv</setting>' "$settings"; then
+    echo "Existing Kodi profile does not select the Dede TV skin; refusing kiosk startup" >&2
+    exit 1
+  fi
+  # Existing profiles must not expose Kodi control APIs to the LAN.
+  # Reject enabled webserver or non-loopback EventServer bindings.
+  if grep -Eq 'id="services\.(webserver|esallinterfaces)"[^>]*>[[:space:]]*true[[:space:]]*</setting>' "$settings"; then
+    echo "Existing Kodi profile enables network-facing control; refusing kiosk startup" >&2
+    exit 1
+  fi
+fi
+
+if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
+  tmp_settings="$(mktemp "$profile/.dede-guisettings.XXXXXX")"
+  cat > "$tmp_settings" <<XML
+<settings version="2">
+  <setting id="services.esenabled">true</setting>
+  <setting id="services.esallinterfaces">false</setting>
+  <setting id="services.webserver">false</setting>
+  <setting id="lookandfeel.skin">skin.dede-tv</setting>
+</settings>
+XML
+  if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
+    mv -n "$tmp_settings" "$settings"
+  fi
+fi
