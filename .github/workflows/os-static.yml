@@ -111,18 +111,33 @@ jobs:
           assert values["lookandfeel.skin"] == "skin.dede-tv"
           PY
           test "$(stat -c '%a' "$gui")" = 600
+          # Reject pre-existing profiles without the required skin.
           printf '%s\n' '<settings>admin choice</settings>' > "$gui"
-          HOME="$tmp" sh "$init"
+          if HOME="$tmp" sh "$init"; then
+            echo 'Invalid existing Kodi profile was accepted' >&2
+            exit 1
+          fi
           grep -qx '<settings>admin choice</settings>' "$gui"
           rm "$gui"
           printf '%s\n' 'protected gui' > "$tmp/gui-protected"
           ln -s "$tmp/gui-protected" "$gui"
-          HOME="$tmp" sh "$init"
+          if HOME="$tmp" sh "$init"; then
+            echo 'Symlinked Kodi GUI profile was accepted' >&2
+            exit 1
+          fi
           grep -qx 'protected gui' "$tmp/gui-protected"
           test -L "$gui"
           rm "$gui"
           HOME="$tmp" sh "$init"
           grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
+          HOME="$tmp" sh "$init"
+          grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
+          # Duplicate skin settings must be rejected, even if one is valid.
+          sed -i 's@</settings>@<setting id="lookandfeel.skin">skin.estuary</setting></settings>@' "$gui"
+          if HOME="$tmp" sh "$init"; then
+            echo 'Ambiguous Kodi skin selection was accepted' >&2
+            exit 1
+          fi
       - name: Test bounded Kodi JSON-RPC socket send
         run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
       - name: Regression - malformed Kodi addon metadata
