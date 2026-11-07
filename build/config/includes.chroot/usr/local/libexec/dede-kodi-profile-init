@@ -44,16 +44,34 @@ fi
 # An existing profile may have been created by stock Kodi or an administrator.
 # Never launch the kiosk with a saved non-Dede skin selection.
 if [ -e "$settings" ] || [ -L "$settings" ]; then
-  # Reject ambiguous duplicate skin settings as well as stock-skin profiles.
-  skin_entries=$(grep -oE 'id="lookandfeel\.skin"' "$settings" 2>/dev/null | wc -l | tr -d '[:space:]')
-  if [ "$skin_entries" != 1 ] || [ ! -f "$settings" ] || ! grep -Eq '<setting[[:space:]]+id="lookandfeel\.skin"[^>]*>skin\.dede-tv</setting>' "$settings"; then
-    echo "Existing Kodi profile does not select the Dede TV skin; refusing kiosk startup" >&2
-    exit 1
-  fi
-  # Existing profiles must not expose Kodi control APIs to the LAN.
-  # Reject enabled webserver or non-loopback EventServer bindings.
-  if grep -Eq 'id="services\.(webserver|esallinterfaces)"[^>]*>[[:space:]]*true[[:space:]]*</setting>' "$settings"; then
-    echo "Existing Kodi profile enables network-facing control; refusing kiosk startup" >&2
+  # Parse XML rather than matching lines: Kodi may nest settings, change
+  # attribute order, or serialize values across multiple lines.
+  if [ ! -f "$settings" ] || [ -L "$settings" ] || ! python3 - "$settings" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+try:
+    root = ET.parse(sys.argv[1]).getroot()
+    if root.tag != "settings":
+        raise ValueError("unexpected Kodi settings root")
+    values = {}
+    for setting in root.iter("setting"):
+        key = setting.get("id")
+        if key in ("lookandfeel.skin", "services.webserver", "services.esallinterfaces"):
+            if key in values:
+                raise ValueError("duplicate security-sensitive Kodi setting")
+            values[key] = (setting.text or "").strip()
+    if values.get("lookandfeel.skin") != "skin.dede-tv":
+        raise ValueError("Dede TV skin is not selected")
+    if any(values.get(key, "false").lower() != "false" for key in
+           ("services.webserver", "services.esallinterfaces")):
+        raise ValueError("network-facing Kodi controls are enabled")
+except (ET.ParseError, OSError, ValueError) as exc:
+    print(f"Unsafe Kodi profile: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    echo "Existing Kodi profile failed security validation; refusing kiosk startup" >&2
     exit 1
   fi
 fi
