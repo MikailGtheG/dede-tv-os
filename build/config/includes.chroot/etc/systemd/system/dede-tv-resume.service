@@ -2,6 +2,8 @@
 Description=Dede TV restore last channel after Kodi startup
 After=dede-kodi.service
 Requires=dede-kodi.service
+# Propagate Kodi restarts to this oneshot; Wants= alone only starts it initially.
+PartOf=dede-kodi.service
 ConditionFileIsExecutable=/usr/local/bin/dede-tv-core
 ConditionPathExists=/home/dede/.local/share/dede-tv/channels.db
 
