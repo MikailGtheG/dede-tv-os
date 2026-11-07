@@ -201,6 +201,11 @@ jobs:
           grep -Fq 'timeout --signal=TERM --kill-after=2s "${call_timeout}s"' "$script"
           grep -qx 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core' "$service"
           grep -qx 'After=dede-kodi.service' "$service"
+          # Resume must be requested on every Kodi start, not only at boot.
+          # Requires/After in the resume unit alone does not propagate restarts.
+          kodi_unit=build/config/includes.chroot/etc/systemd/system/dede-kodi.service
+          grep -Eq '^Wants=.*(^|[[:space:]])dede-tv-resume\.service([[:space:]]|$)' "$kodi_unit"
+          ! grep -Eq '^After=.*dede-tv-resume\.service' "$kodi_unit"
           grep -Fq 'dede-tv-resume.service' "$hook"
           grep -Fq 'chmod 0755 /usr/local/libexec/dede-tv-resume' "$hook"
           temp="$(mktemp -d)"
