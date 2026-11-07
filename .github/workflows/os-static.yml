@@ -164,6 +164,9 @@ jobs:
             echo 'Ambiguous Kodi skin selection was accepted' >&2
             exit 1
           fi
+      - name: Regression - duplicate skin settings on one XML line
+        shell: bash
+        run: sh tests/test_profile_duplicate_skin.sh
       - name: Test bounded Kodi JSON-RPC socket send
         run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
       - name: Regression - malformed Kodi addon metadata
