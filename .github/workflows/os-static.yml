@@ -32,6 +32,9 @@ jobs:
           done
           grep -qx 'User=dede' "$unit"
           grep -qx 'NoNewPrivileges=true' "$unit"
+          # A clean Kodi exit must not strand the appliance on a blank screen.
+          grep -qx 'Restart=always' "$unit"
+          grep -qx 'RestartSec=5' "$unit"
           grep -qx 'RuntimeDirectory=dede-tv' "$unit"
           grep -qx 'RuntimeDirectoryMode=0700' "$unit"
           grep -qx 'Environment=XDG_RUNTIME_DIR=/run/dede-tv' "$unit"
