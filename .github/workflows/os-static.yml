@@ -192,7 +192,7 @@ jobs:
           # All other IPv6 listeners (including :: and ::ffff:127.0.0.1)
           # must fail the same filter used by the boot smoke test.
           check_ipv6() {
-            printf '%s\\n' "$1" |
+            printf '%s\n' "$1" |
               grep -aF 'DEDE_CI_DIAG: JSONRPC_SOCKET6=' |
               grep -aEv 'JSONRPC_SOCKET6=00000000000000000000000001000000:2382([[:space:]]|$)'
           }
@@ -200,9 +200,9 @@ jobs:
             echo 'IPv6 loopback was rejected' >&2
             exit 1
           fi
-          for address in \\
-            00000000000000000000000000000000 \\
-            00000000000000000000000002000000 \\
+          for address in \
+            00000000000000000000000000000000 \
+            00000000000000000000000002000000 \
             0000000000000000FFFF00000100007F; do
             if ! check_ipv6 "DEDE_CI_DIAG: JSONRPC_SOCKET6=${address}:2382"; then
               echo "Unsafe IPv6 listener was accepted: $address" >&2
