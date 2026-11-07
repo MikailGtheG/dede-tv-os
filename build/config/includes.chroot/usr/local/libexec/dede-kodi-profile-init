@@ -15,7 +15,19 @@ advanced="$profile/advancedsettings.xml"
 settings="$profile/guisettings.xml"
 skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
 # Validate the skin and existing GUI settings before creating any profile files. Never seed Estuary.
-if [ ! -f "$skin_addon" ] || ! grep -Fq 'id="skin.dede-tv"' "$skin_addon"; then
+if [ ! -f "$skin_addon" ] || ! python3 - "$skin_addon" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+try:
+    root = ET.parse(sys.argv[1]).getroot()
+    if root.tag != "addon" or root.get("id") != "skin.dede-tv":
+        raise ValueError("unexpected Kodi addon identity")
+except (ET.ParseError, OSError, ValueError) as exc:
+    print(f"Invalid Dede TV addon metadata: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+then
   echo "Dede TV skin metadata missing or invalid; refusing profile initialization" >&2
   exit 1
 fi
