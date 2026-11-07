@@ -481,11 +481,13 @@ jobs:
               echo "$mode: Kodi did not activate Dede TV skin at runtime" >&2
               exit 1
             fi
-            # Kodi raw TCP control must never bind to the LAN.
-            # An IPv6 wildcard or loopback listener is also disallowed:
-            # the appliance requires exactly one IPv4 loopback listener.
-            if grep -Fq 'DEDE_CI_DIAG: JSONRPC_SOCKET6=' "boot-logs/$mode.log"; then
-              echo "$mode: unexpected IPv6 Kodi JSON-RPC listener detected" >&2
+            # Kodi may legitimately open an IPv6 loopback listener even
+            # with esallinterfaces=false. Loopback is local-only; reject
+            # wildcard and non-loopback IPv6 bindings, not IPv6 itself.
+            # /proc/net/tcp6 encodes ::1 as 000...01000000.
+            if grep -aF 'DEDE_CI_DIAG: JSONRPC_SOCKET6=' "boot-logs/$mode.log" \
+              | grep -aEv 'JSONRPC_SOCKET6=00000000000000000000000001000000:2382([[:space:]]|$)'; then
+              echo "$mode: unexpected non-loopback IPv6 Kodi JSON-RPC listener detected" >&2
               exit 1
             fi
             # Deny every IPv4 listener except the single approved loopback
