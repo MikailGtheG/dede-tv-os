@@ -44,6 +44,10 @@ jobs:
           ! grep -q -- '--uid 1000' "$hook"
           grep -q 'nolisten tcp' "$kiosk"
           grep -q 'Kodi runtime directory is unavailable' "$kiosk"
+          # The appliance must never fall back to Kodi's general-purpose UI.
+          grep -Fq 'skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml' "$kiosk"
+          grep -Fq 'refusing to expose the Kodi interface' "$kiosk"
+          grep -Fq 'exit 1' "$kiosk"
           systemd-analyze verify "$unit" "$probe_unit" "$probe_timer"
           # Debug login and diagnostic timer are only enabled inside CI.
           ! grep -q 'serial-getty@ttyS0.service' build/build-image.sh
