@@ -60,7 +60,10 @@ def rpc(method, params=None, *, timeout=4):
                             raise RuntimeError(
                                 f"{method}: error {document['error'].get('code') if isinstance(document['error'], dict) else 'malformed error response'}"
                             )
-                        return document.get("result")
+                        result = document.get("result")
+                        if not isinstance(result, dict):
+                            raise RuntimeError(f"{method}: malformed result response")
+                        return result
             except UnicodeDecodeError:
                 continue
     raise RuntimeError(f"No bounded JSON-RPC reply for {method}")
