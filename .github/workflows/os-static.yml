@@ -111,7 +111,7 @@ jobs:
           grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
       - name: Test bounded Kodi JSON-RPC socket send
         run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
-      - name: Validate first-boot skin activation and real Kodi skin detection
+      - name: Regression - malformed Kodi addon metadata\n        run: python3 -m unittest discover -s tests -p "test_skin_addon_response.py" -v\n      - name: Validate first-boot skin activation and real Kodi skin detection
         shell: bash
         run: |
           set -euo pipefail
