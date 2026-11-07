@@ -74,7 +74,7 @@ class RpcDeadlineTests(unittest.TestCase):
         chunks = iter([
             b'{"jsonrpc":"2.0","id":24011,"res',
             b'ult":{"value":"skin.dede-tv"}}',
-            b'\\n',
+            b'\n',
         ])
         connection.recv = lambda size: next(chunks)
         with patch.object(module.socket, "create_connection", return_value=connection):
