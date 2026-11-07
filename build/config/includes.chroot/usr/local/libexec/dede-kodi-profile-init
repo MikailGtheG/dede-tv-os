@@ -63,7 +63,7 @@ try:
             values[key] = (setting.text or "").strip()
     if values.get("lookandfeel.skin") != "skin.dede-tv":
         raise ValueError("Dede TV skin is not selected")
-    if any(values.get(key, "false").lower() != "false" for key in
+    if any(values.get(key, "").lower() != "false" for key in
            ("services.webserver", "services.esallinterfaces")):
         raise ValueError("network-facing Kodi controls are enabled")
 except (ET.ParseError, OSError, ValueError) as exc:
