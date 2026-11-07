@@ -9,6 +9,11 @@ mkdir -p "$profile"
 advanced="$profile/advancedsettings.xml"
 settings="$profile/guisettings.xml"
 skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
+# Fail closed before writing any persistent Kodi settings. Never seed Estuary.
+if [ ! -f "$skin_addon" ] || ! grep -Fq 'id="skin.dede-tv"' "$skin_addon"; then
+  echo "Dede TV skin metadata missing or invalid; refusing profile initialization" >&2
+  exit 1
+fi
 tmp_advanced=
 tmp_settings=
 cleanup() {
@@ -32,17 +37,13 @@ XML
 fi
 
 if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
-  skin=skin.estuary
-  if [ -f "$skin_addon" ] && grep -Fq 'id="skin.dede-tv"' "$skin_addon"; then
-    skin=skin.dede-tv
-  fi
   tmp_settings="$(mktemp "$profile/.dede-guisettings.XXXXXX")"
   cat > "$tmp_settings" <<XML
 <settings version="2">
   <setting id="services.esenabled">true</setting>
   <setting id="services.esallinterfaces">false</setting>
   <setting id="services.webserver">false</setting>
-  <setting id="lookandfeel.skin">$skin</setting>
+  <setting id="lookandfeel.skin">skin.dede-tv</setting>
 </settings>
 XML
   if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
