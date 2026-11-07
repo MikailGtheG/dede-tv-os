@@ -66,6 +66,22 @@ jobs:
           grep -Fq 'chmod 0755 /usr/local/libexec/dede-kodi-profile-init' "$hook"
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
+          # Reject redirected profile directories before any settings are written.
+          mkdir -p "$tmp/redirected" "$tmp/.kodi"
+          ln -s "$tmp/redirected" "$tmp/.kodi/userdata"
+          if HOME="$tmp" DEDE_SKIN_ADDON="$tmp/missing.xml" sh "$init"; then
+            echo 'Symlinked userdata directory was accepted' >&2
+            exit 1
+          fi
+          test ! -e "$tmp/redirected/guisettings.xml"
+          rm "$tmp/.kodi/userdata"
+          rmdir "$tmp/.kodi"
+          ln -s "$tmp/redirected" "$tmp/.kodi"
+          if HOME="$tmp" DEDE_SKIN_ADDON="$tmp/missing.xml" sh "$init"; then
+            echo 'Symlinked .kodi directory was accepted' >&2
+            exit 1
+          fi
+          rm "$tmp/.kodi"
           # Missing skin must fail before creating any persistent Kodi profile.
           if HOME="$tmp" DEDE_SKIN_ADDON="$tmp/missing.xml" sh "$init"; then
             echo "Profile initialized without the Dede TV skin" >&2
