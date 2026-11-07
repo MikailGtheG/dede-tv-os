@@ -1,7 +1,7 @@
 [Unit]
 Description=Dede TV Kodi kiosk (alpha)
 After=systemd-user-sessions.service systemd-logind.service
-Wants=systemd-logind.service
+Wants=systemd-logind.service dede-tv-resume.service
 Conflicts=getty@tty1.service
 StartLimitIntervalSec=60
 StartLimitBurst=5
