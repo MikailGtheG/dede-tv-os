@@ -147,7 +147,7 @@ XML
     pending="$profile/.dede-skin-first-boot-pending"
     if [ ! -e "$pending" ] && [ ! -L "$pending" ]; then
       tmp_pending="$(mktemp "$profile/.dede-skin-pending.XXXXXX")"
-      printf 'skin.dede-tv\\n' > "$tmp_pending"
+      printf 'skin.dede-tv\n' > "$tmp_pending"
       mv -n "$tmp_pending" "$pending"
       rm -f "$tmp_pending"
     fi
