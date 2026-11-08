@@ -19,6 +19,7 @@ printf '%s\n' "$*" >> "$DEDE_TEST_LOG"
 case "$DEDE_TEST_MODE" in
   fail) exit 1 ;;
   success) exit 0 ;;
+  hang) sleep 10 ;;
   *) exit 92 ;;
 esac
 EOF
@@ -48,4 +49,20 @@ if sh "$script"; then
   exit 1
 fi
 test ! -s "$tmp/calls"
+# Exercise the real GNU timeout, not the argument-checking mock above.
+# A hung playback request must terminate within the configured deadline.
+: > "$tmp/calls"
+export DEDE_TEST_MODE=hang DEDE_RESUME_ATTEMPTS=1 DEDE_RESUME_CALL_TIMEOUT=1
+export PATH=/usr/bin:/bin
+start=$(date +%s)
+if sh "$script"; then
+  echo 'Hung playback request was incorrectly accepted' >&2
+  exit 1
+fi
+elapsed=$(( $(date +%s) - start ))
+if [ "$elapsed" -gt 5 ]; then
+  echo "Hung playback request exceeded timeout budget: ${elapsed}s" >&2
+  exit 1
+fi
+test "$(wc -l < "$tmp/calls")" -eq 1
 echo 'Resume service regression checks passed'
