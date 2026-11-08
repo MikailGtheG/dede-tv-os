@@ -25,7 +25,7 @@ case "$DEDE_TEST_MODE" in
     fi
     exit 0 ;;
   success) exit 0 ;;
-  hang) sleep 10 ;;
+  hang) exec sleep 10 ;;
   *) exit 92 ;;
 esac
 EOF
@@ -72,6 +72,16 @@ if sh "$script"; then
   exit 1
 fi
 test ! -s "$tmp/calls"
+# A missing timeout executable must fail immediately instead of retrying an
+# unbounded core call or silently reporting a successful TV resume.
+: > "$tmp/calls"
+mkdir -p "$tmp/no-timeout"
+if PATH="$tmp/no-timeout" /bin/sh "$script" > "$tmp/no-timeout-output" 2>&1; then
+  echo 'Resume succeeded without the required timeout executable' >&2
+  exit 1
+fi
+test ! -s "$tmp/calls"
+grep -q 'GNU timeout is required' "$tmp/no-timeout-output"
 # Exercise the real GNU timeout, not the argument-checking mock above.
 # A hung playback request must terminate within the configured deadline.
 : > "$tmp/calls"
