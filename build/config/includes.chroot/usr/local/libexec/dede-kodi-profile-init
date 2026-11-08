@@ -26,7 +26,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 try:
-    root = ET.parse(sys.argv[1]).getroot()
+    # Refuse XML DTD/entity declarations before parsing untrusted profiles.\n    with open(sys.argv[1], "rb") as source:\n        xml = source.read()\n    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():\n        raise ValueError("DTD/entity declarations are not allowed")\n    root = ET.fromstring(xml)
     if root.tag != "advancedsettings":
         raise ValueError("unexpected advancedsettings root")
 except (ET.ParseError, OSError, ValueError) as exc:
@@ -44,7 +44,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 try:
-    root = ET.parse(sys.argv[1]).getroot()
+    # Refuse XML DTD/entity declarations before parsing untrusted profiles.\n    with open(sys.argv[1], "rb") as source:\n        xml = source.read()\n    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():\n        raise ValueError("DTD/entity declarations are not allowed")\n    root = ET.fromstring(xml)
     if root.tag != "addon" or root.get("id") != "skin.dede-tv":
         raise ValueError("unexpected Kodi addon identity")
 except (ET.ParseError, OSError, ValueError) as exc:
@@ -73,7 +73,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 try:
-    root = ET.parse(sys.argv[1]).getroot()
+    # Refuse XML DTD/entity declarations before parsing untrusted profiles.\n    with open(sys.argv[1], "rb") as source:\n        xml = source.read()\n    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():\n        raise ValueError("DTD/entity declarations are not allowed")\n    root = ET.fromstring(xml)
     if root.tag != "settings":
         raise ValueError("unexpected Kodi settings root")
     values = {}
