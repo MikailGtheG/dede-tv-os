@@ -66,6 +66,44 @@ class JsonRpcResponseTests(unittest.TestCase):
                 module.rpc("Settings.SetSettingValue")
 
 
+class FirstBootRecoveryTests(unittest.TestCase):
+    def test_pending_marker_requires_exact_provisioning_value(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            pending = Path(d) / ".dede-skin-first-boot-pending"
+            with patch.object(module, "PENDING", pending):
+                self.assertFalse(module.first_boot_pending())
+                pending.write_text("skin.estuary\n")
+                self.assertFalse(module.first_boot_pending())
+                pending.write_text("skin.dede-tv\n")
+                self.assertTrue(module.first_boot_pending())
+
+    def test_boot_fallback_is_recovered_once_then_admin_is_respected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            pending = Path(d) / ".dede-skin-first-boot-pending"
+            marker = Path(d) / ".dede-skin-activated"
+            pending.write_text("skin.dede-tv\n")
+            with patch.object(module, "PENDING", pending), \
+                 patch.object(module, "MARKER", marker), \
+                 patch.object(module, "desired_skin", return_value="skin.estuary"), \
+                 patch.object(module.Path, "is_file", autospec=True, side_effect=lambda p: True), \
+                 patch.object(module, "rpc", side_effect=[
+                     {"addon": {"enabled": True}},
+                     "OK",
+                     {"value": "skin.dede-tv"},
+                 ]) as rpc:
+                self.assertEqual(module.run(), 0)
+                self.assertFalse(pending.exists())
+                self.assertTrue(marker.exists())
+                self.assertEqual(rpc.call_count, 3)
+            with patch.object(module, "PENDING", pending), \
+                 patch.object(module, "desired_skin", return_value="skin.estuary"), \
+                 patch.object(module, "rpc") as rpc:
+                self.assertEqual(module.run(), 0)
+                rpc.assert_not_called()
+
+
 class AddonResponseTests(unittest.TestCase):
     def test_malformed_addon_metadata_is_retried_without_crash(self):
         for addon in (None, [], "invalid", {"enabled": "false"}, {"enabled": None}, {}):
