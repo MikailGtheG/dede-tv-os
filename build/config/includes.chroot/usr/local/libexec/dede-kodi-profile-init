@@ -19,6 +19,24 @@ if [ -L "$advanced" ] || { [ -e "$advanced" ] && [ ! -f "$advanced" ]; }; then
   echo "Unsafe Kodi advancedsettings path; refusing kiosk startup" >&2
   exit 1
 fi
+# Reject malformed existing advancedsettings before Kodi attempts to load it.
+# Preserve valid administrator-managed settings without rewriting them.
+if [ -f "$advanced" ] && ! python3 - "$advanced" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+try:
+    root = ET.parse(sys.argv[1]).getroot()
+    if root.tag != "advancedsettings":
+        raise ValueError("unexpected advancedsettings root")
+except (ET.ParseError, OSError, ValueError) as exc:
+    print(f"Invalid Kodi advancedsettings: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  echo "Invalid Kodi advancedsettings; refusing kiosk startup" >&2
+  exit 1
+fi
 skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
 # Validate the skin and existing GUI settings before creating any profile files. Never seed Estuary.
 if [ ! -f "$skin_addon" ] || ! python3 - "$skin_addon" <<'PY'
