@@ -18,4 +18,13 @@ if XDG_RUNTIME_DIR="$tmp/missing" sh "$script" >"$tmp/runtime-output" 2>&1; then
   exit 1
 fi
 grep -q 'Kodi runtime directory is unavailable' "$tmp/runtime-output"
+# Reject a symlinked runtime path even when its target is writable.
+# Otherwise a redirected runtime could be accepted before profile setup.
+mkdir -p "$tmp/redirected-runtime"
+ln -s "$tmp/redirected-runtime" "$tmp/runtime-link"
+if XDG_RUNTIME_DIR="$tmp/runtime-link" sh "$script" >"$tmp/symlink-output" 2>&1; then
+  echo 'Kiosk accepted a symlinked runtime directory' >&2
+  exit 1
+fi
+grep -q 'Kodi runtime directory is unavailable' "$tmp/symlink-output"
 echo 'Kiosk fail-closed smoke checks passed'
