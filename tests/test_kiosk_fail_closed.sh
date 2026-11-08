@@ -5,6 +5,7 @@ script=build/config/includes.chroot/usr/local/bin/dede-kodi-kiosk
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/runtime"
+chmod 700 "$tmp/runtime"
 # The packaged skin is not present on the CI runner. Fail before starting
 # Xorg; this also catches accidental removal of the skin preflight.
 if XDG_RUNTIME_DIR="$tmp/runtime" sh "$script" >"$tmp/output" 2>&1; then
@@ -34,4 +35,19 @@ if (cd "$tmp" && XDG_RUNTIME_DIR=runtime sh "$OLDPWD/$script") >"$tmp/relative-o
   exit 1
 fi
 grep -q 'Kodi runtime directory must be absolute' "$tmp/relative-output"
+# A world-writable runtime is not safe even when it is otherwise writable.
+mkdir -p "$tmp/shared-runtime"
+chmod 777 "$tmp/shared-runtime"
+if XDG_RUNTIME_DIR="$tmp/shared-runtime" sh "$script" >"$tmp/shared-output" 2>&1; then
+  echo 'Kiosk accepted a shared runtime directory' >&2
+  exit 1
+fi
+grep -q 'mode 0700' "$tmp/shared-output"
+# Reject a group-accessible runtime directory too.
+chmod 750 "$tmp/shared-runtime"
+if XDG_RUNTIME_DIR="$tmp/shared-runtime" sh "$script" >"$tmp/group-output" 2>&1; then
+  echo 'Kiosk accepted a group-accessible runtime directory' >&2
+  exit 1
+fi
+grep -q 'mode 0700' "$tmp/group-output"
 echo 'Kiosk fail-closed smoke checks passed'
