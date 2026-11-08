@@ -61,9 +61,26 @@ printf '%s\n' '<settings><setting id="lookandfeel.skin">skin.dede-tv' > "$gui"
 reject 'truncated XML'
 cat > "$gui" <<'XML'
 <settings><section><setting id="lookandfeel.skin">skin.dede-tv</setting>
+<setting id="services.esenabled">true</setting>
 <setting id="services.webserver">false</setting>
 <setting id="services.esallinterfaces">false</setting></section></settings>
 XML
+# The remote must retain the local Kodi event server after reboot.
+for value in false missing; do
+  if [ "$value" = missing ]; then
+    sed '/id="services.esenabled"/d' "$gui" > "$tmp/gui-new.xml"
+  else
+    sed 's/id="services.esenabled">true/id="services.esenabled">false/' "$gui" > "$tmp/gui-new.xml"
+  fi
+  mv "$tmp/gui-new.xml" "$gui"
+  reject "local Kodi event server $value"
+  cat > "$gui" <<'XML'
+<settings><section><setting id="lookandfeel.skin">skin.dede-tv</setting>
+<setting id="services.esenabled">true</setting>
+<setting id="services.webserver">false</setting>
+<setting id="services.esallinterfaces">false</setting></section></settings>
+XML
+done
 # A symlink or directory at advancedsettings.xml must fail closed.
 outside="$tmp/outside.xml"
 printf '%s\n' '<advancedsettings/>' > "$outside"
