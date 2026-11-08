@@ -14,6 +14,58 @@ module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 
 
+class JsonRpcResponseTests(unittest.TestCase):
+    def test_kodi_write_methods_accept_scalar_ok_result(self):
+        class FakeSocket:
+            def __init__(self):
+                self.sent = b""
+                self.received = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def settimeout(self, timeout):
+                pass
+
+            def sendall(self, data):
+                self.sent += data
+
+            def recv(self, count):
+                if self.received:
+                    return b""
+                self.received = True
+                return b'{"jsonrpc":"2.0","id":24011,"result":"OK"}'
+
+        connection = FakeSocket()
+        with patch.object(module.socket, "create_connection", return_value=connection):
+            self.assertEqual(
+                module.rpc("Addons.SetAddonEnabled",
+                           {"addonid": "skin.dede-tv", "enabled": True}),
+                "OK",
+            )
+        self.assertIn(b"Addons.SetAddonEnabled", connection.sent)
+
+    def test_malformed_missing_result_is_rejected(self):
+        class FakeSocket:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def settimeout(self, timeout):
+                pass
+            def sendall(self, data):
+                pass
+            def recv(self, count):
+                return b'{"jsonrpc":"2.0","id":24011}'
+
+        with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
+            with self.assertRaisesRegex(RuntimeError, "missing result"):
+                module.rpc("Settings.SetSettingValue")
+
+
 class AddonResponseTests(unittest.TestCase):
     def test_malformed_addon_metadata_is_retried_without_crash(self):
         for addon in (None, [], "invalid", {"enabled": "false"}, {"enabled": None}, {}):
