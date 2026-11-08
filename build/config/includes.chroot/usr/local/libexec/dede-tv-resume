@@ -24,6 +24,12 @@ while [ "$attempt" -le "$attempts" ]; do
   if timeout --signal=TERM --kill-after=2s "${call_timeout}s" "$core" --db "$db" resume-last "$media"; then
     exit 0
   fi
+  # The channel store may be removed or replaced during administration.
+  # Never retry against a vanished or redirected database path.
+  if [ ! -f "$db" ] || [ -L "$db" ]; then
+    echo "TV channel database changed during resume; aborting" >&2
+    exit 1
+  fi
   if [ "$attempt" -lt "$attempts" ]; then
     sleep "$delay"
   fi
