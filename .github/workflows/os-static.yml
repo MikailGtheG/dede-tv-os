@@ -168,6 +168,9 @@ jobs:
             echo 'Ambiguous Kodi skin selection was accepted' >&2
             exit 1
           fi
+      - name: Regression - kiosk must fail closed before launching Kodi
+        shell: bash
+        run: sh tests/test_kiosk_fail_closed.sh
       - name: Regression - bounded last-channel resume service
         shell: bash
         run: sh tests/test_resume_service.sh
