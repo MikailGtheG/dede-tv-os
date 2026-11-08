@@ -27,4 +27,11 @@ if XDG_RUNTIME_DIR="$tmp/runtime-link" sh "$script" >"$tmp/symlink-output" 2>&1;
   exit 1
 fi
 grep -q 'Kodi runtime directory is unavailable' "$tmp/symlink-output"
+# A relative runtime path can resolve differently across working directories.
+# Reject it before profile initialization or Xorg startup.
+if (cd "$tmp" && XDG_RUNTIME_DIR=runtime sh "$OLDPWD/$script") >"$tmp/relative-output" 2>&1; then
+  echo 'Kiosk accepted a relative runtime directory' >&2
+  exit 1
+fi
+grep -q 'Kodi runtime directory must be absolute' "$tmp/relative-output"
 echo 'Kiosk fail-closed smoke checks passed'
