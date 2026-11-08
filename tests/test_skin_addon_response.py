@@ -104,6 +104,33 @@ class FirstBootRecoveryTests(unittest.TestCase):
                 rpc.assert_not_called()
 
 
+class FirstBootPvrTests(unittest.TestCase):
+    def test_disabled_iptv_addon_enabled_without_playlist_or_credentials(self):
+        with patch.object(module, "rpc", side_effect=[
+            {"addon": {"enabled": False}}, "OK"
+        ]) as rpc:
+            module.enable_first_boot_pvr()
+        self.assertEqual([call.args[0] for call in rpc.call_args_list],
+                         ["Addons.GetAddonDetails", "Addons.SetAddonEnabled"])
+        self.assertEqual(
+            rpc.call_args_list[1].args[1],
+            {"addonid": "pvr.iptvsimple", "enabled": True})
+
+    def test_existing_enabled_iptv_addon_is_not_changed(self):
+        with patch.object(module, "rpc", return_value={
+            "addon": {"enabled": True}
+        }) as rpc:
+            module.enable_first_boot_pvr()
+        self.assertEqual(rpc.call_count, 1)
+
+    def test_malformed_iptv_addon_metadata_fails_closed(self):
+        with patch.object(module, "rpc", return_value={
+            "addon": {"enabled": "false"}
+        }):
+            with self.assertRaisesRegex(RuntimeError, "malformed addon"):
+                module.enable_first_boot_pvr()
+
+
 class AddonResponseTests(unittest.TestCase):
     def test_malformed_addon_metadata_is_retried_without_crash(self):
         for addon in (None, [], "invalid", {"enabled": "false"}, {"enabled": None}, {}):
