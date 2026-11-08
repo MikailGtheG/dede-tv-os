@@ -19,6 +19,12 @@ printf '%s\n' '<addon id="skin.estuary"><extension id="skin.dede-tv"/></addon>' 
 reject 'matching ID in nested element'
 printf '%s\n' '<addon id="skin.dede-tv"' > "$DEDE_SKIN_ADDON"
 reject 'truncated addon XML'
+# XML attribute quoting is not semantically significant. The kiosk must not
+# reject metadata already accepted by the strict XML identity parser.
+printf '%s\n' "<addon id='skin.dede-tv'/>" > "$DEDE_SKIN_ADDON"
+sh "$init"
+test -s "$HOME/.kodi/userdata/guisettings.xml"
+rm "$HOME/.kodi/userdata/guisettings.xml"
 printf '%s\n' '<addon id="skin.dede-tv"/>' > "$DEDE_SKIN_ADDON"
 sh "$init"
 test -s "$HOME/.kodi/userdata/guisettings.xml"
