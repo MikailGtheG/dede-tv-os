@@ -37,6 +37,16 @@ export DEDE_TEST_LOG="$tmp/calls" DEDE_TEST_MODE=success
 # No database: never invoke the playback core.
 sh "$script"
 test ! -e "$tmp/calls"
+# A symlinked database must not redirect automatic playback to another file.
+printf 'private data\n' > "$tmp/redirect-target"
+ln -s "$tmp/redirect-target" "$DEDE_DB_PATH"
+if sh "$script"; then
+  echo 'Symlinked channel database was accepted' >&2
+  exit 1
+fi
+test ! -e "$tmp/calls"
+grep -qx 'private data' "$tmp/redirect-target"
+rm "$DEDE_DB_PATH"
 : > "$DEDE_DB_PATH"
 sh "$script"
 test "$(wc -l < "$tmp/calls")" -eq 1
