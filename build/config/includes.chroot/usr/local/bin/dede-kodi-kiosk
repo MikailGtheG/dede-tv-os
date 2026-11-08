@@ -11,7 +11,9 @@ export XDG_SESSION_TYPE=x11
 /usr/local/libexec/dede-kodi-profile-init
 # Never expose Kodi's stock navigation if the dedicated TV skin is absent.
 skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml
-if [ ! -f "$skin_addon" ] || ! grep -Fq 'id="skin.dede-tv"' "$skin_addon"; then
+# The profile initializer already parses addon.xml and validates the root addon ID.
+# Do not re-validate with a quote-sensitive grep: valid XML may use single quotes.
+if [ ! -f "$skin_addon" ]; then
   echo "Dede TV skin is missing; refusing to expose the Kodi interface" >&2
   exit 1
 fi
