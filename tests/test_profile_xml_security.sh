@@ -64,5 +64,15 @@ cat > "$gui" <<'XML'
 <setting id="services.webserver">false</setting>
 <setting id="services.esallinterfaces">false</setting></section></settings>
 XML
+# A symlink or directory at advancedsettings.xml must fail closed.
+outside="$tmp/outside.xml"
+printf '%s\\n' '<advancedsettings/>' > "$outside"
+ln -s "$outside" "$HOME/.kodi/userdata/advancedsettings.xml"
+reject 'symlinked advancedsettings'
+test "$(cat "$outside")" = '<advancedsettings/>'
+rm "$HOME/.kodi/userdata/advancedsettings.xml"
+mkdir "$HOME/.kodi/userdata/advancedsettings.xml"
+reject 'directory at advancedsettings path'
+rmdir "$HOME/.kodi/userdata/advancedsettings.xml"
 sh "$init"
 echo 'PASS: Kodi XML security regression'
