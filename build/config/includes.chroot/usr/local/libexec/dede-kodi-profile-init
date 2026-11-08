@@ -13,6 +13,12 @@ fi
 mkdir -p "$profile"
 advanced="$profile/advancedsettings.xml"
 settings="$profile/guisettings.xml"
+# Never let Kodi read an administrator-controlled advancedsettings target via a symlink.
+# Reject before writing any first-boot files, including guisettings.xml.
+if [ -L "$advanced" ] || { [ -e "$advanced" ] && [ ! -f "$advanced" ]; }; then
+  echo "Unsafe Kodi advancedsettings path; refusing kiosk startup" >&2
+  exit 1
+fi
 skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
 # Validate the skin and existing GUI settings before creating any profile files. Never seed Estuary.
 if [ ! -f "$skin_addon" ] || ! python3 - "$skin_addon" <<'PY'
