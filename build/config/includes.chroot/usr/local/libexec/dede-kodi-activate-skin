@@ -60,10 +60,12 @@ def rpc(method, params=None, *, timeout=4):
                             raise RuntimeError(
                                 f"{method}: error {document['error'].get('code') if isinstance(document['error'], dict) else 'malformed error response'}"
                             )
-                        result = document.get("result")
-                        if not isinstance(result, dict):
-                            raise RuntimeError(f"{method}: malformed result response")
-                        return result
+                        if "result" not in document:
+                            raise RuntimeError(f"{method}: missing result")
+                        # Kodi write methods return the JSON string "OK".
+                        # Read methods return objects. Validate the expected
+                        # shape in the caller, not globally for every method.
+                        return document["result"]
             except UnicodeDecodeError:
                 continue
     raise RuntimeError(f"No bounded JSON-RPC reply for {method}")
