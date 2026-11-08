@@ -36,6 +36,27 @@ true
 </setting></settings>
 XML
 reject 'multiline remote event server'
+# A valid skin selection must not mask duplicate or missing network controls.
+for key in services.webserver services.esallinterfaces; do
+  cat > "$gui" <<XML
+<settings><setting id="lookandfeel.skin">skin.dede-tv</setting>
+<setting id="services.webserver">false</setting>
+<setting id="services.esallinterfaces">false</setting>
+<setting id="$key">true</setting></settings>
+XML
+  reject "duplicate network-control setting: $key"
+done
+cat > "$gui" <<'XML'
+<settings><setting id="lookandfeel.skin">skin.dede-tv</setting>
+<setting id="services.webserver">false</setting></settings>
+XML
+reject 'missing explicit event server network restriction'
+cat > "$gui" <<'XML'
+<settings><setting id="lookandfeel.skin">skin.dede-tv</setting>
+<setting id="services.esallinterfaces">false</setting></settings>
+XML
+reject 'missing explicit webserver restriction'
+test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
 printf '%s\n' '<settings><setting id="lookandfeel.skin">skin.dede-tv' > "$gui"
 reject 'truncated XML'
 cat > "$gui" <<'XML'
