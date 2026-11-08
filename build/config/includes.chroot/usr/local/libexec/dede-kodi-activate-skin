@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 HOME = Path(os.environ.get("HOME", "/home/dede"))
 PROFILE = HOME / ".kodi" / "userdata"
 MARKER = PROFILE / ".dede-skin-activated"
+PENDING = PROFILE / ".dede-skin-first-boot-pending"
 SETTINGS = PROFILE / "guisettings.xml"
 HOST, PORT = "127.0.0.1", 9090
 
@@ -89,8 +90,17 @@ def desired_skin():
     return None
 
 
+def first_boot_pending():
+    if PENDING.is_symlink() or not PENDING.is_file():
+        return False
+    try:
+        return PENDING.read_text(encoding="ascii") == "skin.dede-tv\\n"
+    except (OSError, UnicodeError):
+        return False
+
+
 def run():
-    if desired_skin() != "skin.dede-tv":
+    if desired_skin() != "skin.dede-tv" and not first_boot_pending():
         print("DEDE_SETUP: administrator skin preference respected")
         return 0
     if not Path("/usr/share/kodi/addons/skin.dede-tv/addon.xml").is_file():
@@ -118,6 +128,11 @@ def run():
             skin = (actual or {}).get("value")
             if skin == "skin.dede-tv":
                 MARKER.write_text("skin.dede-tv\n", encoding="ascii")
+                # Remove the recovery permission after first successful
+                # activation, so later intentional administrator skin choices
+                # are never overridden.
+                if first_boot_pending():
+                    PENDING.unlink()
                 print("DEDE_SETUP: actual loaded skin=skin.dede-tv")
                 return 0
             print(f"DEDE_SETUP: awaiting active skin ({skin})")
