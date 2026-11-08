@@ -3,6 +3,10 @@
 set -eu
 export HOME=/home/dede
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/dede-tv}
+case "$XDG_RUNTIME_DIR" in
+  /*) ;;
+  *) echo "Kodi runtime directory must be absolute" >&2; exit 1 ;;
+esac
 if [ -L "$XDG_RUNTIME_DIR" ] || [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
   echo "Kodi runtime directory is unavailable or not writable" >&2
   exit 1
