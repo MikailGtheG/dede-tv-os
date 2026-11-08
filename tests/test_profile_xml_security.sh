@@ -81,6 +81,28 @@ for value in false missing; do
 <setting id="services.esallinterfaces">false</setting></section></settings>
 XML
 done
+# DTD and entity declarations must never be processed from persisted profiles.
+cat > "$gui" <<'XML'
+<!DOCTYPE settings [<!ENTITY injected "skin.dede-tv">]>
+<settings><setting id="lookandfeel.skin">&injected;</setting>
+<setting id="services.esenabled">true</setting>
+<setting id="services.webserver">false</setting>
+<setting id="services.esallinterfaces">false</setting></settings>
+XML
+reject 'DTD in GUI settings'
+cat > "$gui" <<'XML'
+<settings><setting id="lookandfeel.skin">skin.dede-tv</setting>
+<setting id="services.esenabled">true</setting>
+<setting id="services.webserver">false</setting>
+<setting id="services.esallinterfaces">false</setting></settings>
+XML
+advanced="$HOME/.kodi/userdata/advancedsettings.xml"
+cat > "$advanced" <<'XML'
+<!DOCTYPE advancedsettings [<!ENTITY injected "true">]>
+<advancedsettings><fullscreen>&injected;</fullscreen></advancedsettings>
+XML
+reject 'DTD in advanced settings'
+rm "$advanced"
 # A symlink or directory at advancedsettings.xml must fail closed.
 outside="$tmp/outside.xml"
 printf '%s\n' '<advancedsettings/>' > "$outside"
