@@ -580,6 +580,13 @@ jobs:
                       "TV playback has not been demonstrated"
                   )
           PY
+      - name: Reject stock Kodi visual regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in bios uefi; do
+            python3 tests/check_qemu_tv_visual.py "build/boot-logs/$mode-after-boot.ppm"
+          done
       - name: Audit installed packages and image footprint
         shell: bash
         run: |
