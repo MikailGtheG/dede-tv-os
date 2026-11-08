@@ -300,7 +300,16 @@ jobs:
           test "$service_timeout" -gt "$max_runtime"
           grep -Fq 'timeout --signal=TERM --kill-after=2s "${call_timeout}s"' "$script"
           grep -qx 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core' "$service"
-          grep -qx 'After=dede-kodi.service' "$service"
+          # Playback must wait for successful skin activation, not just Kodi process start.
+          grep -qx 'After=dede-kodi.service dede-kodi-skin.service' "$service"
+          grep -qx 'Requires=dede-kodi.service dede-kodi-skin.service' "$service"
+          skin_unit=build/config/includes.chroot/etc/systemd/system/dede-kodi-skin.service
+          grep -qx 'After=dede-kodi.service' "$skin_unit"
+          grep -qx 'Requires=dede-kodi.service' "$skin_unit"
+          grep -qx 'Type=oneshot' "$skin_unit"
+          grep -Fq 'ExecStart=/usr/bin/python3 /usr/local/libexec/dede-kodi-activate-skin' "$skin_unit"
+          # Reject accidental cycles: Kodi itself must not wait on resume/skin.
+          ! grep -Eq '^After=.*dede-kodi-(skin|resume)\.service' "$kodi_unit"
           # Wants= alone does not propagate restarts of an already-running unit.
           grep -qx 'PartOf=dede-kodi.service' "$service"
           # Resume must be requested on every Kodi start, not only at boot.
