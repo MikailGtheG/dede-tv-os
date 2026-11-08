@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Offline checks for the actual BIOS/UEFI screenshot rejection gate."""
+import importlib.util
+from pathlib import Path
+import tempfile
+import unittest
+
+SCRIPT = Path(__file__).with_name("check_qemu_tv_visual.py")
+spec = importlib.util.spec_from_file_location("qemu_visual_gate", SCRIPT)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+def write_frame(path, *, stock_dialog=False, stock_logo=False):
+    width, height = 320, 240
+    pixels = bytearray(bytes((23, 25, 28)) * width * height)
+    cyan = bytes((21, 122, 150))
+    if stock_dialog:
+        for y in range(int(height * .34), int(height * .385)):
+            for x in range(int(width * .27), int(width * .72)):
+                offset = (y * width + x) * 3
+                pixels[offset:offset + 3] = cyan
+    if stock_logo:
+        for y in range(int(height * .02), int(height * .075)):
+            for x in range(int(width * .04), int(width * .085)):
+                offset = (y * width + x) * 3
+                pixels[offset:offset + 3] = cyan
+    path.write_bytes(f"P6\n{width} {height}\n255\n".encode() + pixels)
+
+
+class TvVisualGateTests(unittest.TestCase):
+    def test_expected_charcoal_dede_screen_is_not_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "dede.ppm"
+            write_frame(path)
+            self.assertLess(module.classify(path)["popup_cyan"], .35)
+
+    def test_stock_kodi_addon_enable_modal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "stock-dialog.ppm"
+            write_frame(path, stock_dialog=True)
+            with self.assertRaisesRegex(ValueError, "stock Kodi add-on enable"):
+                module.classify(path)
+
+    def test_stock_kodi_logo_is_rejected_without_dialog(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "stock-logo.ppm"
+            write_frame(path, stock_logo=True)
+            with self.assertRaisesRegex(ValueError, "stock Kodi branding"):
+                module.classify(path)
+
+    def test_incomplete_ppm_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "truncated.ppm"
+            path.write_bytes(b"P6\n320 240\n255\n\\x00\\x00\\x00")
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                module.classify(path)
+
+
+if __name__ == "__main__":
+    unittest.main()
