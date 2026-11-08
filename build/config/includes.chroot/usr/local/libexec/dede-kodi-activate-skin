@@ -99,6 +99,24 @@ def first_boot_pending():
         return False
 
 
+def enable_first_boot_pvr():
+    """Enable packaged IPTV Simple once to avoid Kodi's modal enable prompt.
+
+    Does not add playlists, network addresses, accounts, or credentials.
+    Subsequent administrator decisions to disable the add-on are respected.
+    """
+    details = rpc("Addons.GetAddonDetails", {
+        "addonid": "pvr.iptvsimple", "properties": ["enabled"]
+    })
+    addon = details.get("addon")
+    if not isinstance(addon, dict) or not isinstance(addon.get("enabled"), bool):
+        raise RuntimeError("IPTV Simple: malformed addon metadata")
+    if not addon["enabled"]:
+        rpc("Addons.SetAddonEnabled", {
+            "addonid": "pvr.iptvsimple", "enabled": True
+        })
+
+
 def run():
     if desired_skin() != "skin.dede-tv" and not first_boot_pending():
         print("DEDE_SETUP: administrator skin preference respected")
@@ -111,6 +129,11 @@ def run():
     # Under software QEMU, the addon manager may need time to initialize.
     for attempt in range(75):
         try:
+            if first_boot_pending():
+                # The Debian image ships IPTV Simple disabled. Kodi otherwise
+                # opens a modal 'Enable IPTV Simple Client?' dialog on boot,
+                # covering the custom TV interface.
+                enable_first_boot_pvr()
             details = rpc("Addons.GetAddonDetails", {
                 "addonid": "skin.dede-tv", "properties": ["enabled"]
             })
