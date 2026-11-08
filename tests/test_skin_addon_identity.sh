@@ -29,6 +29,21 @@ rm "$HOME/.kodi/userdata/guisettings.xml"
 printf '%s\n' '<addon id="skin.dede-tv"/>' > "$DEDE_SKIN_ADDON"
 sh "$init"
 test -s "$HOME/.kodi/userdata/guisettings.xml"
+# First-boot provisioning must request Dede TV activation exactly once.
+pending="$HOME/.kodi/userdata/.dede-skin-first-boot-pending"
+test "$(cat "$pending")" = 'skin.dede-tv'
+cp "$HOME/.kodi/userdata/guisettings.xml" "$tmp/initial-gui"
+cp "$HOME/.kodi/userdata/advancedsettings.xml" "$tmp/initial-advanced"
+sh "$init"
+cmp "$tmp/initial-gui" "$HOME/.kodi/userdata/guisettings.xml"
+cmp "$tmp/initial-advanced" "$HOME/.kodi/userdata/advancedsettings.xml"
+# Once activation has consumed the marker, a subsequent boot must not
+# recreate it or rewrite the already provisioned profile.
+rm "$pending"
+sh "$init"
+test ! -e "$pending"
+cmp "$tmp/initial-gui" "$HOME/.kodi/userdata/guisettings.xml"
+cmp "$tmp/initial-advanced" "$HOME/.kodi/userdata/advancedsettings.xml"
 # Invalid addon metadata must also fail closed after successful provisioning,
 # without modifying the existing administrator-managed profile.
 cp "$HOME/.kodi/userdata/guisettings.xml" "$tmp/saved-gui"
