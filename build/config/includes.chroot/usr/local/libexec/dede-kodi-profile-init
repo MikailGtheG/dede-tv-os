@@ -27,8 +27,11 @@ import xml.etree.ElementTree as ET
 
 try:
     # Refuse XML DTD/entity declarations before parsing untrusted profiles.
+    # Bound profile metadata before parsing: a corrupt file must not exhaust RAM.
     with open(sys.argv[1], "rb") as source:
-        xml = source.read()
+        xml = source.read(1024 * 1024 + 1)
+    if len(xml) > 1024 * 1024:
+        raise ValueError("Kodi XML exceeds 1 MiB")
     if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
         raise ValueError("DTD/entity declarations are not allowed")
     root = ET.fromstring(xml)
@@ -50,8 +53,11 @@ import xml.etree.ElementTree as ET
 
 try:
     # Refuse XML DTD/entity declarations before parsing untrusted profiles.
+    # Bound profile metadata before parsing: a corrupt file must not exhaust RAM.
     with open(sys.argv[1], "rb") as source:
-        xml = source.read()
+        xml = source.read(1024 * 1024 + 1)
+    if len(xml) > 1024 * 1024:
+        raise ValueError("Kodi XML exceeds 1 MiB")
     if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
         raise ValueError("DTD/entity declarations are not allowed")
     root = ET.fromstring(xml)
@@ -84,8 +90,11 @@ import xml.etree.ElementTree as ET
 
 try:
     # Refuse XML DTD/entity declarations before parsing untrusted profiles.
+    # Bound profile metadata before parsing: a corrupt file must not exhaust RAM.
     with open(sys.argv[1], "rb") as source:
-        xml = source.read()
+        xml = source.read(1024 * 1024 + 1)
+    if len(xml) > 1024 * 1024:
+        raise ValueError("Kodi XML exceeds 1 MiB")
     if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
         raise ValueError("DTD/entity declarations are not allowed")
     root = ET.fromstring(xml)
