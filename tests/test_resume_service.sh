@@ -72,6 +72,9 @@ if sh "$script"; then
   exit 1
 fi
 test ! -s "$tmp/calls"
+# Restore valid settings after the deliberately invalid-attempts case above.
+# Otherwise that earlier validation masks the missing-timeout diagnostic.
+export DEDE_RESUME_ATTEMPTS=2
 # A missing timeout executable must fail immediately instead of retrying an
 # unbounded core call or silently reporting a successful TV resume.
 : > "$tmp/calls"
