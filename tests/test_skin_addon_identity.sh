@@ -12,6 +12,7 @@ reject() {
     exit 1
   fi
   test ! -e "$HOME/.kodi/userdata/guisettings.xml"
+  test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
 }
 printf '%s\n' '<!-- id="skin.dede-tv" --><addon id="skin.estuary"/>' > "$DEDE_SKIN_ADDON"
 reject 'matching ID in comment'
@@ -28,4 +29,15 @@ rm "$HOME/.kodi/userdata/guisettings.xml"
 printf '%s\n' '<addon id="skin.dede-tv"/>' > "$DEDE_SKIN_ADDON"
 sh "$init"
 test -s "$HOME/.kodi/userdata/guisettings.xml"
+# Invalid addon metadata must also fail closed after successful provisioning,
+# without modifying the existing administrator-managed profile.
+cp "$HOME/.kodi/userdata/guisettings.xml" "$tmp/saved-gui"
+cp "$HOME/.kodi/userdata/advancedsettings.xml" "$tmp/saved-advanced"
+printf '%s\n' '<addon id="skin.estuary"/>' > "$DEDE_SKIN_ADDON"
+if sh "$init"; then
+  echo 'FAIL: accepted replaced skin metadata on subsequent boot' >&2
+  exit 1
+fi
+cmp "$tmp/saved-gui" "$HOME/.kodi/userdata/guisettings.xml"
+cmp "$tmp/saved-advanced" "$HOME/.kodi/userdata/advancedsettings.xml"
 echo 'PASS: Kodi skin addon identity validation'
