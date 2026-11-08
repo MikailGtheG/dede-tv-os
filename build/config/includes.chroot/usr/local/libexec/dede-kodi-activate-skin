@@ -94,7 +94,7 @@ def first_boot_pending():
     if PENDING.is_symlink() or not PENDING.is_file():
         return False
     try:
-        return PENDING.read_text(encoding="ascii") == "skin.dede-tv\\n"
+        return PENDING.read_text(encoding="ascii") == "skin.dede-tv\n"
     except (OSError, UnicodeError):
         return False
 
