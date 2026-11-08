@@ -109,9 +109,13 @@ jobs:
           rm "$settings"
           printf '%s\n' 'protected' > "$tmp/protected"
           ln -s "$tmp/protected" "$settings"
-          HOME="$tmp" sh "$init"
+          if HOME="$tmp" sh "$init"; then
+            echo 'Symlinked advancedsettings.xml was accepted' >&2
+            exit 1
+          fi
           grep -qx protected "$tmp/protected"
           test -L "$settings"
+          rm "$settings"
           # The graphical settings and JSON-RPC permissions are independent
           # of an administrator's advancedsettings.xml.
           gui="$tmp/.kodi/userdata/guisettings.xml"
