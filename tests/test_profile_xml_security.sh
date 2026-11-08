@@ -66,7 +66,7 @@ cat > "$gui" <<'XML'
 XML
 # A symlink or directory at advancedsettings.xml must fail closed.
 outside="$tmp/outside.xml"
-printf '%s\\n' '<advancedsettings/>' > "$outside"
+printf '%s\n' '<advancedsettings/>' > "$outside"
 ln -s "$outside" "$HOME/.kodi/userdata/advancedsettings.xml"
 reject 'symlinked advancedsettings'
 test "$(cat "$outside")" = '<advancedsettings/>'
