@@ -37,6 +37,12 @@ export DEDE_TEST_LOG="$tmp/calls" DEDE_TEST_MODE=success
 # No database: never invoke the playback core.
 sh "$script"
 test ! -e "$tmp/calls"
+# On first boot, no channel database is normal even if timeout is unavailable.
+# Do not fail the resume service before discovering that there is nothing to play.
+mkdir -p "$tmp/no-timeout"
+PATH="$tmp/no-timeout" /bin/sh "$script" > "$tmp/first-boot-output" 2>&1
+grep -q "No saved TV channel database" "$tmp/first-boot-output"
+test ! -e "$tmp/calls"
 # A symlinked database must not redirect automatic playback to another file.
 printf 'private data\n' > "$tmp/redirect-target"
 ln -s "$tmp/redirect-target" "$DEDE_DB_PATH"
