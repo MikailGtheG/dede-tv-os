@@ -26,6 +26,7 @@ case "$DEDE_TEST_MODE" in
     exit 0 ;;
   success) exit 0 ;;
   hang) exec sleep 10 ;;
+  remove-db) rm -f "$DEDE_DB_PATH"; exit 1 ;;
   *) exit 92 ;;
 esac
 EOF
@@ -107,4 +108,15 @@ if [ "$elapsed" -gt 5 ]; then
   exit 1
 fi
 test "$(wc -l < "$tmp/calls")" -eq 1
+# A database removed during administration must stop retries immediately.
+: > "$tmp/calls"
+: > "$DEDE_DB_PATH"
+export PATH="$tmp/bin:/usr/bin:/bin"
+export DEDE_TEST_MODE=remove-db DEDE_RESUME_ATTEMPTS=3 DEDE_RESUME_CALL_TIMEOUT=3
+if sh "$script"; then
+  echo 'Resume accepted a database removed during playback' >&2
+  exit 1
+fi
+test "$(wc -l < "$tmp/calls")" -eq 1
+test ! -e "$DEDE_DB_PATH"
 echo 'Resume service regression checks passed'
