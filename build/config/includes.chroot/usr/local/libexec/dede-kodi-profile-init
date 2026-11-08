@@ -141,5 +141,15 @@ if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
 XML
   if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
     mv -n "$tmp_settings" "$settings"
+    # Kodi may overwrite the requested skin during its first addon scan.
+    # Mark only newly provisioned profiles; the activation helper removes
+    # this marker once Dede TV has been selected successfully.
+    pending="$profile/.dede-skin-first-boot-pending"
+    if [ ! -e "$pending" ] && [ ! -L "$pending" ]; then
+      tmp_pending="$(mktemp "$profile/.dede-skin-pending.XXXXXX")"
+      printf 'skin.dede-tv\\n' > "$tmp_pending"
+      mv -n "$tmp_pending" "$pending"
+      rm -f "$tmp_pending"
+    fi
   fi
 fi
