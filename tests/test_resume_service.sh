@@ -18,6 +18,12 @@ cat > "$tmp/bin/core" <<'EOF'
 printf '%s\n' "$*" >> "$DEDE_TEST_LOG"
 case "$DEDE_TEST_MODE" in
   fail) exit 1 ;;
+  flaky)
+    if [ ! -e "$DEDE_TEST_FLAKY_MARKER" ]; then
+      : > "$DEDE_TEST_FLAKY_MARKER"
+      exit 1
+    fi
+    exit 0 ;;
   success) exit 0 ;;
   hang) sleep 10 ;;
   *) exit 92 ;;
@@ -35,6 +41,13 @@ test ! -e "$tmp/calls"
 sh "$script"
 test "$(wc -l < "$tmp/calls")" -eq 1
 grep -F -- "--db $DEDE_DB_PATH resume-last $DEDE_MEDIA_ROOT" "$tmp/calls"
+# Kodi may not yet accept JSON-RPC immediately after its process starts.
+# A transient failure must be retried and then accepted without extra calls.
+: > "$tmp/calls"
+export DEDE_TEST_MODE=flaky DEDE_TEST_FLAKY_MARKER="$tmp/flaky-marker"
+sh "$script"
+test "$(wc -l < "$tmp/calls")" -eq 2
+test -f "$DEDE_TEST_FLAKY_MARKER"
 : > "$tmp/calls"
 export DEDE_TEST_MODE=fail
 if sh "$script"; then
