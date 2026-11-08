@@ -55,4 +55,16 @@ if sh "$init"; then
 fi
 cmp "$tmp/saved-gui" "$HOME/.kodi/userdata/guisettings.xml"
 cmp "$tmp/saved-advanced" "$HOME/.kodi/userdata/advancedsettings.xml"
+
+# Oversized addon metadata must fail before XML parsing or profile mutation.
+# Use a valid root with a large XML comment so size is the only violation.
+printf '<addon id="skin.dede-tv"><!--' > "$DEDE_SKIN_ADDON"
+head -c 1048576 /dev/zero | tr '\\000' x >> "$DEDE_SKIN_ADDON"
+printf '%s\\n' '--></addon>' >> "$DEDE_SKIN_ADDON"
+if sh "$init"; then
+  echo 'FAIL: accepted oversized Kodi skin metadata' >&2
+  exit 1
+fi
+cmp "$tmp/saved-gui" "$HOME/.kodi/userdata/guisettings.xml"
+cmp "$tmp/saved-advanced" "$HOME/.kodi/userdata/advancedsettings.xml"
 echo 'PASS: Kodi skin addon identity validation'
