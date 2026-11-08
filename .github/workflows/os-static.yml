@@ -168,6 +168,9 @@ jobs:
             echo 'Ambiguous Kodi skin selection was accepted' >&2
             exit 1
           fi
+      - name: Regression - bounded last-channel resume service
+        shell: bash
+        run: sh tests/test_resume_service.sh
       - name: Regression - duplicate skin settings on one XML line
         shell: bash
         run: sh tests/test_profile_duplicate_skin.sh
