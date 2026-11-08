@@ -89,14 +89,15 @@ class FirstBootRecoveryTests(unittest.TestCase):
                  patch.object(module, "desired_skin", return_value="skin.estuary"), \
                  patch.object(module.Path, "is_file", autospec=True, side_effect=lambda p: True), \
                  patch.object(module, "rpc", side_effect=[
-                     {"addon": {"enabled": True}},
+                     {"addon": {"enabled": True}},  # IPTV bootstrap
+                     {"addon": {"enabled": True}},  # Dede skin
                      "OK",
                      {"value": "skin.dede-tv"},
                  ]) as rpc:
                 self.assertEqual(module.run(), 0)
                 self.assertFalse(pending.exists())
                 self.assertTrue(marker.exists())
-                self.assertEqual(rpc.call_count, 3)
+                self.assertEqual(rpc.call_count, 4)
             with patch.object(module, "PENDING", pending), \
                  patch.object(module, "desired_skin", return_value="skin.estuary"), \
                  patch.object(module, "rpc") as rpc:
