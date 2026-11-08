@@ -181,6 +181,8 @@ jobs:
         run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
       - name: Regression - malformed Kodi addon metadata
         run: python3 -m unittest discover -s tests -p "test_skin_addon_response.py" -v
+      - name: Regression - real screen must not be stock Kodi
+        run: python3 -m unittest discover -s tests -p "test_qemu_tv_visual.py" -v
       - name: Validate first-boot skin activation and real Kodi skin detection
         shell: bash
         run: |
@@ -394,6 +396,9 @@ jobs:
           assert text.count("name: Upload installed package inventory") == 1
           assert text.count("name: Publish failed ISO run ID") == 1
           assert "pull_request_target" not in str(document.get("on", {}))
+          assert "Reject stock Kodi visual regressions" in text
+          assert "tests/check_qemu_tv_visual.py" in text
+
           # Shell comments between QEMU line continuations caused a real
           # failure: -audiodev was executed as a separate command.
           qemu = text.split("timeout --signal=TERM --kill-after=5s 150s", 1)[1]
