@@ -61,12 +61,14 @@ try:
     values = {}
     for setting in root.iter("setting"):
         key = setting.get("id")
-        if key in ("lookandfeel.skin", "services.webserver", "services.esallinterfaces"):
+        if key in ("lookandfeel.skin", "services.esenabled", "services.webserver", "services.esallinterfaces"):
             if key in values:
                 raise ValueError("duplicate security-sensitive Kodi setting")
             values[key] = (setting.text or "").strip()
     if values.get("lookandfeel.skin") != "skin.dede-tv":
         raise ValueError("Dede TV skin is not selected")
+    if values.get("services.esenabled", "").lower() != "true":
+        raise ValueError("local Kodi event server is disabled")
     if any(values.get(key, "").lower() != "false" for key in
            ("services.webserver", "services.esallinterfaces")):
         raise ValueError("network-facing Kodi controls are enabled")
