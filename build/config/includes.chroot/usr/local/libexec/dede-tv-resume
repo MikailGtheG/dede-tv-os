@@ -14,6 +14,7 @@ case "$delay" in ''|*[!0-9]*) echo "Invalid resume delay" >&2; exit 2;; esac
 [ "$delay" -le 10 ] || exit 2
 case "$call_timeout" in ''|*[!0-9]*) echo "Invalid resume call timeout" >&2; exit 2;; esac
 [ "$call_timeout" -ge 1 ] && [ "$call_timeout" -le 10 ] || exit 2
+command -v timeout >/dev/null 2>&1 || { echo "GNU timeout is required for bounded playback resume" >&2; exit 1; }
 [ -x "$core" ] || { echo "Dede TV core not installed; skipping resume"; exit 0; }
 [ -f "$db" ] || { echo "No saved TV channel database; skipping resume"; exit 0; }
 # Refuse redirected database paths: resume must not read outside the configured store.
