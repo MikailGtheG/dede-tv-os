@@ -91,5 +91,14 @@ rm "$HOME/.kodi/userdata/advancedsettings.xml"
 mkdir "$HOME/.kodi/userdata/advancedsettings.xml"
 reject 'directory at advancedsettings path'
 rmdir "$HOME/.kodi/userdata/advancedsettings.xml"
+# Invalid administrator-managed advancedsettings must fail before Kodi starts.
+advanced="$HOME/.kodi/userdata/advancedsettings.xml"
+printf '%s\\n' '<advancedsettings><broken>' > "$advanced"
+reject 'truncated advancedsettings XML'
+test "$(cat "$advanced")" = '<advancedsettings><broken>'
+printf '%s\\n' '<settings/>' > "$advanced"
+reject 'unexpected advancedsettings root'
+printf '%s\\n' '<advancedsettings><fullscreen>true</fullscreen></advancedsettings>' > "$advanced"
 sh "$init"
+test "$(cat "$advanced")" = '<advancedsettings><fullscreen>true</fullscreen></advancedsettings>'
 echo 'PASS: Kodi XML security regression'
