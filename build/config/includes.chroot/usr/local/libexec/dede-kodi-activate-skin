@@ -62,10 +62,17 @@ def rpc(method, params=None, *, timeout=4):
                             )
                         if "result" not in document:
                             raise RuntimeError(f"{method}: missing result")
-                        # Kodi write methods return the JSON string "OK".
-                        # Read methods return objects. Validate the expected
-                        # shape in the caller, not globally for every method.
-                        return document["result"]
+                        # Read methods require object results; Kodi write
+                        # methods acknowledge success with the scalar "OK".
+                        # Reject arbitrary scalars rather than weakening
+                        # the JSON-RPC response validation globally.
+                        result = document["result"]
+                        if method in {"Addons.SetAddonEnabled", "Settings.SetSettingValue"}:
+                            if result != "OK":
+                                raise RuntimeError(f"{method}: malformed result response")
+                        elif not isinstance(result, dict):
+                            raise RuntimeError(f"{method}: malformed result response")
+                        return result
             except UnicodeDecodeError:
                 continue
     raise RuntimeError(f"No bounded JSON-RPC reply for {method}")
