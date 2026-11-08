@@ -1,7 +1,9 @@
 [Unit]
 Description=Dede TV restore last channel after Kodi startup
-After=dede-kodi.service
-Requires=dede-kodi.service
+After=dede-kodi.service dede-kodi-skin.service
+Requires=dede-kodi.service dede-kodi-skin.service
+# Never resume playback before the Dede skin has been activated and verified.
+# A failed skin activation blocks channel playback rather than exposing stock Kodi.
 # Propagate Kodi restarts to this oneshot; Wants= alone only starts it initially.
 PartOf=dede-kodi.service
 ConditionFileIsExecutable=/usr/local/bin/dede-tv-core
