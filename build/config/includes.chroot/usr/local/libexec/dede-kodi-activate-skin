@@ -119,8 +119,11 @@ def enable_first_boot_pvr():
 
 def run():
     if desired_skin() != "skin.dede-tv" and not first_boot_pending():
-        print("DEDE_SETUP: administrator skin preference respected")
-        return 0
+        # A successful oneshot unblocks dede-tv-resume.service. Never report
+        # success when the active Kodi UI may be Estuary or another skin.
+        # Administration belongs to the password-protected console, not Kodi.
+        print("DEDE_SETUP: non-Dede skin preference blocks TV startup", file=sys.stderr)
+        return 1
     if not Path("/usr/share/kodi/addons/skin.dede-tv/addon.xml").is_file():
         print("DEDE_SETUP: packaged skin missing", file=sys.stderr)
         return 1
