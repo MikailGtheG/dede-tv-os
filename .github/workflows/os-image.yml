@@ -145,13 +145,13 @@ jobs:
             for log in /home/dede/.kodi/temp/kodi.log /home/dede/.kodi/temp/kodi.old.log; do
               if [ -r "$log" ]; then
                 echo "DEDE_CI_DIAG: Kodi log $log"
-                grep -Ei 'error|fatal|failed|render|display|glx|egl|addon|add-on|disabled|notification|dialog' "$log" | tail -45 || true
+                grep -aEi 'error|fatal|failed|render|display|glx|egl|addon|add-on|disabled|notification|dialog' "$log" | tail -45 || true
               fi
             done
             for log in /home/dede/.local/share/xorg/Xorg.0.log /var/log/Xorg.0.log; do
               if [ -r "$log" ]; then
                 echo "DEDE_CI_DIAG: Xorg display summary $log"
-                grep -Ei 'connected|disconnected|screen 0|virtual size|modeset|fbdev|\\(EE\\)' "$log" | tail -25 || true
+                grep -aEi 'connected|disconnected|screen 0|virtual size|modeset|fbdev|\\(EE\\)' "$log" | tail -25 || true
               fi
             done
             # A running Xorg process does not mean its display is visible
