@@ -49,6 +49,19 @@ class TvVisualGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "stock Kodi branding"):
                 module.classify(path)
 
+    def test_black_renderer_frame_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "black.ppm"
+            path.write_bytes(b"P6\\n320 240\\n255\\n" + bytes(320 * 240 * 3))
+            with self.assertRaisesRegex(ValueError, "blank or black QEMU frame"):
+                module.classify(path)
+
+    def test_dark_but_visible_screen_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "dark.ppm"
+            path.write_bytes(b"P6\\n320 240\\n255\\n" + bytes((12, 14, 16)) * (320 * 240))
+            module.classify(path)
+
     def test_incomplete_ppm_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "truncated.ppm"
