@@ -78,7 +78,7 @@ class FirstBootRecoveryTests(unittest.TestCase):
                 pending.write_text("skin.dede-tv\n")
                 self.assertTrue(module.first_boot_pending())
 
-    def test_boot_fallback_is_recovered_once_then_admin_is_respected(self):
+    def test_boot_fallback_is_recovered_once_then_non_dede_skin_blocks_resume(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             pending = Path(d) / ".dede-skin-first-boot-pending"
@@ -101,7 +101,7 @@ class FirstBootRecoveryTests(unittest.TestCase):
             with patch.object(module, "PENDING", pending), \
                  patch.object(module, "desired_skin", return_value="skin.estuary"), \
                  patch.object(module, "rpc") as rpc:
-                self.assertEqual(module.run(), 0)
+                self.assertEqual(module.run(), 1)
                 rpc.assert_not_called()
 
 
