@@ -11,13 +11,19 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
-def write_frame(path, *, stock_dialog=False, stock_logo=False):
+def write_frame(path, *, stock_dialog=False, stock_logo=False, cyan_accent=False):
     width, height = 320, 240
     pixels = bytearray(bytes((23, 25, 28)) * width * height)
     # Real UI has some detail; a perfectly flat frame is a stalled renderer.
     pixels[(80 * width + 80) * 3:(80 * width + 80) * 3 + 3] = bytes((35, 37, 40))
     cyan = bytes((21, 122, 150))
     if stock_dialog:
+        # A stock modal has an opaque body below the colored title bar.
+        for y in range(int(height * .39), int(height * .58)):
+            for x in range(int(width * .27), int(width * .72)):
+                offset = (y * width + x) * 3
+                pixels[offset:offset + 3] = bytes((10, 12, 14))
+    if stock_dialog or cyan_accent:
         for y in range(int(height * .34), int(height * .385)):
             for x in range(int(width * .27), int(width * .72)):
                 offset = (y * width + x) * 3
@@ -43,6 +49,12 @@ class TvVisualGateTests(unittest.TestCase):
             write_frame(path, stock_dialog=True)
             with self.assertRaisesRegex(ValueError, "stock Kodi add-on enable"):
                 module.classify(path)
+
+    def test_cyan_accent_without_modal_body_is_not_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "accent.ppm"
+            write_frame(path, cyan_accent=True)
+            self.assertGreater(module.classify(path)["popup_cyan"], .35)
 
     def test_stock_kodi_logo_is_rejected_without_dialog(self):
         with tempfile.TemporaryDirectory() as temp:
