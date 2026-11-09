@@ -145,7 +145,10 @@ jobs:
             for log in /home/dede/.kodi/temp/kodi.log /home/dede/.kodi/temp/kodi.old.log; do
               if [ -r "$log" ]; then
                 echo "DEDE_CI_DIAG: Kodi log $log"
-                grep -aEi 'error|fatal|failed|render|display|glx|egl|addon|add-on|disabled|notification|dialog' "$log" | tail -45 || true
+                # Even error lines may embed subscriber URLs or bearer tokens.
+                # Emit only a count; keep raw logs inside the guest.
+                matches=$(grep -aEic 'error|fatal|failed|render|display|glx|egl|addon|add-on|disabled|notification|dialog' "$log" || true)
+                echo "DEDE_CI_DIAG: Kodi diagnostic matching lines=$matches"
               fi
             done
             for log in /home/dede/.local/share/xorg/Xorg.0.log /var/log/Xorg.0.log; do
