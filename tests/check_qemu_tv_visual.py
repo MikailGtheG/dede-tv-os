@@ -56,6 +56,20 @@ def classify(path):
     mean_brightness = brightness / max(1, samples)
     if mean_brightness < 8:
         raise ValueError(f"blank or black QEMU frame detected (mean {mean_brightness:.1f})")
+    # A uniformly colored frame can be a stuck splash/renderer, even when
+    # it is bright enough to pass the black-screen check. Sample widely
+    # spaced pixels and reject an essentially featureless display.
+    sampled_colors = set()
+    for y in range(0, height, 8):
+        for x in range(0, width, 8):
+            offset = (y * width + x) * 3
+            sampled_colors.add(bytes(pixels[offset:offset + 3]))
+            if len(sampled_colors) > 1:
+                break
+        if len(sampled_colors) > 1:
+            break
+    if len(sampled_colors) == 1:
+        raise ValueError("uniform QEMU frame detected (no visible UI or video detail)")
     # The characteristic first-run "Disabled add-ons" popup has an opaque
     # cyan horizontal header across much of the screen's central region.
     popup = cyan_fraction(width, height, pixels, (.27, .34, .72, .385))
