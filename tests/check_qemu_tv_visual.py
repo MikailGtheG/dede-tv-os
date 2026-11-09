@@ -44,6 +44,18 @@ def cyan_fraction(width, height, pixels, rect, step=4):
 
 def classify(path):
     width, height, pixels = read_ppm(path)
+    # A completely black capture is a failed renderer/boot, not a TV UI.
+    # Sample the whole frame, rather than relying only on Estuary colors.
+    samples = 0
+    brightness = 0
+    for y in range(0, height, 8):
+        for x in range(0, width, 8):
+            offset = (y * width + x) * 3
+            brightness += sum(pixels[offset:offset + 3])
+            samples += 3
+    mean_brightness = brightness / max(1, samples)
+    if mean_brightness < 8:
+        raise ValueError(f"blank or black QEMU frame detected (mean {mean_brightness:.1f})")
     # The characteristic first-run "Disabled add-ons" popup has an opaque
     # cyan horizontal header across much of the screen's central region.
     popup = cyan_fraction(width, height, pixels, (.27, .34, .72, .385))
