@@ -462,7 +462,7 @@ jobs:
               tail -80 "boot-logs/$mode.log"
               exit 1
             fi
-            grep -F 'DEDE_CI_DIAG:' "boot-logs/$mode.log" || true
+            # Serial logs contain control bytes; grep must treat them as text\n            # so the actual guest diagnostics appear in the CI output.\n            grep -aF 'DEDE_CI_DIAG:' "boot-logs/$mode.log" || true
             # Integration is not complete if the new profile was ignored.
             for expected in \
               'id="services.esenabled">true<' \
