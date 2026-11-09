@@ -14,6 +14,8 @@ spec.loader.exec_module(module)
 def write_frame(path, *, stock_dialog=False, stock_logo=False):
     width, height = 320, 240
     pixels = bytearray(bytes((23, 25, 28)) * width * height)
+    # Real UI has some detail; a perfectly flat frame is a stalled renderer.
+    pixels[(80 * width + 80) * 3:(80 * width + 80) * 3 + 3] = bytes((35, 37, 40))
     cyan = bytes((21, 122, 150))
     if stock_dialog:
         for y in range(int(height * .34), int(height * .385)):
