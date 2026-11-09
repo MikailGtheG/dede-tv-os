@@ -172,9 +172,13 @@ jobs:
               printf 'DEDE_CI_DIAG: %s: ' "$path"
               cat "$path" || true
             done
-            echo 'DEDE_CI_DIAG: Kodi recent log'
+            # Kodi logs may contain IPTV URLs, credentials or access tokens.
+            # Never emit raw log lines into public CI/serial output.
+            echo 'DEDE_CI_DIAG: Kodi log availability'
             if [ -r /home/dede/.kodi/temp/kodi.log ]; then
-              tail -75 /home/dede/.kodi/temp/kodi.log || true
+              echo 'DEDE_CI_DIAG: Kodi log present (contents withheld)'
+            else
+              echo 'DEDE_CI_DIAG: Kodi log absent'
             fi
             echo 'DEDE_CI_DIAG: Kodi service recent journal'
             journalctl --no-pager -u dede-kodi.service -n 40 || true
