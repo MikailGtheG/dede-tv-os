@@ -191,9 +191,24 @@ jobs:
             fi
             echo 'DEDE_CI_DIAG: Kodi local playback API'
             if [ -f /home/dede/.kodi/userdata/guisettings.xml ]; then
-              for key in services.esenabled services.esallinterfaces services.webserver lookandfeel.skin; do
-                grep -F "id=\"$key\"" /home/dede/.kodi/userdata/guisettings.xml | head -1 || true
-              done
+              # Never print raw XML: a setting can contain credentials or
+              # remote endpoint URLs. Emit only allowlisted boolean states.
+              python3 - <<'PYSETTINGS'
+          import xml.etree.ElementTree as ET
+          try:
+              root = ET.parse("/home/dede/.kodi/userdata/guisettings.xml").getroot()
+              for key in ("services.esenabled", "services.esallinterfaces",
+                          "services.webserver"):
+                  node = root.find(".//setting[@id='" + key + "']")
+                  value = (node.text or "").strip().lower() if node is not None else ""
+                  print("DEDE_CI_DIAG: " + key + "=" +
+                        (value if value in ("true", "false") else "unknown"))
+              skin = root.find(".//setting[@id='lookandfeel.skin']")
+              print("DEDE_CI_DIAG: configured_dede_skin=" +
+                    str(skin is not None and (skin.text or "").strip() == "skin.dede-tv").lower())
+          except (ET.ParseError, OSError):
+              print("DEDE_CI_DIAG: GUI settings unavailable")
+          PYSETTINGS
             fi
             # The raw JSON-RPC TCP protocol is unauthenticated. Assert no
             # non-loopback listener even if settings are accidentally changed.
