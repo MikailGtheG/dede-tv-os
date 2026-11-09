@@ -50,15 +50,19 @@ def modal_panel_fraction(width, height, pixels, step=4):
     """
     x0, x1 = int(width * .27), int(width * .72)
     y0, y1 = int(height * .39), int(height * .58)
-    dark = total = 0
+    contrasting = total = 0
     for y in range(y0, y1, step):
         for x in range(x0, x1, step):
             offset = (y * width + x) * 3
             red, green, blue = pixels[offset:offset + 3]
             total += 1
-            if max(red, green, blue) < 55:
-                dark += 1
-    return dark / max(1, total)
+            # Compare against the adjacent, same-row backdrop: the modal
+            # body must be a distinct panel, not merely a dark TV skin.
+            outside = (y * width + int(width * .20)) * 3
+            backdrop = pixels[outside:outside + 3]
+            if max(red, green, blue) < 55 and sum(abs(a - b) for a, b in zip((red, green, blue), backdrop)) >= 18:
+                contrasting += 1
+    return contrasting / max(1, total)
 
 
 def classify(path):
