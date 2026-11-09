@@ -541,6 +541,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Surface guest diagnostics in the failing job, not only in an
+          # artifact that must be downloaded separately. Do not mask failure.
+          show_guest_diagnostics() {
+            for mode in bios uefi; do
+              log="build/boot-logs/$mode.log"
+              [ -f "$log" ] || continue
+              echo "::group::$mode Kodi/Xorg guest diagnostics"
+              grep -aE 'DEDE_CI_DIAG:|\\(EE\\)|Kodi did not|Xorg.*failed' "$log" | tail -100 || true
+              echo "::endgroup::"
+            done
+          }
+          trap show_guest_diagnostics ERR
           python3 - <<'PY'
           from pathlib import Path
           for mode in ("bios", "uefi"):
