@@ -491,19 +491,16 @@ jobs:
             # Serial logs contain control bytes; grep must treat them as text
             # so the actual guest diagnostics appear in the CI output.
             grep -aF 'DEDE_CI_DIAG:' "boot-logs/$mode.log" || true
-            # Integration is not complete if the new profile was ignored.
+            # Match the allowlisted diagnostic format emitted by the guest.
+            # Raw guisettings.xml values are intentionally never serialized
+            # into CI logs, so checking for XML snippets here is incorrect.
             for expected in \
-              'id="services.esenabled">true<' \
-              'id="services.esallinterfaces">false<' \
-              'id="services.webserver">false<' \
-              'id="lookandfeel.skin">skin.dede-tv<'; do
-              # Kodi normalizes GUI settings and may add default="true"
-              # between the id attribute and the setting value. Accept that
-              # harmless metadata without weakening the expected value.
-              key="${expected%%>*}"
-              value="${expected#*>}"
-              if ! grep -aEiq "${key//./\\.}[^>]*>${value}" "boot-logs/$mode.log"; then
-                echo "$mode: expected Kodi first-boot configuration missing: $expected" >&2
+              'DEDE_CI_DIAG: services.esenabled=true' \
+              'DEDE_CI_DIAG: services.esallinterfaces=false' \
+              'DEDE_CI_DIAG: services.webserver=false' \
+              'DEDE_CI_DIAG: configured_dede_skin=true'; do
+              if ! grep -aFq "$expected" "boot-logs/$mode.log"; then
+                echo "$mode: required Kodi first-boot setting missing: $expected" >&2
                 exit 1
               fi
             done
