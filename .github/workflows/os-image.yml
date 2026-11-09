@@ -252,7 +252,7 @@ jobs:
                           remaining = remaining.lstrip()[size:]
                           if document.get("id") == 7331:
                               active = document.get("result", {}).get("value")
-                              print("DEDE_CI_DIAG: ACTIVE_SKIN=" + str(active))
+                              print("DEDE_CI_DIAG: ACTIVE_SKIN=" + ("skin.dede-tv" if active == "skin.dede-tv" else "unexpected"))
                               raise SystemExit(0)
                   print("DEDE_CI_DIAG: ACTIVE_SKIN=unavailable")
           except Exception as error:
