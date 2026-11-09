@@ -5,6 +5,8 @@ on:
     paths:
       - 'build/**'
       - '.github/workflows/os-image.yml'
+      - 'tests/check_qemu_tv_visual.py'
+      - 'tests/test_qemu_tv_visual.py'
   workflow_dispatch:
 # Only the newest expensive ISO build for a branch should consume runners.
 concurrency:
