@@ -59,8 +59,17 @@ class TvVisualGateTests(unittest.TestCase):
     def test_dark_but_visible_screen_is_accepted(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "dark.ppm"
-            path.write_bytes(b"P6\n320 240\n255\n" + bytes((12, 14, 16)) * (320 * 240))
+            pixels = bytearray(bytes((12, 14, 16)) * (320 * 240))
+            pixels[(80 * 320 + 80) * 3:(80 * 320 + 80) * 3 + 3] = bytes((20, 22, 24))
+            path.write_bytes(b"P6\n320 240\n255\n" + pixels)
             module.classify(path)
+
+    def test_bright_uniform_frame_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "uniform.ppm"
+            path.write_bytes(b"P6\n320 240\n255\n" + bytes((90, 100, 110)) * (320 * 240))
+            with self.assertRaisesRegex(ValueError, "uniform QEMU frame"):
+                module.classify(path)
 
     def test_incomplete_ppm_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
