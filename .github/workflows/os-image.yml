@@ -183,8 +183,12 @@ jobs:
             else
               echo 'DEDE_CI_DIAG: Kodi log absent'
             fi
-            echo 'DEDE_CI_DIAG: Kodi service recent journal'
-            journalctl --no-pager -u dede-kodi.service -n 40 || true
+            # Service journals may contain IPTV URLs, credentials or tokens.
+            # Report only service state; never stream raw journal lines to CI.
+            echo 'DEDE_CI_DIAG: Kodi service journal entries (contents withheld)'
+            if command -v journalctl >/dev/null 2>&1; then
+              journalctl --no-pager -q -u dede-kodi.service -n 40 -o cat 2>/dev/null | wc -l || true
+            fi
             echo 'DEDE_CI_DIAG: Kodi local playback API'
             if [ -f /home/dede/.kodi/userdata/guisettings.xml ]; then
               for key in services.esenabled services.esallinterfaces services.webserver lookandfeel.skin; do
