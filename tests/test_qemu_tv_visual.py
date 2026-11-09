@@ -88,6 +88,20 @@ class TvVisualGateTests(unittest.TestCase):
             path.write_bytes(b"P6\n320 240\n255\n" + pixels)
             module.classify(path)
 
+    def test_off_grid_visible_picture_is_not_rejected_as_black(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "off-grid-picture.ppm"
+            width, height = 320, 240
+            pixels = bytearray(width * height * 3)
+            # Bright columns avoid every x coordinate sampled at stride 8.
+            for y in range(height):
+                for x in range(width):
+                    if x % 8 != 0:
+                        offset = (y * width + x) * 3
+                        pixels[offset:offset + 3] = bytes((45, 48, 52))
+            path.write_bytes(b"P6\n320 240\n255\n" + pixels)
+            module.classify(path)
+
     def test_bright_uniform_frame_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "uniform.ppm"
