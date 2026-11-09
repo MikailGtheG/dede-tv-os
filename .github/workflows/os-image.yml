@@ -521,7 +521,7 @@ jobs:
             # address. The previous regex missed addresses starting with 0,
             # including 0200007F (127.0.0.2), and other unexpected bindings.
             if grep -aE 'DEDE_CI_DIAG: JSONRPC_SOCKET=[0-9A-F]{8}:2382' "boot-logs/$mode.log" \
-              | grep -aEv '^DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382[[:space:]]*
+              | grep -aEv '^DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382[[:space:]]*$'; then
               echo "$mode: unexpected Kodi JSON-RPC IPv4 listener detected" >&2
               exit 1
             fi
