@@ -78,7 +78,11 @@ def classify(path):
             samples += 3
     mean_brightness = brightness / max(1, samples)
     if mean_brightness < 8:
-        raise ValueError(f"blank or black QEMU frame detected (mean {mean_brightness:.1f})")
+        # The 8-pixel sampling grid can miss small overlays or a thin
+        # picture. Recheck all pixels before declaring the VGA output blank.
+        full_mean = sum(pixels) / len(pixels)
+        if full_mean < 8:
+            raise ValueError(f"blank or black QEMU frame detected (mean {full_mean:.1f})")
     # A uniformly colored frame can be a stuck splash/renderer, even when
     # it is bright enough to pass the black-screen check. Sample widely
     # spaced pixels and reject an essentially featureless display.
