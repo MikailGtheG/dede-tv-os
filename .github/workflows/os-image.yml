@@ -476,7 +476,7 @@ jobs:
               # harmless metadata without weakening the expected value.
               key="${expected%%>*}"
               value="${expected#*>}"
-              if ! grep -Eiq "${key//./\\.}[^>]*>${value}" "boot-logs/$mode.log"; then
+              if ! grep -aEiq "${key//./\\.}[^>]*>${value}" "boot-logs/$mode.log"; then
                 echo "$mode: expected Kodi first-boot configuration missing: $expected" >&2
                 exit 1
               fi
@@ -497,7 +497,7 @@ jobs:
             # Deny every IPv4 listener except the single approved loopback
             # address. The previous regex missed addresses starting with 0,
             # including 0200007F (127.0.0.2), and other unexpected bindings.
-            if grep -E 'DEDE_CI_DIAG: JSONRPC_SOCKET=[0-9A-F]{8}:2382' "boot-logs/$mode.log" \
+            if grep -aE 'DEDE_CI_DIAG: JSONRPC_SOCKET=[0-9A-F]{8}:2382' "boot-logs/$mode.log" \
               | grep -Fv 'DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382'; then
               echo "$mode: unexpected Kodi JSON-RPC IPv4 listener detected" >&2
               exit 1
