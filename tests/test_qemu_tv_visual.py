@@ -78,6 +78,16 @@ class TvVisualGateTests(unittest.TestCase):
             path.write_bytes(b"P6\n320 240\n255\n" + pixels)
             module.classify(path)
 
+    def test_off_grid_ui_detail_is_not_mistaken_for_uniform_frame(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "sparse-detail.ppm"
+            pixels = bytearray(bytes((90, 100, 110)) * (320 * 240))
+            # The detail is deliberately outside the 8-pixel sample grid.
+            offset = (81 * 320 + 81) * 3
+            pixels[offset:offset + 3] = bytes((100, 110, 120))
+            path.write_bytes(b"P6\n320 240\n255\n" + pixels)
+            module.classify(path)
+
     def test_bright_uniform_frame_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "uniform.ppm"
