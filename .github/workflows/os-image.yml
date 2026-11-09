@@ -68,7 +68,7 @@ jobs:
           test "$("$core" --db "$smoke/state.db" list)" = 'CI channel'
           "$core" --db "$smoke/state.db" select 'CI channel'
           test "$("$core" --db "$smoke/state.db" last)" = 'CI channel'
-          "$core" --db "$smoke/state.db" request-pvr 12 | grep -Fq '"channelid":12'
+          "$core" --db "$smoke/state.db" request-pvr 12 | grep -aFq '"channelid":12'
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
@@ -457,7 +457,7 @@ jobs:
             fi
             # The CI-only guest diagnostic must actually execute and reach
             # QEMU's serial log for both firmware modes.
-            if ! grep -Fq 'DEDE_CI_DIAG: end' "boot-logs/$mode.log"; then
+            if ! grep -aFq 'DEDE_CI_DIAG: end' "boot-logs/$mode.log"; then
               echo "Missing guest Kodi/Xorg diagnostics for $mode" >&2
               tail -80 "boot-logs/$mode.log"
               exit 1
@@ -481,7 +481,7 @@ jobs:
                 exit 1
               fi
             done
-            if ! grep -Fq 'DEDE_CI_DIAG: ACTIVE_SKIN=skin.dede-tv' "boot-logs/$mode.log"; then
+            if ! grep -aFq 'DEDE_CI_DIAG: ACTIVE_SKIN=skin.dede-tv' "boot-logs/$mode.log"; then
               echo "$mode: Kodi did not activate Dede TV skin at runtime" >&2
               exit 1
             fi
@@ -502,14 +502,14 @@ jobs:
               echo "$mode: unexpected Kodi JSON-RPC IPv4 listener detected" >&2
               exit 1
             fi
-            if ! grep -Fq 'DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382' "boot-logs/$mode.log"; then
+            if ! grep -aFq 'DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382' "boot-logs/$mode.log"; then
               echo "$mode: local Kodi JSON-RPC is not listening on 127.0.0.1:9090" >&2
               exit 1
             fi
             # A reached boot target is insufficient if the kiosk service
             # never launches its actual Xorg and Kodi processes.
             for process in Xorg kodi.bin; do
-              if ! grep -Fq "DEDE_CI_DIAG: $process running" "boot-logs/$mode.log"; then
+              if ! grep -aFq "DEDE_CI_DIAG: $process running" "boot-logs/$mode.log"; then
                 echo "$mode: kiosk process $process was not running at diagnostic time" >&2
                 tail -100 "boot-logs/$mode.log"
                 exit 1
@@ -652,9 +652,9 @@ jobs:
           assert len(home.findall(".//control")) <= 8
           PY
           unsquashfs -cat "$squashfs" etc/passwd | grep -q '^dede:'
-          unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -Fq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'
-          unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -Fq 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core'
-          unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -Fq 'ExecStart=/bin/sh /usr/local/libexec/dede-tv-resume'
+          unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -aFq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'
+          unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -aFq 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core'
+          unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -aFq 'ExecStart=/bin/sh /usr/local/libexec/dede-tv-resume'
           unsquashfs -cat "$squashfs" var/lib/dpkg/status > installed-dpkg-status
           test -s installed-dpkg-status
           python3 - <<'PY'
