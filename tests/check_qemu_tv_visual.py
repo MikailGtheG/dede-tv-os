@@ -42,6 +42,25 @@ def cyan_fraction(width, height, pixels, rect, step=4):
     return cyan / max(1, count)
 
 
+def modal_panel_fraction(width, height, pixels, step=4):
+    """Estimate the dark, opaque body beneath Kodi's cyan modal header.
+
+    A cyan stripe alone is also valid custom-skin artwork. Require a
+    contrasting rectangular body before treating it as an onboarding modal.
+    """
+    x0, x1 = int(width * .27), int(width * .72)
+    y0, y1 = int(height * .39), int(height * .58)
+    dark = total = 0
+    for y in range(y0, y1, step):
+        for x in range(x0, x1, step):
+            offset = (y * width + x) * 3
+            red, green, blue = pixels[offset:offset + 3]
+            total += 1
+            if max(red, green, blue) < 55:
+                dark += 1
+    return dark / max(1, total)
+
+
 def classify(path):
     width, height, pixels = read_ppm(path)
     # A completely black capture is a failed renderer/boot, not a TV UI.
@@ -76,7 +95,8 @@ def classify(path):
     # Estuary logo appears near the upper-left corner independently of
     # popup layout. Do not reject a scene based on one blue pixel.
     logo = cyan_fraction(width, height, pixels, (.04, .02, .085, .075), step=1)
-    if popup > .35:
+    panel = modal_panel_fraction(width, height, pixels)
+    if popup > .35 and panel > .80:
         raise ValueError(
             f"stock Kodi add-on enable dialog detected (cyan header {popup:.1%})"
         )
@@ -84,7 +104,7 @@ def classify(path):
         raise ValueError(
             f"stock Kodi branding detected (cyan logo {logo:.1%})"
         )
-    return {"popup_cyan": popup, "logo_cyan": logo}
+    return {"popup_cyan": popup, "panel_dark": panel, "logo_cyan": logo}
 
 
 def main(argv):
