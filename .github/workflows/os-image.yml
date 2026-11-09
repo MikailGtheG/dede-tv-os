@@ -516,7 +516,7 @@ jobs:
               fi
             done
             # A timeout alone is NOT evidence of a successful boot.
-            if ! grep -Eqi 'Reached target (Multi-User System|Graphical Interface)|login:' "boot-logs/$mode.log"; then
+            if ! grep -aEqi 'Reached target (Multi-User System|Graphical Interface)|login:' "boot-logs/$mode.log"; then
               echo "No login prompt or systemd boot target observed in $mode" >&2
               tail -100 "boot-logs/$mode.log"
               exit 1
