@@ -55,6 +55,16 @@ fi
 test ! -e "$tmp/calls"
 grep -qx 'private data' "$tmp/redirect-target"
 rm "$DEDE_DB_PATH"
+# A dangling symlink must also be refused rather than treated as an absent
+# database (which would incorrectly report a successful first boot).
+ln -s "$tmp/missing-channel-db" "$DEDE_DB_PATH"
+if sh "$script" > "$tmp/dangling-output" 2>&1; then
+  echo 'Dangling channel database symlink was accepted' >&2
+  exit 1
+fi
+grep -q 'Symlinked TV channel database refused' "$tmp/dangling-output"
+test ! -e "$tmp/calls"
+rm "$DEDE_DB_PATH"
 : > "$DEDE_DB_PATH"
 sh "$script"
 test "$(wc -l < "$tmp/calls")" -eq 1
