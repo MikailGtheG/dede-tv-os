@@ -23,6 +23,15 @@ if [ -L "$HOME/.kodi" ] || [ -L "$profile" ]; then
   exit 1
 fi
 mkdir -p "$profile"
+# Existing Kodi profile directories must not be writable by another account.
+# A shared directory permits swapping settings after validation.
+for dir in "$HOME/.kodi" "$profile"; do
+  if [ "$(stat -c %u -- "$dir")" != "$(id -u)" ] ||
+     [ -n "$(find "$dir" -maxdepth 0 -perm /022 -print -quit)" ]; then
+    echo "Unsafe Kodi profile directory ownership or permissions; refusing kiosk startup" >&2
+    exit 1
+  fi
+done
 advanced="$profile/advancedsettings.xml"
 settings="$profile/guisettings.xml"
 # Never let Kodi read an administrator-controlled advancedsettings target via a symlink.
