@@ -93,6 +93,28 @@ if sh "$script"; then
   exit 1
 fi
 test ! -s "$tmp/calls"
+# Reject malformed retry delay and call timeout before invoking the core.
+# These settings bound startup latency and must never be silently accepted.
+for invalid_setting in delay timeout; do
+  : > "$tmp/calls"
+  case "$invalid_setting" in
+    delay)
+      export DEDE_RESUME_DELAY=11
+      ;;
+    timeout)
+      export DEDE_RESUME_CALL_TIMEOUT=0
+      ;;
+  esac
+  if sh "$script" > "$tmp/invalid-$invalid_setting-output" 2>&1; then
+    echo "Invalid resume $invalid_setting was accepted" >&2
+    exit 1
+  fi
+  test ! -s "$tmp/calls"
+  case "$invalid_setting" in
+    delay) unset DEDE_RESUME_DELAY ;;
+    timeout) unset DEDE_RESUME_CALL_TIMEOUT ;;
+  esac
+done
 # Restore valid settings after the deliberately invalid-attempts case above.
 # Otherwise that earlier validation masks the missing-timeout diagnostic.
 export DEDE_RESUME_ATTEMPTS=2
