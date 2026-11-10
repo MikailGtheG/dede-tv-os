@@ -1,6 +1,6 @@
 #!/bin/sh
 # Exercise the real resume wrapper without starting Kodi or touching a live DB.
-set -eu
+set -eux
 script=build/config/includes.chroot/usr/local/libexec/dede-tv-resume
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
