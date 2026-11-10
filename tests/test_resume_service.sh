@@ -25,6 +25,7 @@ case "$DEDE_TEST_MODE" in
     fi
     exit 0 ;;
   success) exit 0 ;;
+  success-swap) mv "$DEDE_DB_PATH" "$DEDE_DB_PATH.before-success"; printf '%s\n' replacement > "$DEDE_DB_PATH"; exit 0 ;;
   hang) exec sleep 10 ;;
   remove-db) rm -f "$DEDE_DB_PATH"; exit 1 ;;
   replace-db) mv "$DEDE_DB_PATH" "$DEDE_DB_PATH.old"; printf "replacement\\n" > "$DEDE_DB_PATH"; exit 1 ;;
@@ -179,4 +180,14 @@ fi
 test "$(wc -l < "$tmp/calls")" -eq 1
 grep -qx 'new channel list' "$DEDE_DB_PATH"
 unset DEDE_TEST_SWAP_ON_DELAY
+# A core that returns success after replacing the DB must not be accepted.
+: > "$tmp/calls"
+: > "$DEDE_DB_PATH"
+export DEDE_TEST_MODE=success-swap DEDE_RESUME_ATTEMPTS=2 DEDE_RESUME_DELAY=0
+if sh "$script"; then
+  echo 'Resume accepted a database swapped during successful playback' >&2
+  exit 1
+fi
+test "$(wc -l < "$tmp/calls")" -eq 1
+grep -qx replacement "$DEDE_DB_PATH"
 echo 'Resume service regression checks passed'
