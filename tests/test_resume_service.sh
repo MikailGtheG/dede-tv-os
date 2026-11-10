@@ -145,6 +145,9 @@ test "$(wc -l < "$tmp/calls")" -eq 1
 test -L "$DEDE_DB_PATH"
 grep -qx sentinel "$DEDE_TEST_REDIRECT_TARGET"
 # A different regular file at the same path must not be retried either.
+# The preceding redirect-db case leaves a symlink behind. Remove it first:
+# truncating through it would modify the sentinel and make this test invalid.
+rm -f -- "$DEDE_DB_PATH"
 : > "$tmp/calls"
 : > "$DEDE_DB_PATH"
 export DEDE_TEST_MODE=replace-db DEDE_RESUME_ATTEMPTS=3
