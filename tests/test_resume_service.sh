@@ -93,6 +93,8 @@ if sh "$script"; then
   exit 1
 fi
 test ! -s "$tmp/calls"
+# Restore a valid attempt count so the following checks exercise their own guards.
+export DEDE_RESUME_ATTEMPTS=2
 # Reject malformed retry delay and call timeout before invoking the core.
 # These settings bound startup latency and must never be silently accepted.
 for invalid_setting in delay timeout; do
