@@ -19,6 +19,9 @@ case "$call_timeout" in ''|*[!0-9]*) echo "Invalid resume call timeout" >&2; exi
 # and must not be mistaken for a normal first boot without a database.
 [ ! -L "$db" ] || { echo "Symlinked TV channel database refused" >&2; exit 1; }
 [ -f "$db" ] || { echo "No saved TV channel database; skipping resume"; exit 0; }
+# Pin the original database identity across retries. A regular-file replacement
+# must not silently change which channel list unattended playback uses.
+db_identity=$(stat -Lc '%d:%i' -- "$db") || exit 1
 command -v timeout >/dev/null 2>&1 || { echo "GNU timeout is required for bounded playback resume" >&2; exit 1; }
 attempt=1
 while [ "$attempt" -le "$attempts" ]; do
@@ -27,7 +30,7 @@ while [ "$attempt" -le "$attempts" ]; do
   fi
   # The channel store may be removed or replaced during administration.
   # Never retry against a vanished or redirected database path.
-  if [ ! -f "$db" ] || [ -L "$db" ]; then
+  if [ ! -f "$db" ] || [ -L "$db" ] ||\n     [ "$(stat -Lc '%d:%i' -- "$db" 2>/dev/null || true)" != "$db_identity" ]; then
     echo "TV channel database changed during resume; aborting" >&2
     exit 1
   fi
