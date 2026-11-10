@@ -6,6 +6,24 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 export HOME="$tmp/home" DEDE_SKIN_ADDON="$tmp/skin/addon.xml"
 mkdir -p "$HOME/.kodi/userdata" "$tmp/skin"
+# A redirected HOME must not be used to create Kodi profile files.
+original_home="$HOME"
+mkdir -p "$tmp/redirected-home"
+ln -s "$tmp/redirected-home" "$tmp/home-link"
+if HOME="$tmp/home-link" sh "$init" >"$tmp/home-symlink-output" 2>&1; then
+  echo 'FAIL: symlinked Kodi HOME accepted' >&2
+  exit 1
+fi
+grep -q 'Unsafe Kodi HOME directory' "$tmp/home-symlink-output"
+test ! -e "$tmp/redirected-home/.kodi"
+# A non-directory HOME must also fail before any profile writes.
+printf '%s\n' 'not a directory' > "$tmp/home-file"
+if HOME="$tmp/home-file" sh "$init" >"$tmp/home-file-output" 2>&1; then
+  echo 'FAIL: non-directory Kodi HOME accepted' >&2
+  exit 1
+fi
+grep -q 'Unsafe Kodi HOME directory' "$tmp/home-file-output"
+export HOME="$original_home"
 printf '%s\n' '<addon id="skin.dede-tv"/>' > "$DEDE_SKIN_ADDON"
 gui="$HOME/.kodi/userdata/guisettings.xml"
 reject() {
