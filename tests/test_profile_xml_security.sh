@@ -37,6 +37,17 @@ grep -q 'Dede TV skin metadata missing or invalid' "$tmp/skin-link-output"
 test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
 rm "$manifest"
 mv "$tmp/skin/real-addon.xml" "$manifest"
+# Reject a redirected addon directory even when addon.xml itself is regular.
+mv "$tmp/skin" "$tmp/real-skin"
+ln -s "$tmp/real-skin" "$tmp/skin"
+if sh "$init" >"$tmp/skin-dir-link-output" 2>&1; then
+  echo 'FAIL: symlinked Dede TV skin directory accepted' >&2
+  exit 1
+fi
+grep -q 'Dede TV skin metadata missing or invalid' "$tmp/skin-dir-link-output"
+test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
+rm "$tmp/skin"
+mv "$tmp/real-skin" "$tmp/skin"
 gui="$HOME/.kodi/userdata/guisettings.xml"
 reject() {
   if sh "$init"; then
