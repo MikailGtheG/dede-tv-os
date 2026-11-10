@@ -424,6 +424,11 @@ jobs:
 
           monitor, screenshot = sys.argv[1:]
           try:
+              # Never accept a stale capture from an earlier attempt.
+              # HMP screendump writes asynchronously; the wait below must
+              # observe a newly created file, not an old complete PPM.
+              from pathlib import Path
+              Path(screenshot).unlink(missing_ok=True)
               with socket.socket(socket.AF_UNIX) as sock:
                   sock.settimeout(5)
                   sock.connect(monitor)
