@@ -9,6 +9,13 @@ if [ -L "$HOME" ] || [ ! -d "$HOME" ]; then
   echo "Unsafe Kodi HOME directory; refusing kiosk startup" >&2
   exit 1
 fi
+# Refuse a home owned by another account or writable by other users.
+# A writable HOME allows replacement of .kodi between validation and startup.
+if [ "$(stat -c %u -- "$HOME")" != "$(id -u)" ] ||
+   [ -n "$(find "$HOME" -maxdepth 0 -perm /022 -print -quit)" ]; then
+  echo "Unsafe Kodi HOME ownership or permissions; refusing kiosk startup" >&2
+  exit 1
+fi
 profile="$HOME/.kodi/userdata"
 # Never follow a redirected profile directory into an arbitrary location.
 if [ -L "$HOME/.kodi" ] || [ -L "$profile" ]; then
