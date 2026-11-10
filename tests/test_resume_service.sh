@@ -26,7 +26,7 @@ case "$DEDE_TEST_MODE" in
     exit 0 ;;
   success) exit 0 ;;
   hang) exec sleep 10 ;;
-  remove-db) rm -f "$DEDE_DB_PATH"; exit 1 ;;
+  remove-db) rm -f "$DEDE_DB_PATH"; exit 1 ;;\n  replace-db) rm -f "$DEDE_DB_PATH"; printf "replacement\\n" > "$DEDE_DB_PATH"; exit 1 ;;
   redirect-db) rm -f "$DEDE_DB_PATH"; ln -s "$DEDE_TEST_REDIRECT_TARGET" "$DEDE_DB_PATH"; exit 1 ;;
   *) exit 92 ;;
 esac
@@ -143,4 +143,14 @@ fi
 test "$(wc -l < "$tmp/calls")" -eq 1
 test -L "$DEDE_DB_PATH"
 grep -qx sentinel "$DEDE_TEST_REDIRECT_TARGET"
+# A different regular file at the same path must not be retried either.
+: > "$tmp/calls"
+: > "$DEDE_DB_PATH"
+export DEDE_TEST_MODE=replace-db DEDE_RESUME_ATTEMPTS=3
+if sh "$script"; then
+  echo 'Resume accepted a replaced regular channel database' >&2
+  exit 1
+fi
+test "$(wc -l < "$tmp/calls")" -eq 1
+grep -qx replacement "$DEDE_DB_PATH"
 echo 'Resume service regression checks passed'
