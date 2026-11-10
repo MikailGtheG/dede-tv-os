@@ -27,7 +27,7 @@ case "$DEDE_TEST_MODE" in
   success) exit 0 ;;
   hang) exec sleep 10 ;;
   remove-db) rm -f "$DEDE_DB_PATH"; exit 1 ;;
-  replace-db) rm -f "$DEDE_DB_PATH"; printf "replacement\\n" > "$DEDE_DB_PATH"; exit 1 ;;
+  replace-db) mv "$DEDE_DB_PATH" "$DEDE_DB_PATH.old"; printf "replacement\\n" > "$DEDE_DB_PATH"; exit 1 ;;
   redirect-db) rm -f "$DEDE_DB_PATH"; ln -s "$DEDE_TEST_REDIRECT_TARGET" "$DEDE_DB_PATH"; exit 1 ;;
   *) exit 92 ;;
 esac
