@@ -4,6 +4,11 @@
 set -eu
 umask 077
 : "${HOME:?Kodi HOME is not set}"
+# A redirected home can escape the dedicated TV user profile root.
+if [ -L "$HOME" ] || [ ! -d "$HOME" ]; then
+  echo "Unsafe Kodi HOME directory; refusing kiosk startup" >&2
+  exit 1
+fi
 profile="$HOME/.kodi/userdata"
 # Never follow a redirected profile directory into an arbitrary location.
 if [ -L "$HOME/.kodi" ] || [ -L "$profile" ]; then
