@@ -157,4 +157,26 @@ if sh "$script"; then
 fi
 test "$(wc -l < "$tmp/calls")" -eq 1
 grep -qx replacement "$DEDE_DB_PATH"
+# A database swap during the retry delay must be caught before the next call.
+# Mock sleep performs the swap while preserving the old inode via rename.
+cat > "$tmp/bin/sleep" <<'EOF'
+#!/bin/sh
+if [ "${DEDE_TEST_SWAP_ON_DELAY:-0}" = 1 ]; then
+  mv "$DEDE_DB_PATH" "$DEDE_DB_PATH.before-delay"
+  printf 'new channel list\\n' > "$DEDE_DB_PATH"
+fi
+exit 0
+EOF
+chmod +x "$tmp/bin/sleep"
+: > "$tmp/calls"
+: > "$DEDE_DB_PATH"
+export PATH="$tmp/bin:/usr/bin:/bin" DEDE_TEST_MODE=fail
+export DEDE_TEST_SWAP_ON_DELAY=1 DEDE_RESUME_ATTEMPTS=3 DEDE_RESUME_DELAY=1
+if sh "$script"; then
+  echo 'Resume accepted a database swapped during retry delay' >&2
+  exit 1
+fi
+test "$(wc -l < "$tmp/calls")" -eq 1
+grep -qx 'new channel list' "$DEDE_DB_PATH"
+unset DEDE_TEST_SWAP_ON_DELAY
 echo 'Resume service regression checks passed'
