@@ -25,6 +25,18 @@ fi
 grep -q 'Unsafe Kodi HOME directory' "$tmp/home-file-output"
 export HOME="$original_home"
 printf '%s\n' '<addon id="skin.dede-tv"/>' > "$DEDE_SKIN_ADDON"
+# The addon manifest must be a regular file at the packaged path, not a redirect.
+manifest="$DEDE_SKIN_ADDON"
+mv "$manifest" "$tmp/skin/real-addon.xml"
+ln -s "$tmp/skin/real-addon.xml" "$manifest"
+if sh "$init" >"$tmp/skin-link-output" 2>&1; then
+  echo 'FAIL: symlinked Dede TV addon metadata accepted' >&2
+  exit 1
+fi
+grep -q 'Dede TV skin metadata missing or invalid' "$tmp/skin-link-output"
+test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
+rm "$manifest"
+mv "$tmp/skin/real-addon.xml" "$manifest"
 gui="$HOME/.kodi/userdata/guisettings.xml"
 reject() {
   if sh "$init"; then
