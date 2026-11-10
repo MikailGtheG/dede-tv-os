@@ -33,6 +33,17 @@ fi
 grep -q 'Unsafe Kodi HOME ownership or permissions' "$tmp/home-permissions-output"
 test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
 chmod 755 "$HOME"
+# Both existing Kodi profile directories must be private, not merely HOME.
+for dir in "$HOME/.kodi" "$HOME/.kodi/userdata"; do
+  chmod 777 "$dir"
+  if sh "$init" >"$tmp/profile-permissions-output" 2>&1; then
+    echo "FAIL: world-writable Kodi profile directory accepted: $dir" >&2
+    exit 1
+  fi
+  grep -q 'Unsafe Kodi profile directory ownership or permissions' "$tmp/profile-permissions-output"
+  test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
+  chmod 755 "$dir"
+done
 printf '%s\n' '<addon id="skin.dede-tv"/>' > "$DEDE_SKIN_ADDON"
 # The addon manifest must be a regular file at the packaged path, not a redirect.
 manifest="$DEDE_SKIN_ADDON"
