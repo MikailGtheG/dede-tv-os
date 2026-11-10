@@ -109,6 +109,13 @@ class TvVisualGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "uniform QEMU frame"):
                 module.classify(path)
 
+    def test_trailing_payload_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "trailing.ppm"
+            path.write_bytes(b"P6\n320 240\n255\n" + bytes(320 * 240 * 3 + 1))
+            with self.assertRaisesRegex(ValueError, "trailing frame data"):
+                module.classify(path)
+
     def test_incomplete_ppm_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "truncated.ppm"
