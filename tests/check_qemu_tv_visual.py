@@ -21,8 +21,13 @@ def read_ppm(path):
             raise ValueError("invalid frame dimensions")
         if stream.readline() != b"255\n":
             raise ValueError("invalid PPM max value")
-        pixels = stream.read()
-    if len(pixels) != width * height * 3:
+        expected_bytes = width * height * 3
+        # Reject oversized or truncated captures before allocating their payload.
+        # A malformed CI artifact must not exhaust the runner's memory.
+        if Path(path).stat().st_size - stream.tell() != expected_bytes:
+            raise ValueError("incomplete or trailing frame data")
+        pixels = stream.read(expected_bytes)
+    if len(pixels) != expected_bytes:
         raise ValueError("incomplete or trailing frame data")
     return width, height, pixels
 
