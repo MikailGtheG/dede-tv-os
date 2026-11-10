@@ -25,6 +25,13 @@ command -v timeout >/dev/null 2>&1 || { echo "GNU timeout is required for bounde
 db_identity=$(stat -Lc '%d:%i' -- "$db") || exit 1
 attempt=1
 while [ "$attempt" -le "$attempts" ]; do
+  # Recheck immediately before each invocation: the database can be replaced
+  # while waiting between attempts, not only during a failed core call.
+  if [ ! -f "$db" ] || [ -L "$db" ] ||
+     [ "$(stat -Lc '%d:%i' -- "$db" 2>/dev/null || true)" != "$db_identity" ]; then
+    echo "TV channel database changed during resume; aborting" >&2
+    exit 1
+  fi
   if timeout --signal=TERM --kill-after=2s "${call_timeout}s" "$core" --db "$db" resume-last "$media"; then
     exit 0
   fi
