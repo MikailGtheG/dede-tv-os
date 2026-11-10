@@ -24,6 +24,15 @@ if HOME="$tmp/home-file" sh "$init" >"$tmp/home-file-output" 2>&1; then
 fi
 grep -q 'Unsafe Kodi HOME directory' "$tmp/home-file-output"
 export HOME="$original_home"
+# Shared HOME lets other users replace Kodi profile content before startup.
+chmod 777 "$HOME"
+if sh "$init" >"$tmp/home-permissions-output" 2>&1; then
+  echo 'FAIL: world-writable Kodi HOME accepted' >&2
+  exit 1
+fi
+grep -q 'Unsafe Kodi HOME ownership or permissions' "$tmp/home-permissions-output"
+test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
+chmod 755 "$HOME"
 printf '%s\n' '<addon id="skin.dede-tv"/>' > "$DEDE_SKIN_ADDON"
 # The addon manifest must be a regular file at the packaged path, not a redirect.
 manifest="$DEDE_SKIN_ADDON"
