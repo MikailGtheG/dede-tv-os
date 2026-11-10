@@ -163,7 +163,7 @@ cat > "$tmp/bin/sleep" <<'EOF'
 #!/bin/sh
 if [ "${DEDE_TEST_SWAP_ON_DELAY:-0}" = 1 ]; then
   mv "$DEDE_DB_PATH" "$DEDE_DB_PATH.before-delay"
-  printf 'new channel list\\n' > "$DEDE_DB_PATH"
+  printf '%s\n' 'new channel list' > "$DEDE_DB_PATH"
 fi
 exit 0
 EOF
