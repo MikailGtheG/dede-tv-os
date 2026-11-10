@@ -123,7 +123,7 @@ test ! -e "$DEDE_DB_PATH"
 # A failed core call must not follow a database redirected by another process.
 # The wrapper must stop after one attempt, without retrying the redirected path.
 : > "$tmp/calls"
-printf 'sentinel\\n' > "$tmp/redirect-after-call"
+printf '%s\n' 'sentinel' > "$tmp/redirect-after-call"
 : > "$DEDE_DB_PATH"
 export DEDE_TEST_MODE=redirect-db DEDE_TEST_REDIRECT_TARGET="$tmp/redirect-after-call"
 if sh "$script"; then
