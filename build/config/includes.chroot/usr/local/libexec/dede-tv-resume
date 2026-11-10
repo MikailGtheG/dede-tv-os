@@ -33,6 +33,13 @@ while [ "$attempt" -le "$attempts" ]; do
     exit 1
   fi
   if timeout --signal=TERM --kill-after=2s "${call_timeout}s" "$core" --db "$db" resume-last "$media"; then
+    # A successful core return does not prove the channel store stayed stable.
+    # Reject a replacement that happened while the playback call was running.
+    if [ ! -f "$db" ] || [ -L "$db" ] ||
+       [ "$(stat -Lc '%d:%i' -- "$db" 2>/dev/null || true)" != "$db_identity" ]; then
+      echo "TV channel database changed during resume; aborting" >&2
+      exit 1
+    fi
     exit 0
   fi
   # The channel store may be removed or replaced during administration.
