@@ -465,8 +465,11 @@ jobs:
                           if not (0 < width <= 8192 and 0 < height <= 8192):
                               raise ValueError("invalid PPM dimensions")
                           expected = fh.tell() + width * height * 3
-                      if capture.stat().st_size == expected:
-                          break
+                          # Check the opened file, not a path that could be
+                          # replaced between the header read and size check.
+                          import os
+                          if os.fstat(fh.fileno()).st_size == expected:
+                              break
                   except (FileNotFoundError, ValueError, OSError):
                       pass
                   time.sleep(0.2)
