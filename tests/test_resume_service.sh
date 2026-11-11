@@ -117,6 +117,26 @@ for invalid_setting in delay timeout; do
     timeout) unset DEDE_RESUME_CALL_TIMEOUT ;;
   esac
 done
+# Non-numeric settings must fail closed without invoking the playback core.
+# Include each field independently so a prior invalid value cannot mask a bug.
+for invalid_setting in attempts delay timeout; do
+  : > "$tmp/calls"
+  case "$invalid_setting" in
+    attempts) export DEDE_RESUME_ATTEMPTS='2x' ;;
+    delay) export DEDE_RESUME_DELAY='1x' ;;
+    timeout) export DEDE_RESUME_CALL_TIMEOUT='3x' ;;
+  esac
+  if sh "$script" > "$tmp/non-numeric-$invalid_setting-output" 2>&1; then
+    echo "Non-numeric resume $invalid_setting was accepted" >&2
+    exit 1
+  fi
+  test ! -s "$tmp/calls"
+  case "$invalid_setting" in
+    attempts) export DEDE_RESUME_ATTEMPTS=2 ;;
+    delay) export DEDE_RESUME_DELAY=0 ;;
+    timeout) export DEDE_RESUME_CALL_TIMEOUT=3 ;;
+  esac
+done
 # Restore valid settings after the deliberately invalid-attempts case above.
 # Otherwise that earlier validation masks the missing-timeout diagnostic.
 export DEDE_RESUME_ATTEMPTS=2
