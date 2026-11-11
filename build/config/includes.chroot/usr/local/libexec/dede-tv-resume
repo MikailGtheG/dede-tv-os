@@ -14,7 +14,7 @@ case "$delay" in ''|*[!0-9]*) echo "Invalid resume delay" >&2; exit 2;; esac
 [ "$delay" -le 10 ] || exit 2
 case "$call_timeout" in ''|*[!0-9]*) echo "Invalid resume call timeout" >&2; exit 2;; esac
 [ "$call_timeout" -ge 1 ] && [ "$call_timeout" -le 10 ] || exit 2
-[ -x "$core" ] || { echo "Dede TV core missing or not executable; cannot resume TV playback" >&2; exit 1; }
+[ -f "$core" ] && [ -x "$core" ] || { echo "Dede TV core missing, not a regular file or not executable; cannot resume TV playback" >&2; exit 1; }
 # Reject symlinks before testing file existence: a dangling symlink fails -f
 # and must not be mistaken for a normal first boot without a database.
 [ ! -L "$db" ] || { echo "Symlinked TV channel database refused" >&2; exit 1; }
