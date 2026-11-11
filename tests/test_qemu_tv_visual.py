@@ -148,6 +148,20 @@ class TvVisualGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid PPM dimensions"):
                 module.classify(path)
 
+    def test_oversized_magic_header_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "long-magic.ppm"
+            path.write_bytes(b"P6" + b" " * 100000 + b"\n320 240\n255\n")
+            with self.assertRaisesRegex(ValueError, "expected binary PPM P6"):
+                module.classify(path)
+
+    def test_oversized_maxval_header_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "long-maxval.ppm"
+            path.write_bytes(b"P6\n320 240\n" + b"2" * 100000 + b"\n")
+            with self.assertRaisesRegex(ValueError, "invalid PPM max value"):
+                module.classify(path)
+
     def test_trailing_payload_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "trailing.ppm"
