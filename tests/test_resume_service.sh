@@ -26,6 +26,7 @@ case "$DEDE_TEST_MODE" in
     exit 0 ;;
   success) exit 0 ;;
   success-swap) mv "$DEDE_DB_PATH" "$DEDE_DB_PATH.before-success"; printf '%s\n' replacement > "$DEDE_DB_PATH"; exit 0 ;;
+  success-remove) rm -f -- "$DEDE_DB_PATH"; exit 0 ;;
   success-redirect) rm -f "$DEDE_DB_PATH"; ln -s "$DEDE_TEST_REDIRECT_TARGET" "$DEDE_DB_PATH"; exit 0 ;;
   hang) exec sleep 10 ;;
   remove-db) rm -f "$DEDE_DB_PATH"; exit 1 ;;
@@ -282,6 +283,19 @@ if sh "$script"; then
 fi
 test "$(wc -l < "$tmp/calls")" -eq 1
 grep -qx replacement "$DEDE_DB_PATH"
+# A successful core exit cannot conceal deletion of the channel database.
+# Otherwise boot would report success despite losing its saved channel state.
+: > "$tmp/calls"
+rm -f -- "$DEDE_DB_PATH"
+: > "$DEDE_DB_PATH"
+export DEDE_TEST_MODE=success-remove DEDE_RESUME_ATTEMPTS=2
+if sh "$script" > "$tmp/success-remove-output" 2>&1; then
+  echo 'Resume accepted database deletion after successful playback' >&2
+  exit 1
+fi
+grep -q 'TV channel database changed during resume' "$tmp/success-remove-output"
+test "$(wc -l < "$tmp/calls")" -eq 1
+test ! -e "$DEDE_DB_PATH"
 # A successful core call must not hide a symlink redirect either. Preserve the
 # target file and verify that the wrapper rejects the redirected database.
 : > "$tmp/calls"
