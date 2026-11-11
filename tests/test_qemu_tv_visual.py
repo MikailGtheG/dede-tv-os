@@ -162,6 +162,16 @@ class TvVisualGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid PPM max value"):
                 module.classify(path)
 
+    def test_capture_size_uses_open_descriptor_not_path_stat(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "descriptor.ppm"
+            write_frame(path)
+            # The capture may be renamed after opening. Size validation
+            # must use the descriptor rather than re-stat the pathname.
+            from unittest.mock import patch
+            with patch.object(Path, "stat", side_effect=AssertionError("path stat used")):
+                module.read_ppm(path)
+
     def test_trailing_payload_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "trailing.ppm"
