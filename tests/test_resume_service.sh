@@ -66,6 +66,16 @@ mkdir -p "$tmp/no-timeout"
 PATH="$tmp/no-timeout" /bin/sh "$script" > "$tmp/first-boot-output" 2>&1
 grep -q "No saved TV channel database" "$tmp/first-boot-output"
 test ! -e "$tmp/calls"
+# An existing directory at the database path is a broken installation,
+# not an empty first boot. Fail without calling the playback core.
+mkdir "$DEDE_DB_PATH"
+if sh "$script" > "$tmp/directory-db-output" 2>&1; then
+  echo 'Directory channel database was incorrectly accepted' >&2
+  exit 1
+fi
+grep -q 'TV channel database is not a regular file' "$tmp/directory-db-output"
+test ! -e "$tmp/calls"
+rmdir "$DEDE_DB_PATH"
 # A symlinked database must not redirect automatic playback to another file.
 printf 'private data\n' > "$tmp/redirect-target"
 ln -s "$tmp/redirect-target" "$DEDE_DB_PATH"
