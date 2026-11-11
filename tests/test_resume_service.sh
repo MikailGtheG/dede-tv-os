@@ -39,6 +39,14 @@ export PATH="$tmp/bin:$PATH" DEDE_CORE_BIN="$tmp/bin/core"
 export DEDE_DB_PATH="$tmp/channels.db" DEDE_MEDIA_ROOT="$tmp/media"
 export DEDE_RESUME_ATTEMPTS=2 DEDE_RESUME_DELAY=0 DEDE_RESUME_CALL_TIMEOUT=3
 export DEDE_TEST_LOG="$tmp/calls" DEDE_TEST_MODE=success
+# A missing playback engine must fail visibly rather than report a successful
+# boot-resume: otherwise the appliance could silently start without TV.
+if DEDE_CORE_BIN="$tmp/missing-core" sh "$script" > "$tmp/missing-core-output" 2>&1; then
+  echo 'Missing TV playback core was incorrectly accepted' >&2
+  exit 1
+fi
+grep -q 'Dede TV core missing or not executable' "$tmp/missing-core-output"
+test ! -e "$tmp/calls"
 # No database: never invoke the playback core.
 sh "$script"
 test ! -e "$tmp/calls"
