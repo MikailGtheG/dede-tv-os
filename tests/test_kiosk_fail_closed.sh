@@ -50,4 +50,19 @@ if XDG_RUNTIME_DIR="$tmp/shared-runtime" sh "$script" >"$tmp/group-output" 2>&1;
   exit 1
 fi
 grep -q 'mode 0700' "$tmp/group-output"
+# A regular file is not a usable socket directory, even when writable.
+printf 'not a directory\n' > "$tmp/runtime-file"
+if XDG_RUNTIME_DIR="$tmp/runtime-file" sh "$script" >"$tmp/file-output" 2>&1; then
+  echo 'Kiosk accepted a regular file as runtime directory' >&2
+  exit 1
+fi
+grep -q 'Kodi runtime directory is unavailable' "$tmp/file-output"
+# The kiosk must not start when the runtime directory has no owner access.
+mkdir -p "$tmp/no-owner-runtime"
+chmod 000 "$tmp/no-owner-runtime"
+if XDG_RUNTIME_DIR="$tmp/no-owner-runtime" sh "$script" >"$tmp/no-owner-output" 2>&1; then
+  echo 'Kiosk accepted an inaccessible runtime directory' >&2
+  exit 1
+fi
+grep -Eq 'unavailable|mode 0700' "$tmp/no-owner-output"
 echo 'Kiosk fail-closed smoke checks passed'
