@@ -13,8 +13,13 @@ def read_ppm(path):
     with Path(path).open("rb") as stream:
         if stream.readline() != b"P6\n":
             raise ValueError("expected binary PPM P6")
-        dimensions = stream.readline().split()
-        if len(dimensions) != 2:
+        # Bound header parsing before allocating or converting attacker-sized fields.
+        # readline(limit) may return a truncated line: require its newline.
+        dimensions_line = stream.readline(128)
+        if not dimensions_line.endswith(b"\n"):
+            raise ValueError("invalid PPM dimensions")
+        dimensions = dimensions_line.split()
+        if len(dimensions) != 2 or any(len(part) > 10 or not part.isdigit() for part in dimensions):
             raise ValueError("invalid PPM dimensions")
         width, height = (int(part) for part in dimensions)
         if not (320 <= width <= 8192 and 240 <= height <= 8192):
