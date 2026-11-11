@@ -11,7 +11,7 @@ import sys
 
 def read_ppm(path):
     with Path(path).open("rb") as stream:
-        if stream.readline() != b"P6\n":
+        if stream.readline(4) != b"P6\n":
             raise ValueError("expected binary PPM P6")
         # Bound header parsing before allocating or converting attacker-sized fields.
         # readline(limit) may return a truncated line: require its newline.
@@ -24,7 +24,7 @@ def read_ppm(path):
         width, height = (int(part) for part in dimensions)
         if not (320 <= width <= 8192 and 240 <= height <= 8192):
             raise ValueError("invalid frame dimensions")
-        if stream.readline() != b"255\n":
+        if stream.readline(5) != b"255\n":
             raise ValueError("invalid PPM max value")
         expected_bytes = width * height * 3
         # Reject oversized or truncated captures before allocating their payload.
