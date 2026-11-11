@@ -47,6 +47,16 @@ if DEDE_CORE_BIN="$tmp/missing-core" sh "$script" > "$tmp/missing-core-output" 2
 fi
 grep -q 'Dede TV core missing or not executable' "$tmp/missing-core-output"
 test ! -e "$tmp/calls"
+# An existing but non-executable core is equally unusable. Fail before any
+# attempt, rather than treating a present file as a successful TV startup.
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$tmp/non-executable-core"
+chmod 0644 "$tmp/non-executable-core"
+if DEDE_CORE_BIN="$tmp/non-executable-core" sh "$script" > "$tmp/non-executable-output" 2>&1; then
+  echo 'Non-executable TV playback core was incorrectly accepted' >&2
+  exit 1
+fi
+grep -q 'Dede TV core missing or not executable' "$tmp/non-executable-output"
+test ! -e "$tmp/calls"
 # No database: never invoke the playback core.
 sh "$script"
 test ! -e "$tmp/calls"
