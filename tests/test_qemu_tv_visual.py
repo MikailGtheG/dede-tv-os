@@ -133,6 +133,21 @@ class TvVisualGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid frame dimensions"):
                 module.classify(path)
 
+    def test_unbounded_ppm_dimension_header_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "huge-header.ppm"
+            # No pixel payload: reject oversized header before integer conversion.
+            path.write_bytes(b"P6\n" + b"9" * 100000 + b" 240\n255\n")
+            with self.assertRaisesRegex(ValueError, "invalid PPM dimensions"):
+                module.classify(path)
+
+    def test_nonnumeric_ppm_dimensions_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "bad-dimensions.ppm"
+            path.write_bytes(b"P6\n320 2x0\n255\n")
+            with self.assertRaisesRegex(ValueError, "invalid PPM dimensions"):
+                module.classify(path)
+
     def test_trailing_payload_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "trailing.ppm"
