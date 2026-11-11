@@ -77,6 +77,16 @@ fi
 grep -q 'Dede TV core missing, not a regular file or not executable' "$tmp/fifo-core-output"
 test ! -e "$tmp/calls"
 test -p "$tmp/fifo-core"
+# An executable symlink must not redirect unattended playback to an
+# administrator-controlled target outside the installed core path.
+ln -s "$tmp/bin/core" "$tmp/symlink-core"
+if DEDE_CORE_BIN="$tmp/symlink-core" sh "$script" > "$tmp/symlink-core-output" 2>&1; then
+  echo 'Symlinked TV playback core was incorrectly accepted' >&2
+  exit 1
+fi
+grep -q 'Dede TV core missing, not a regular file or not executable' "$tmp/symlink-core-output"
+test ! -e "$tmp/calls"
+test -L "$tmp/symlink-core"
 # No database: never invoke the playback core.
 sh "$script"
 test ! -e "$tmp/calls"
