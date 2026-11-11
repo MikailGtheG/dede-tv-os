@@ -8,10 +8,12 @@ on:
       - 'tests/check_qemu_tv_visual.py'
       - 'tests/test_qemu_tv_visual.py'
   workflow_dispatch:
-# Only the newest expensive ISO build for a branch should consume runners.
+# Serialize expensive ISO builds without cancelling a running BIOS/UEFI test.
+# Cancelling the previous run destroys its boot evidence and can indefinitely
+# postpone a complete release-gate result when commits arrive frequently.
 concurrency:
   group: dede-os-image-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 permissions:
   contents: read
 jobs:
