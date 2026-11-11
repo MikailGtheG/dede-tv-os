@@ -277,4 +277,18 @@ fi
 test "$(wc -l < "$tmp/calls")" -eq 1
 test -L "$DEDE_DB_PATH"
 grep -qx 'do not modify' "$DEDE_TEST_REDIRECT_TARGET"
+# A FIFO is an existing path but cannot be a channel database. In particular,
+# the resume wrapper must reject it before the core can block on FIFO reads.
+rm -f -- "$DEDE_DB_PATH"
+: > "$tmp/calls"
+mkfifo "$DEDE_DB_PATH"
+export DEDE_TEST_MODE=success
+if sh "$script" > "$tmp/fifo-db-output" 2>&1; then
+  echo 'FIFO channel database was incorrectly accepted' >&2
+  exit 1
+fi
+grep -q 'TV channel database is not a regular file' "$tmp/fifo-db-output"
+test ! -s "$tmp/calls"
+test -p "$DEDE_DB_PATH"
+rm -f -- "$DEDE_DB_PATH"
 echo 'Resume service regression checks passed'
