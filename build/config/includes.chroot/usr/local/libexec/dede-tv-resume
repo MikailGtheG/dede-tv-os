@@ -38,6 +38,12 @@ while [ "$attempt" -le "$attempts" ]; do
     echo "TV channel database changed during resume; aborting" >&2
     exit 1
   fi
+  # The core may be removed or replaced while waiting for Kodi or retrying.
+  # Do not execute a symlink, directory or non-executable file on a later attempt.
+  if [ -L "$core" ] || [ ! -f "$core" ] || [ ! -x "$core" ]; then
+    echo "Dede TV core changed or became unavailable during resume; aborting" >&2
+    exit 1
+  fi
   if timeout --signal=TERM --kill-after=2s "${call_timeout}s" "$core" --db "$db" resume-last "$media"; then
     # A successful core return does not prove the channel store stayed stable.
     # Reject a replacement that happened while the playback call was running.
