@@ -102,8 +102,16 @@ def classify(path):
             break
     # Sparse samples can miss small but real UI details. Only reject a
     # uniform frame after checking every pixel, avoiding false positives.
-    if len(sampled_colors) == 1 and pixels == pixels[:3] * (width * height):
-        raise ValueError("uniform QEMU frame detected (no visible UI or video detail)")
+    if len(sampled_colors) == 1:
+        # Avoid allocating a second full-frame buffer (up to 192 MiB at
+        # 8192x8192) just to compare the frame against a repeated RGB triplet.
+        # A bounded, pixel-aligned chunk also handles off-grid UI details.
+        color = pixels[:3]
+        chunk_pixels = 4096
+        pattern = color * chunk_pixels
+        if all(pixels[offset:offset + len(pattern)] == pattern[:min(len(pattern), len(pixels) - offset)]
+               for offset in range(0, len(pixels), len(pattern))):
+            raise ValueError("uniform QEMU frame detected (no visible UI or video detail)")
     # The characteristic first-run "Disabled add-ons" popup has an opaque
     # cyan horizontal header across much of the screen's central region.
     popup = cyan_fraction(width, height, pixels, (.27, .34, .72, .385))
