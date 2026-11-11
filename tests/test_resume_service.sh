@@ -66,6 +66,16 @@ if DEDE_CORE_BIN="$tmp/directory-core" sh "$script" > "$tmp/directory-core-outpu
 fi
 grep -q 'Dede TV core missing, not a regular file or not executable' "$tmp/directory-core-output"
 test ! -e "$tmp/calls"
+# A FIFO may exist at the configured core path but is not an executable
+# program. Reject it before attempting playback or waiting for a reader.
+mkfifo "$tmp/fifo-core"
+if DEDE_CORE_BIN="$tmp/fifo-core" sh "$script" > "$tmp/fifo-core-output" 2>&1; then
+  echo 'FIFO playback core was incorrectly accepted' >&2
+  exit 1
+fi
+grep -q 'Dede TV core missing, not a regular file or not executable' "$tmp/fifo-core-output"
+test ! -e "$tmp/calls"
+test -p "$tmp/fifo-core"
 # No database: never invoke the playback core.
 sh "$script"
 test ! -e "$tmp/calls"
