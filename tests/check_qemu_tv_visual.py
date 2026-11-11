@@ -6,6 +6,7 @@ deliberately detects known failure signatures rather than attempting to
 certify arbitrary videos or infer functional TV playback from colors.
 """
 from pathlib import Path
+import os
 import sys
 
 
@@ -29,7 +30,8 @@ def read_ppm(path):
         expected_bytes = width * height * 3
         # Reject oversized or truncated captures before allocating their payload.
         # A malformed CI artifact must not exhaust the runner's memory.
-        if Path(path).stat().st_size - stream.tell() != expected_bytes:
+        # Inspect the already-open file, not a path that can be replaced mid-read.
+        if os.fstat(stream.fileno()).st_size - stream.tell() != expected_bytes:
             raise ValueError("incomplete or trailing frame data")
         pixels = stream.read(expected_bytes)
     if len(pixels) != expected_bytes:
