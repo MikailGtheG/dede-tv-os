@@ -18,7 +18,13 @@ case "$call_timeout" in ''|*[!0-9]*) echo "Invalid resume call timeout" >&2; exi
 # Reject symlinks before testing file existence: a dangling symlink fails -f
 # and must not be mistaken for a normal first boot without a database.
 [ ! -L "$db" ] || { echo "Symlinked TV channel database refused" >&2; exit 1; }
-[ -f "$db" ] || { echo "No saved TV channel database; skipping resume"; exit 0; }
+if [ ! -e "$db" ]; then
+  echo "No saved TV channel database; skipping resume"
+  exit 0
+fi
+# An existing directory, device, FIFO or socket is not a valid channel store.
+# Never mistake a malformed database path for a successful first boot.
+[ -f "$db" ] || { echo "TV channel database is not a regular file" >&2; exit 1; }
 # Pin the original database identity across retries. A regular-file replacement
 # must not silently change which channel list unattended playback uses.
 command -v timeout >/dev/null 2>&1 || { echo "GNU timeout is required for bounded playback resume" >&2; exit 1; }
