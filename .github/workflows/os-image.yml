@@ -448,11 +448,19 @@ jobs:
               while time.monotonic() < deadline:
                   try:
                       with capture.open("rb") as fh:
-                          magic = fh.readline()
-                          dimensions = fh.readline().split()
-                          maxval = fh.readline()
-                          if magic != b"P6\n" or len(dimensions) != 2 or maxval.strip() != b"255":
-                              raise ValueError("incomplete PPM header")
+                          # The capture is still being written: bound each
+                          # header read before parsing untrusted dimensions.
+                          magic = fh.readline(4)
+                          dimension_line = fh.readline(128)
+                          maxval = fh.readline(5)
+                          dimensions = dimension_line.split()
+                          if (magic != b"P6\n" or
+                                  not dimension_line.endswith(b"\n") or
+                                  len(dimensions) != 2 or
+                                  any(len(part) > 10 or not part.isdigit()
+                                      for part in dimensions) or
+                                  maxval != b"255\n"):
+                              raise ValueError("incomplete or invalid PPM header")
                           width, height = map(int, dimensions)
                           if not (0 < width <= 8192 and 0 < height <= 8192):
                               raise ValueError("invalid PPM dimensions")
