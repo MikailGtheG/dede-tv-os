@@ -7,11 +7,17 @@ certify arbitrary videos or infer functional TV playback from colors.
 """
 from pathlib import Path
 import os
+import stat
 import sys
 
 
 def read_ppm(path):
-    with Path(path).open("rb") as stream:
+    # Do not block on FIFOs or follow a substituted symlink in CI captures.
+    # Open nonblocking and reject anything other than a regular file.
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("QEMU capture must be a regular file")
         if stream.readline(4) != b"P6\n":
             raise ValueError("expected binary PPM P6")
         # Bound header parsing before allocating or converting attacker-sized fields.
