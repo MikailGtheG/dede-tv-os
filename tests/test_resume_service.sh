@@ -283,6 +283,30 @@ fi
 test "$(wc -l < "$tmp/calls")" -eq 1
 grep -qx 'new channel list' "$DEDE_DB_PATH"
 unset DEDE_TEST_SWAP_ON_DELAY
+# A core can disappear between retry attempts. The second invocation must
+# never be attempted after the configured executable is removed.
+cat > "$tmp/bin/sleep" <<'EOF'
+#!/bin/sh
+if [ "${DEDE_TEST_REMOVE_CORE_ON_DELAY:-0}" = 1 ]; then
+  mv "$DEDE_CORE_BIN" "$DEDE_CORE_BIN.removed"
+fi
+exit 0
+EOF
+chmod +x "$tmp/bin/sleep"
+: > "$tmp/calls"
+rm -f -- "$DEDE_DB_PATH"
+: > "$DEDE_DB_PATH"
+export DEDE_TEST_MODE=fail DEDE_RESUME_ATTEMPTS=3 DEDE_RESUME_DELAY=1
+export DEDE_TEST_REMOVE_CORE_ON_DELAY=1
+if sh "$script" > "$tmp/core-removed-during-retry-output" 2>&1; then
+  echo 'Resume accepted a missing core during retry' >&2
+  exit 1
+fi
+grep -q 'Dede TV core changed or became unavailable during resume' "$tmp/core-removed-during-retry-output"
+test "$(wc -l < "$tmp/calls")" -eq 1
+test ! -e "$DEDE_CORE_BIN"
+mv "$DEDE_CORE_BIN.removed" "$DEDE_CORE_BIN"
+unset DEDE_TEST_REMOVE_CORE_ON_DELAY
 # A core that returns success after replacing the DB must not be accepted.
 : > "$tmp/calls"
 : > "$DEDE_DB_PATH"
