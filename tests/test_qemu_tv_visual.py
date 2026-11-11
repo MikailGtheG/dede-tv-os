@@ -117,6 +117,22 @@ class TvVisualGateTests(unittest.TestCase):
             path.write_bytes(b"P6\n320 240\n255\n" + pixels)
             module.classify(path)
 
+    def test_uniform_frame_with_partial_final_chunk_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "partial-uniform.ppm"
+            # 320 * 240 is not divisible by the 4096-pixel comparison chunk.
+            path.write_bytes(b"P6\n320 240\n255\n" + bytes((90, 100, 110)) * (320 * 240))
+            with self.assertRaisesRegex(ValueError, "uniform QEMU frame"):
+                module.classify(path)
+
+    def test_oversized_dimensions_are_rejected_before_reading_pixels(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "oversized.ppm"
+            # A hostile capture must not cause a multi-gigabyte allocation.
+            path.write_bytes(b"P6\n8193 8192\n255\n")
+            with self.assertRaisesRegex(ValueError, "invalid frame dimensions"):
+                module.classify(path)
+
     def test_trailing_payload_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "trailing.ppm"
