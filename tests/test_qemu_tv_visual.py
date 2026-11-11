@@ -114,7 +114,7 @@ class TvVisualGateTests(unittest.TestCase):
             path = Path(temp) / "last-pixel-detail.ppm"
             pixels = bytearray(bytes((90, 100, 110)) * (320 * 240))
             pixels[-3:] = bytes((100, 110, 120))
-            path.write_bytes(b"P6\\n320 240\\n255\\n" + pixels)
+            path.write_bytes(b"P6\n320 240\n255\n" + pixels)
             module.classify(path)
 
     def test_trailing_payload_is_rejected(self):
