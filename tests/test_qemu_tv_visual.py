@@ -172,6 +172,23 @@ class TvVisualGateTests(unittest.TestCase):
             with patch.object(Path, "stat", side_effect=AssertionError("path stat used")):
                 module.read_ppm(path)
 
+    def test_symlink_capture_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "real.ppm"
+            alias = Path(temp) / "alias.ppm"
+            write_frame(target)
+            alias.symlink_to(target)
+            with self.assertRaises(OSError):
+                module.read_ppm(alias)
+
+    def test_fifo_capture_is_rejected_without_waiting_for_writer(self):
+        import os
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "capture.pipe"
+            os.mkfifo(path)
+            with self.assertRaisesRegex(ValueError, "regular file"):
+                module.read_ppm(path)
+
     def test_trailing_payload_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "trailing.ppm"
