@@ -327,8 +327,12 @@ jobs:
           export DEDE_MEDIA_ROOT="$temp/media"
           export DEDE_RESUME_ATTEMPTS=3
           export DEDE_RESUME_DELAY=0
-          # Missing binary or database is not a boot-time failure.
-          sh "$script"
+          # A missing playback binary must fail visibly; no TV was started.
+          if sh "$script"; then
+            echo 'Missing playback core was reported as successful' >&2
+            exit 1
+          fi
+          test ! -e "$DEDE_DB_PATH.attempts"
           cat > "$DEDE_CORE_BIN" <<'SH'
           #!/bin/sh
           count_file="${DEDE_DB_PATH}.attempts"
