@@ -602,16 +602,16 @@ jobs:
               path = Path(f"build/boot-logs/{mode}-after-boot.ppm")
               if not path.is_file():
                   raise SystemExit(f"{mode}: no post-boot display captured")
-              with path.open("rb") as image:
-                  magic = image.readline().strip()
-                  dimensions = image.readline().split()
-                  max_value = image.readline().strip()
-                  if magic != b"P6" or len(dimensions) != 2 or max_value != b"255":
-                      raise SystemExit(f"{mode}: unexpected PPM header")
-                  width, height = map(int, dimensions)
-                  pixels = image.read()
-              if len(pixels) != width * height * 3:
-                  raise SystemExit(f"{mode}: incomplete display capture")
+              # Reuse the bounded, descriptor-validated PPM parser. The old
+              # inline reader used unlimited readline() and read() calls,
+              # allowing malformed captures to exhaust runner memory.
+              import sys
+              sys.path.insert(0, "tests")
+              from check_qemu_tv_visual import read_ppm
+              try:
+                  width, height, pixels = read_ppm(path)
+              except (OSError, ValueError) as exc:
+                  raise SystemExit(f"{mode}: invalid post-boot capture: {exc}") from exc
               illuminated = sum(value != 0 for value in pixels)
               coverage = illuminated / len(pixels)
               print(f"{mode}: visible nonblack byte fraction {coverage:.4%}")
