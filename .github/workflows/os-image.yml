@@ -543,7 +543,11 @@ jobs:
               echo "$mode: unexpected Kodi JSON-RPC IPv4 listener detected" >&2
               exit 1
             fi
-            if ! grep -aEq '^DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382[[:space:]]* is insufficient if the kiosk service
+            if ! grep -aEq '^DEDE_CI_DIAG: JSONRPC_SOCKET=0100007F:2382[[:space:]]*$' "boot-logs/$mode.log"; then
+              echo "$mode: local Kodi JSON-RPC is not listening on 127.0.0.1:9090" >&2
+              exit 1
+            fi
+            # A listening socket alone is insufficient if the kiosk service
             # never launches its actual Xorg and Kodi processes.
             for process in Xorg kodi.bin; do
               if ! grep -aFq "DEDE_CI_DIAG: $process running" "boot-logs/$mode.log"; then
