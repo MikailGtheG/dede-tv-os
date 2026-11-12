@@ -1,0 +1,185 @@
+#!/bin/sh
+# First boot only: configure local Kodi playback API and the packaged TV skin.
+# Respect existing administrator-managed Kodi settings on subsequent boots.
+set -eu
+umask 077
+: "${HOME:?Kodi HOME is not set}"
+# A redirected home can escape the dedicated TV user profile root.
+if [ -L "$HOME" ] || [ ! -d "$HOME" ]; then
+  echo "Unsafe Kodi HOME directory; refusing kiosk startup" >&2
+  exit 1
+fi
+# Refuse a home owned by another account or writable by other users.
+# A writable HOME allows replacement of .kodi between validation and startup.
+if [ "$(stat -c %u -- "$HOME")" != "$(id -u)" ] ||
+   [ -n "$(find "$HOME" -maxdepth 0 -perm /022 -print -quit)" ]; then
+  echo "Unsafe Kodi HOME ownership or permissions; refusing kiosk startup" >&2
+  exit 1
+fi
+profile="$HOME/.kodi/userdata"
+# Never follow a redirected profile directory into an arbitrary location.
+if [ -L "$HOME/.kodi" ] || [ -L "$profile" ]; then
+  echo "Symlinked Kodi profile directory; refusing kiosk startup" >&2
+  exit 1
+fi
+mkdir -p "$profile"
+# Existing Kodi profile directories must not be writable by another account.
+# A shared directory permits swapping settings after validation.
+for dir in "$HOME/.kodi" "$profile"; do
+  if [ "$(stat -c %u -- "$dir")" != "$(id -u)" ] ||
+     [ -n "$(find "$dir" -maxdepth 0 -perm /022 -print -quit)" ]; then
+    echo "Unsafe Kodi profile directory ownership or permissions; refusing kiosk startup" >&2
+    exit 1
+  fi
+done
+advanced="$profile/advancedsettings.xml"
+settings="$profile/guisettings.xml"
+# Never let Kodi read an administrator-controlled advancedsettings target via a symlink.
+# Reject before writing any first-boot files, including guisettings.xml.
+if [ -L "$advanced" ] || { [ -e "$advanced" ] && [ ! -f "$advanced" ]; }; then
+  echo "Unsafe Kodi advancedsettings path; refusing kiosk startup" >&2
+  exit 1
+fi
+# Reject malformed existing advancedsettings before Kodi attempts to load it.
+# Preserve valid administrator-managed settings without rewriting them.
+if [ -f "$advanced" ] && ! python3 - "$advanced" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+try:
+    # Refuse XML DTD/entity declarations before parsing untrusted profiles.
+    # Bound profile metadata before parsing: a corrupt file must not exhaust RAM.
+    with open(sys.argv[1], "rb") as source:
+        xml = source.read(1024 * 1024 + 1)
+    if len(xml) > 1024 * 1024:
+        raise ValueError("Kodi XML exceeds 1 MiB")
+    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+        raise ValueError("DTD/entity declarations are not allowed")
+    root = ET.fromstring(xml)
+    if root.tag != "advancedsettings":
+        raise ValueError("unexpected advancedsettings root")
+except (ET.ParseError, OSError, ValueError) as exc:
+    print(f"Invalid Kodi advancedsettings: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  echo "Invalid Kodi advancedsettings; refusing kiosk startup" >&2
+  exit 1
+fi
+skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
+# Validate the skin and existing GUI settings before creating any profile files. Never seed Estuary.
+if [ -L "$skin_addon" ] || [ -L "$(dirname "$skin_addon")" ] || [ ! -f "$skin_addon" ] || ! python3 - "$skin_addon" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+try:
+    # Refuse XML DTD/entity declarations before parsing untrusted profiles.
+    # Bound profile metadata before parsing: a corrupt file must not exhaust RAM.
+    with open(sys.argv[1], "rb") as source:
+        xml = source.read(1024 * 1024 + 1)
+    if len(xml) > 1024 * 1024:
+        raise ValueError("Kodi XML exceeds 1 MiB")
+    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+        raise ValueError("DTD/entity declarations are not allowed")
+    root = ET.fromstring(xml)
+    if root.tag != "addon" or root.get("id") != "skin.dede-tv":
+        raise ValueError("unexpected Kodi addon identity")
+except (ET.ParseError, OSError, ValueError) as exc:
+    print(f"Invalid Dede TV addon metadata: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  echo "Dede TV skin metadata missing or invalid; refusing profile initialization" >&2
+  exit 1
+fi
+tmp_advanced=
+tmp_settings=
+cleanup() {
+  [ -z "$tmp_advanced" ] || rm -f "$tmp_advanced"
+  [ -z "$tmp_settings" ] || rm -f "$tmp_settings"
+}
+trap cleanup EXIT HUP INT TERM
+
+# An existing profile may have been created by stock Kodi or an administrator.
+# Never launch the kiosk with a saved non-Dede skin selection.
+if [ -e "$settings" ] || [ -L "$settings" ]; then
+  # Parse XML rather than matching lines: Kodi may nest settings, change
+  # attribute order, or serialize values across multiple lines.
+  if [ ! -f "$settings" ] || [ -L "$settings" ] || ! python3 - "$settings" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+try:
+    # Refuse XML DTD/entity declarations before parsing untrusted profiles.
+    # Bound profile metadata before parsing: a corrupt file must not exhaust RAM.
+    with open(sys.argv[1], "rb") as source:
+        xml = source.read(1024 * 1024 + 1)
+    if len(xml) > 1024 * 1024:
+        raise ValueError("Kodi XML exceeds 1 MiB")
+    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+        raise ValueError("DTD/entity declarations are not allowed")
+    root = ET.fromstring(xml)
+    if root.tag != "settings":
+        raise ValueError("unexpected Kodi settings root")
+    values = {}
+    for setting in root.iter("setting"):
+        key = setting.get("id")
+        if key in ("lookandfeel.skin", "services.esenabled", "services.webserver", "services.esallinterfaces"):
+            if key in values:
+                raise ValueError("duplicate security-sensitive Kodi setting")
+            values[key] = (setting.text or "").strip()
+    if values.get("lookandfeel.skin") != "skin.dede-tv":
+        raise ValueError("Dede TV skin is not selected")
+    if values.get("services.esenabled", "").lower() != "true":
+        raise ValueError("local Kodi event server is disabled")
+    if any(values.get(key, "").lower() != "false" for key in
+           ("services.webserver", "services.esallinterfaces")):
+        raise ValueError("network-facing Kodi controls are enabled")
+except (ET.ParseError, OSError, ValueError) as exc:
+    print(f"Unsafe Kodi profile: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    echo "Existing Kodi profile failed security validation; refusing kiosk startup" >&2
+    exit 1
+  fi
+fi
+
+if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
+  tmp_advanced="$(mktemp "$profile/.dede-advancedsettings.XXXXXX")"
+  cat > "$tmp_advanced" <<'XML'
+<advancedsettings version="1.0">
+  <splash>false</splash>
+  <fullscreen>true</fullscreen>
+  <showexitbutton>false</showexitbutton>
+</advancedsettings>
+XML
+  if [ ! -e "$advanced" ] && [ ! -L "$advanced" ]; then
+    mv -n "$tmp_advanced" "$advanced"
+  fi
+fi
+
+if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
+  tmp_settings="$(mktemp "$profile/.dede-guisettings.XXXXXX")"
+  cat > "$tmp_settings" <<XML
+<settings version="2">
+  <setting id="services.esenabled">true</setting>
+  <setting id="services.esallinterfaces">false</setting>
+  <setting id="services.webserver">false</setting>
+  <setting id="lookandfeel.skin">skin.dede-tv</setting>
+</settings>
+XML
+  if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
+    mv -n "$tmp_settings" "$settings"
+    # Kodi may overwrite the requested skin during its first addon scan.
+    # Mark only newly provisioned profiles; the activation helper removes
+    # this marker once Dede TV has been selected successfully.
+    pending="$profile/.dede-skin-first-boot-pending"
+    if [ ! -e "$pending" ] && [ ! -L "$pending" ]; then
+      tmp_pending="$(mktemp "$profile/.dede-skin-pending.XXXXXX")"
+      printf 'skin.dede-tv\n' > "$tmp_pending"
+      mv -n "$tmp_pending" "$pending"
+      rm -f "$tmp_pending"
+    fi
+  fi
+fi

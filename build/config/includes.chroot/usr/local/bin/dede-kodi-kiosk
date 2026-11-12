@@ -1,0 +1,31 @@
+#!/bin/sh
+# Dede TV OS alpha: run Kodi as the dedicated unprivileged TV user.
+set -eu
+export HOME=/home/dede
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/dede-tv}
+case "$XDG_RUNTIME_DIR" in
+  /*) ;;
+  *) echo "Kodi runtime directory must be absolute" >&2; exit 1 ;;
+esac
+if [ -L "$XDG_RUNTIME_DIR" ] || [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
+  echo "Kodi runtime directory is unavailable or not writable" >&2
+  exit 1
+fi
+# Require a private runtime directory before creating Kodi sockets.
+runtime_mode=$(stat -c %a -- "$XDG_RUNTIME_DIR") || exit 1
+runtime_owner=$(stat -c %u -- "$XDG_RUNTIME_DIR") || exit 1
+if [ "$runtime_owner" != "$(id -u)" ] || [ "$runtime_mode" != 700 ]; then
+  echo "Kodi runtime directory must be owned by the TV user with mode 0700" >&2
+  exit 1
+fi
+export XDG_SESSION_TYPE=x11
+/usr/local/libexec/dede-kodi-profile-init
+# Never expose Kodi's stock navigation if the dedicated TV skin is absent.
+skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml
+# The profile initializer already parses addon.xml and validates the root addon ID.
+# Do not re-validate with a quote-sensitive grep: valid XML may use single quotes.
+if [ ! -f "$skin_addon" ]; then
+  echo "Dede TV skin is missing; refusing to expose the Kodi interface" >&2
+  exit 1
+fi
+exec /usr/bin/xinit /usr/bin/kodi --standalone -- /usr/bin/Xorg :0 -nolisten tcp -noreset vt1

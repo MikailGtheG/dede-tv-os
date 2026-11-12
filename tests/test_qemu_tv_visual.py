@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Offline checks for the actual BIOS/UEFI screenshot rejection gate."""
+import importlib.util
+from pathlib import Path
+import tempfile
+import unittest
+
+SCRIPT = Path(__file__).with_name("check_qemu_tv_visual.py")
+spec = importlib.util.spec_from_file_location("qemu_visual_gate", SCRIPT)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+def write_frame(path, *, stock_dialog=False, stock_logo=False, cyan_accent=False):
+    width, height = 320, 240
+    pixels = bytearray(bytes((23, 25, 28)) * width * height)
+    # Real UI has some detail; a perfectly flat frame is a stalled renderer.
+    pixels[(80 * width + 80) * 3:(80 * width + 80) * 3 + 3] = bytes((35, 37, 40))
+    cyan = bytes((21, 122, 150))
+    if stock_dialog:
+        # A stock modal has an opaque body below the colored title bar.
+        for y in range(int(height * .39), int(height * .58)):
+            for x in range(int(width * .27), int(width * .72)):
+                offset = (y * width + x) * 3
+                pixels[offset:offset + 3] = bytes((10, 12, 14))
+    if stock_dialog or cyan_accent:
+        for y in range(int(height * .34), int(height * .385)):
+            for x in range(int(width * .27), int(width * .72)):
+                offset = (y * width + x) * 3
+                pixels[offset:offset + 3] = cyan
+    if stock_logo:
+        for y in range(int(height * .02), int(height * .075)):
+            for x in range(int(width * .04), int(width * .085)):
+                offset = (y * width + x) * 3
+                pixels[offset:offset + 3] = cyan
+    path.write_bytes(f"P6\n{width} {height}\n255\n".encode() + pixels)
+
+
+class TvVisualGateTests(unittest.TestCase):
+    def test_expected_charcoal_dede_screen_is_not_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "dede.ppm"
+            write_frame(path)
+            self.assertLess(module.classify(path)["popup_cyan"], .35)
+
+    def test_stock_kodi_addon_enable_modal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "stock-dialog.ppm"
+            write_frame(path, stock_dialog=True)
+            with self.assertRaisesRegex(ValueError, "stock Kodi add-on enable"):
+                module.classify(path)
+
+    def test_cyan_accent_without_modal_body_is_not_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "accent.ppm"
+            write_frame(path, cyan_accent=True)
+            self.assertGreater(module.classify(path)["popup_cyan"], .35)
+
+    def test_stock_kodi_logo_is_rejected_without_dialog(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "stock-logo.ppm"
+            write_frame(path, stock_logo=True)
+            with self.assertRaisesRegex(ValueError, "stock Kodi branding"):
+                module.classify(path)
+
+    def test_black_renderer_frame_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "black.ppm"
+            path.write_bytes(b"P6\n320 240\n255\n" + bytes(320 * 240 * 3))
+            with self.assertRaisesRegex(ValueError, "blank or black QEMU frame"):
+                module.classify(path)
+
+    def test_dark_but_visible_screen_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "dark.ppm"
+            pixels = bytearray(bytes((12, 14, 16)) * (320 * 240))
+            pixels[(80 * 320 + 80) * 3:(80 * 320 + 80) * 3 + 3] = bytes((20, 22, 24))
+            path.write_bytes(b"P6\n320 240\n255\n" + pixels)
+            module.classify(path)
+
+    def test_off_grid_ui_detail_is_not_mistaken_for_uniform_frame(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "sparse-detail.ppm"
+            pixels = bytearray(bytes((90, 100, 110)) * (320 * 240))
+            # The detail is deliberately outside the 8-pixel sample grid.
+            offset = (81 * 320 + 81) * 3
+            pixels[offset:offset + 3] = bytes((100, 110, 120))
+            path.write_bytes(b"P6\n320 240\n255\n" + pixels)
+            module.classify(path)
+
+    def test_off_grid_visible_picture_is_not_rejected_as_black(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "off-grid-picture.ppm"
+            width, height = 320, 240
+            pixels = bytearray(width * height * 3)
+            # Bright columns avoid every x coordinate sampled at stride 8.
+            for y in range(height):
+                for x in range(width):
+                    if x % 8 != 0:
+                        offset = (y * width + x) * 3
+                        pixels[offset:offset + 3] = bytes((45, 48, 52))
+            path.write_bytes(b"P6\n320 240\n255\n" + pixels)
+            module.classify(path)
+
+    def test_bright_uniform_frame_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "uniform.ppm"
+            path.write_bytes(b"P6\n320 240\n255\n" + bytes((90, 100, 110)) * (320 * 240))
+            with self.assertRaisesRegex(ValueError, "uniform QEMU frame"):
+                module.classify(path)
+
+    def test_last_pixel_detail_is_not_rejected_as_uniform(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "last-pixel-detail.ppm"
+            pixels = bytearray(bytes((90, 100, 110)) * (320 * 240))
+            pixels[-3:] = bytes((100, 110, 120))
+            path.write_bytes(b"P6\n320 240\n255\n" + pixels)
+            module.classify(path)
+
+    def test_uniform_frame_with_partial_final_chunk_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "partial-uniform.ppm"
+            # 320 * 240 is not divisible by the 4096-pixel comparison chunk.
+            path.write_bytes(b"P6\n320 240\n255\n" + bytes((90, 100, 110)) * (320 * 240))
+            with self.assertRaisesRegex(ValueError, "uniform QEMU frame"):
+                module.classify(path)
+
+    def test_oversized_dimensions_are_rejected_before_reading_pixels(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "oversized.ppm"
+            # A hostile capture must not cause a multi-gigabyte allocation.
+            path.write_bytes(b"P6\n8193 8192\n255\n")
+            with self.assertRaisesRegex(ValueError, "invalid frame dimensions"):
+                module.classify(path)
+
+    def test_unbounded_ppm_dimension_header_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "huge-header.ppm"
+            # No pixel payload: reject oversized header before integer conversion.
+            path.write_bytes(b"P6\n" + b"9" * 100000 + b" 240\n255\n")
+            with self.assertRaisesRegex(ValueError, "invalid PPM dimensions"):
+                module.classify(path)
+
+    def test_nonnumeric_ppm_dimensions_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "bad-dimensions.ppm"
+            path.write_bytes(b"P6\n320 2x0\n255\n")
+            with self.assertRaisesRegex(ValueError, "invalid PPM dimensions"):
+                module.classify(path)
+
+    def test_oversized_magic_header_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "long-magic.ppm"
+            path.write_bytes(b"P6" + b" " * 100000 + b"\n320 240\n255\n")
+            with self.assertRaisesRegex(ValueError, "expected binary PPM P6"):
+                module.classify(path)
+
+    def test_oversized_maxval_header_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "long-maxval.ppm"
+            path.write_bytes(b"P6\n320 240\n" + b"2" * 100000 + b"\n")
+            with self.assertRaisesRegex(ValueError, "invalid PPM max value"):
+                module.classify(path)
+
+    def test_capture_size_uses_open_descriptor_not_path_stat(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "descriptor.ppm"
+            write_frame(path)
+            # The capture may be renamed after opening. Size validation
+            # must use the descriptor rather than re-stat the pathname.
+            from unittest.mock import patch
+            with patch.object(Path, "stat", side_effect=AssertionError("path stat used")):
+                module.read_ppm(path)
+
+    def test_symlink_capture_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "real.ppm"
+            alias = Path(temp) / "alias.ppm"
+            write_frame(target)
+            alias.symlink_to(target)
+            with self.assertRaises(OSError):
+                module.read_ppm(alias)
+
+    def test_fifo_capture_is_rejected_without_waiting_for_writer(self):
+        import os
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "capture.pipe"
+            os.mkfifo(path)
+            with self.assertRaisesRegex(ValueError, "regular file"):
+                module.read_ppm(path)
+
+    def test_trailing_payload_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "trailing.ppm"
+            path.write_bytes(b"P6\n320 240\n255\n" + bytes(320 * 240 * 3 + 1))
+            with self.assertRaisesRegex(ValueError, "trailing frame data"):
+                module.classify(path)
+
+    def test_incomplete_ppm_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "truncated.ppm"
+            path.write_bytes(b"P6\n320 240\n255\n\x00\x00\x00")
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                module.classify(path)
+
+
+if __name__ == "__main__":
+    unittest.main()

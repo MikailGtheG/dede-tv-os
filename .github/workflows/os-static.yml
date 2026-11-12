@@ -1,0 +1,452 @@
+name: OS source validation
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell syntax and appliance files
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n build/auto/config build/auto/build build/build-image.sh
+          kiosk=build/config/includes.chroot/usr/local/bin/dede-kodi-kiosk
+          hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
+          unit=build/config/includes.chroot/etc/systemd/system/dede-kodi.service
+          probe=build/config/includes.chroot/usr/local/bin/dede-kiosk-probe
+          probe_unit=build/config/includes.chroot/etc/systemd/system/dede-kiosk-probe.service
+          probe_timer=build/config/includes.chroot/etc/systemd/system/dede-kiosk-probe.timer
+          sh -n "$kiosk" "$hook" "$probe"
+          test -s "$probe_unit" && test -s "$probe_timer"
+          grep -q "DEDE_KIOSK_PROBE_BEGIN" "$probe"
+          test -s "$unit"
+          test -s build/config/package-lists/dede-base.list.chroot
+          grep -q -- '--distribution trixie' build/auto/config
+          for package in linux-image-amd64 kodi kodi-pvr-iptvsimple xinit xserver-xorg-core; do
+            grep -qx "$package" build/config/package-lists/dede-base.list.chroot
+          done
+          grep -qx 'User=dede' "$unit"
+          grep -qx 'NoNewPrivileges=true' "$unit"
+          # A clean Kodi exit must not strand the appliance on a blank screen.
+          grep -qx 'Restart=always' "$unit"
+          grep -qx 'RestartSec=5' "$unit"
+          grep -qx 'RuntimeDirectory=dede-tv' "$unit"
+          grep -qx 'RuntimeDirectoryMode=0700' "$unit"
+          grep -qx 'Environment=XDG_RUNTIME_DIR=/run/dede-tv' "$unit"
+          grep -qx 'ReadWritePaths=/home/dede /run/dede-tv' "$unit"
+          grep -qx 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk' "$unit"
+          grep -q 'useradd --system --user-group' "$hook"
+          ! grep -q -- '--uid 1000' "$hook"
+          grep -q 'nolisten tcp' "$kiosk"
+          grep -q 'Kodi runtime directory is unavailable' "$kiosk"
+          # The appliance must never fall back to Kodi's general-purpose UI.
+          grep -Fq 'skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml' "$kiosk"
+          grep -Fq 'refusing to expose the Kodi interface' "$kiosk"
+          grep -Fq 'exit 1' "$kiosk"
+          systemd-analyze verify "$unit" "$probe_unit" "$probe_timer"
+          # Debug login and diagnostic timer are only enabled inside CI.
+          ! grep -q 'serial-getty@ttyS0.service' build/build-image.sh
+          ! grep -q 'timers.target.wants' "$hook"
+          grep -Fq 'serial-getty@ttyS0.service' .github/workflows/os-image.yml
+          grep -Fq 'dede-kiosk-probe.timer' .github/workflows/os-image.yml
+      - name: Test first-boot Kodi profile provisioning
+        shell: bash
+        run: |
+          set -euo pipefail
+          init=build/config/includes.chroot/usr/local/libexec/dede-kodi-profile-init
+          kiosk=build/config/includes.chroot/usr/local/bin/dede-kodi-kiosk
+          hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
+          sh -n "$init"
+          grep -Fq '/usr/local/libexec/dede-kodi-profile-init' "$kiosk"
+          grep -Fq 'chmod 0755 /usr/local/libexec/dede-kodi-profile-init' "$hook"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          # Reject redirected profile directories before any settings are written.
+          mkdir -p "$tmp/redirected" "$tmp/.kodi"
+          ln -s "$tmp/redirected" "$tmp/.kodi/userdata"
+          if HOME="$tmp" DEDE_SKIN_ADDON="$tmp/missing.xml" sh "$init"; then
+            echo 'Symlinked userdata directory was accepted' >&2
+            exit 1
+          fi
+          test ! -e "$tmp/redirected/guisettings.xml"
+          rm "$tmp/.kodi/userdata"
+          rmdir "$tmp/.kodi"
+          ln -s "$tmp/redirected" "$tmp/.kodi"
+          if HOME="$tmp" DEDE_SKIN_ADDON="$tmp/missing.xml" sh "$init"; then
+            echo 'Symlinked .kodi directory was accepted' >&2
+            exit 1
+          fi
+          rm "$tmp/.kodi"
+          # Missing skin must fail before creating any persistent Kodi profile.
+          if HOME="$tmp" DEDE_SKIN_ADDON="$tmp/missing.xml" sh "$init"; then
+            echo "Profile initialized without the Dede TV skin" >&2
+            exit 1
+          fi
+          test ! -e "$tmp/.kodi/userdata/guisettings.xml"
+          mkdir -p "$tmp/fake-skin"
+          printf '%s\n' '<addon id="skin.dede-tv"/>' > "$tmp/fake-skin/addon.xml"
+          export DEDE_SKIN_ADDON="$tmp/fake-skin/addon.xml"
+          HOME="$tmp" sh "$init"
+          settings="$tmp/.kodi/userdata/advancedsettings.xml"
+          test -s "$settings"
+          python3 - "$settings" <<'PY'
+          import sys
+          from xml.etree import ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          assert root.tag == "advancedsettings"
+          for key, expected in (("splash", "false"), ("fullscreen", "true"), ("showexitbutton", "false")):
+              assert root.findtext(key) == expected
+          PY
+          test "$(stat -c '%a' "$settings")" = 600
+          printf '%s\n' '<advancedsettings>custom</advancedsettings>' > "$settings"
+          HOME="$tmp" sh "$init"
+          grep -qx '<advancedsettings>custom</advancedsettings>' "$settings"
+          rm "$settings"
+          printf '%s\n' 'protected' > "$tmp/protected"
+          ln -s "$tmp/protected" "$settings"
+          if HOME="$tmp" sh "$init"; then
+            echo 'Symlinked advancedsettings.xml was accepted' >&2
+            exit 1
+          fi
+          grep -qx protected "$tmp/protected"
+          test -L "$settings"
+          rm "$settings"
+          # The graphical settings and JSON-RPC permissions are independent
+          # of an administrator's advancedsettings.xml.
+          gui="$tmp/.kodi/userdata/guisettings.xml"
+          test -s "$gui"
+          python3 - "$gui" <<'PY'
+          import sys
+          from xml.etree import ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          values = {s.attrib["id"]: s.text for s in root.findall("setting")}
+          assert values["services.esenabled"] == "true"
+          assert values["services.esallinterfaces"] == "false"
+          assert values["services.webserver"] == "false"
+          assert values["lookandfeel.skin"] == "skin.dede-tv"
+          PY
+          test "$(stat -c '%a' "$gui")" = 600
+          # Reject pre-existing profiles without the required skin.
+          printf '%s\n' '<settings>admin choice</settings>' > "$gui"
+          if HOME="$tmp" sh "$init"; then
+            echo 'Invalid existing Kodi profile was accepted' >&2
+            exit 1
+          fi
+          grep -qx '<settings>admin choice</settings>' "$gui"
+          rm "$gui"
+          printf '%s\n' 'protected gui' > "$tmp/gui-protected"
+          ln -s "$tmp/gui-protected" "$gui"
+          if HOME="$tmp" sh "$init"; then
+            echo 'Symlinked Kodi GUI profile was accepted' >&2
+            exit 1
+          fi
+          grep -qx 'protected gui' "$tmp/gui-protected"
+          test -L "$gui"
+          rm "$gui"
+          HOME="$tmp" sh "$init"
+          grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
+          HOME="$tmp" sh "$init"
+          grep -Fq 'id="lookandfeel.skin">skin.dede-tv<' "$gui"
+          # A valid skin alone must not permit network-facing Kodi controls.
+          for unsafe in services.webserver services.esallinterfaces; do
+            printf '%s\n' '<settings><setting id="lookandfeel.skin">skin.dede-tv</setting><setting id="'"$unsafe"'">true</setting></settings>' > "$gui"
+            if HOME="$tmp" sh "$init"; then
+              echo "Unsafe Kodi control setting accepted: $unsafe" >&2
+              exit 1
+            fi
+          done
+          rm "$gui"
+          HOME="$tmp" sh "$init"
+          # Duplicate skin settings must be rejected, even if one is valid.
+          sed -i 's@</settings>@<setting id="lookandfeel.skin">skin.estuary</setting></settings>@' "$gui"
+          if HOME="$tmp" sh "$init"; then
+            echo 'Ambiguous Kodi skin selection was accepted' >&2
+            exit 1
+          fi
+      - name: Regression - kiosk must fail closed before launching Kodi
+        shell: bash
+        run: sh tests/test_kiosk_fail_closed.sh
+      - name: Regression - bounded last-channel resume service
+        shell: bash
+        run: sh tests/test_resume_service.sh
+      - name: Regression - duplicate skin settings on one XML line
+        shell: bash
+        run: sh tests/test_profile_duplicate_skin.sh
+      - name: Regression - Kodi XML profile security
+        shell: bash
+        run: sh tests/test_profile_xml_security.sh
+      - name: Regression - Kodi skin addon identity
+        shell: bash
+        run: sh tests/test_skin_addon_identity.sh
+      - name: Test bounded Kodi JSON-RPC socket send
+        run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
+      - name: Regression - malformed Kodi addon metadata
+        run: python3 -m unittest discover -s tests -p "test_skin_addon_response.py" -v
+      - name: Regression - real screen must not be stock Kodi
+        run: python3 -m unittest discover -s tests -p "test_qemu_tv_visual.py" -v
+      - name: Validate first-boot skin activation and real Kodi skin detection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin
+          python3 - <<'PY'
+          import runpy
+          import tempfile
+          from pathlib import Path
+          script = runpy.run_path("build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin")
+          with tempfile.TemporaryDirectory() as directory:
+              settings = Path(directory) / "guisettings.xml"
+              script["desired_skin"].__globals__["SETTINGS"] = settings
+              settings.write_text('<settings><section id="lookandfeel"><category id="lookandfeel"><setting id="lookandfeel.skin">skin.dede-tv</setting></category></section></settings>')
+              assert script["desired_skin"]() == "skin.dede-tv", "Nested Kodi skin preference not detected"
+              settings.write_text('<settings><section><setting id="lookandfeel.skin">skin.estuary</setting></section></settings>')
+              assert script["desired_skin"]() == "skin.estuary", "Administrator skin preference not respected"
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          script = Path("build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin").read_text()
+          service = Path("build/config/includes.chroot/etc/systemd/system/dede-kodi-skin.service").read_text()
+          hook = Path("build/config/hooks/live/0500-dede-kiosk.hook.chroot").read_text()
+          image = Path(".github/workflows/os-image.yml").read_text()
+          assert "Addons.SetAddonEnabled" in script
+          assert "Settings.SetSettingValue" in script
+          assert 'rpc("Settings.GetSettingValue", {"setting": "lookandfeel.skin"})' in script
+          assert 'skin = (actual or {}).get("value")' in script
+          assert "Settings.GetSkinSettings" not in script
+          assert "127.0.0.1" in script
+          assert "NoNewPrivileges=true" in service
+          assert "ProtectSystem=strict" in service
+          assert "dede-kodi-skin.service" in hook
+          assert '"method": "Settings.GetSettingValue"' in image
+          assert '"params": {"setting": "lookandfeel.skin"}' in image
+          assert 'document.get("result", {}).get("value")' in image
+          assert '"method": "Settings.GetSkinSettings"' not in image
+          PY
+      - name: Regression - Kodi default attribute in GUI settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This is Kodi's actual rewritten setting format observed in QEMU.
+          settings="$(mktemp)"
+          trap 'rm -f "$settings"' EXIT
+          cat > "$settings" <<'XML'
+          <setting id="services.esenabled" default="true">true</setting>
+          <setting id="services.esallinterfaces" default="true">false</setting>
+          <setting id="services.webserver" default="true">false</setting>
+          <setting id="lookandfeel.skin">skin.dede-tv</setting>
+          XML
+          for expected in \
+            'id="services.esenabled">true<' \
+            'id="services.esallinterfaces">false<' \
+            'id="services.webserver">false<' \
+            'id="lookandfeel.skin">skin.dede-tv<'; do
+            key="${expected%%>*}"
+            value="${expected#*>}"
+            grep -Eiq "${key//./\\.}[^>]*>${value}" "$settings"
+          done
+          # Must still reject an actually unsafe remote-control setting.
+          sed -i 's/id="services.esallinterfaces" default="true">false</id="services.esallinterfaces" default="true">true</' "$settings"
+          key='id="services.esallinterfaces"'
+          value='false<'
+          if grep -Eiq "${key//./\\.}[^>]*>${value}" "$settings"; then
+            echo 'Insecure remote-control setting was incorrectly accepted' >&2
+            exit 1
+          fi
+      - name: Regression - JSON-RPC socket allowlist in QEMU diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          # IPv6 ::1 is encoded as 000...01000000 in /proc/net/tcp6.
+          # All other IPv6 listeners (including :: and ::ffff:127.0.0.1)
+          # must fail the same filter used by the boot smoke test.
+          check_ipv6() {
+            printf '%s\n' "$1" |
+              grep -aF 'DEDE_CI_DIAG: JSONRPC_SOCKET6=' |
+              grep -aEv 'JSONRPC_SOCKET6=00000000000000000000000001000000:2382([[:space:]]|$)'
+          }
+          if check_ipv6 'DEDE_CI_DIAG: JSONRPC_SOCKET6=00000000000000000000000001000000:2382'; then
+            echo 'IPv6 loopback was rejected' >&2
+            exit 1
+          fi
+          for address in \
+            00000000000000000000000000000000 \
+            00000000000000000000000002000000 \
+            0000000000000000FFFF00000100007F; do
+            if ! check_ipv6 "DEDE_CI_DIAG: JSONRPC_SOCKET6=${address}:2382"; then
+              echo "Unsafe IPv6 listener was accepted: $address" >&2
+              exit 1
+            fi
+          done
+          # Require the actual image workflow to retain this precise check.
+          grep -Fq 'JSONRPC_SOCKET6=00000000000000000000000001000000:2382' .github/workflows/os-image.yml
+      - name: Validate bounded channel resume integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          script=build/config/includes.chroot/usr/local/libexec/dede-tv-resume
+          service=build/config/includes.chroot/etc/systemd/system/dede-tv-resume.service
+          hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
+          sh -n "$script"
+          systemd-analyze verify "$service"
+          # Keep systemd's start deadline above the worst allowed retry budget:
+          # 60 calls * (10s timeout + 2s SIGKILL grace) + 59 * 10s delay.
+          max_runtime=$((60 * (10 + 2) + 59 * 10))
+          service_timeout="$(sed -n 's/^TimeoutStartSec=//p' "$service")"
+          test "$service_timeout" -gt "$max_runtime"
+          grep -Fq 'timeout --signal=TERM --kill-after=2s "${call_timeout}s"' "$script"
+          grep -qx 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core' "$service"
+          # Playback must wait for successful skin activation, not just Kodi process start.
+          grep -qx 'After=dede-kodi.service dede-kodi-skin.service' "$service"
+          grep -qx 'Requires=dede-kodi.service dede-kodi-skin.service' "$service"
+          skin_unit=build/config/includes.chroot/etc/systemd/system/dede-kodi-skin.service
+          grep -qx 'After=dede-kodi.service' "$skin_unit"
+          grep -qx 'Requires=dede-kodi.service' "$skin_unit"
+          grep -qx 'Type=oneshot' "$skin_unit"
+          grep -Fq 'ExecStart=/usr/bin/python3 /usr/local/libexec/dede-kodi-activate-skin' "$skin_unit"
+          # Reject accidental cycles: Kodi itself must not wait on resume/skin.
+          kodi_unit=build/config/includes.chroot/etc/systemd/system/dede-kodi.service
+          ! grep -Eq '^After=.*dede-kodi-(skin|resume)\.service' "$kodi_unit"
+          # Wants= alone does not propagate restarts of an already-running unit.
+          grep -qx 'PartOf=dede-kodi.service' "$service"
+          # Resume must be requested on every Kodi start, not only at boot.
+          # Requires/After in the resume unit alone does not propagate restarts.
+          kodi_unit=build/config/includes.chroot/etc/systemd/system/dede-kodi.service
+          grep -Eq '^Wants=.*(^|[[:space:]])dede-tv-resume\.service([[:space:]]|$)' "$kodi_unit"
+          ! grep -Eq '^After=.*dede-tv-resume\.service' "$kodi_unit"
+          grep -Fq 'dede-tv-resume.service' "$hook"
+          grep -Fq 'chmod 0755 /usr/local/libexec/dede-tv-resume' "$hook"
+          temp="$(mktemp -d)"
+          trap 'rm -rf "$temp"' EXIT
+          export DEDE_CORE_BIN="$temp/core"
+          export DEDE_DB_PATH="$temp/channels.db"
+          export DEDE_MEDIA_ROOT="$temp/media"
+          export DEDE_RESUME_ATTEMPTS=3
+          export DEDE_RESUME_DELAY=0
+          # A missing playback binary must fail visibly; no TV was started.
+          if sh "$script"; then
+            echo 'Missing playback core was reported as successful' >&2
+            exit 1
+          fi
+          test ! -e "$DEDE_DB_PATH.attempts"
+          cat > "$DEDE_CORE_BIN" <<'SH'
+          #!/bin/sh
+          count_file="${DEDE_DB_PATH}.attempts"
+          count=0
+          [ ! -f "$count_file" ] || count="$(cat "$count_file")"
+          count=$((count + 1))
+          printf '%s\n' "$count" > "$count_file"
+          [ "$1" = '--db' ] && [ "$3" = 'resume-last' ] || exit 8
+          [ "$count" -ge 3 ]
+          SH
+          chmod 755 "$DEDE_CORE_BIN"
+          touch "$DEDE_DB_PATH"
+          sh "$script"
+          test "$(cat "$DEDE_DB_PATH.attempts")" = 3
+          rm "$DEDE_DB_PATH.attempts"
+          export DEDE_RESUME_ATTEMPTS=2
+          if sh "$script"; then
+            echo 'Core failure was unexpectedly reported as successful' >&2
+            exit 1
+          fi
+          test "$(cat "$DEDE_DB_PATH.attempts")" = 2
+          # A hung core must not block the kiosk resume service indefinitely.
+          cat > "$DEDE_CORE_BIN" <<'SH'
+          #!/bin/sh
+          sleep 30
+          SH
+          chmod 755 "$DEDE_CORE_BIN"
+          export DEDE_RESUME_ATTEMPTS=1
+          export DEDE_RESUME_CALL_TIMEOUT=1
+          start="$SECONDS"
+          if sh "$script"; then
+            echo "Hung core unexpectedly succeeded" >&2
+            exit 1
+          fi
+          test "$((SECONDS - start))" -le 5
+      - name: Validate pinned Rust core supply and ISO packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/os-image.yml
+          grep -Fq 'DEDE_CORE_SHA: 012ac5993c8ca7a70f8112e6ca3a5e7d4b4b54f9' "$workflow"
+          grep -Fq 'git fetch --depth 1 origin "$DEDE_CORE_SHA"' "$workflow"
+          grep -Fq 'test "$(git rev-parse HEAD)" = "$DEDE_CORE_SHA"' "$workflow"
+          grep -Fq 'cargo build --release --locked --bin dede-tv-core' "$workflow"
+          grep -Fq 'install -D -m 0755 target/release/dede-tv-core' "$workflow"
+          grep -Fq 'usr/local/bin/dede-tv-core' "$workflow"
+          grep -Fq 'unsquashfs -cat "$squashfs" usr/local/bin/dede-tv-core' "$workflow"
+      - name: Verify pinned skin integration remains opt-in
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/os-image.yml
+          grep -Fq 'DEDE_SKIN_SHA: 9b29fbd2187e902cebe715aa389cd95b17dea622' "$workflow"
+          grep -Fq 'DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27' "$workflow"
+          grep -Fq 'git sparse-checkout set addons/skin.estuary' "$workflow"
+          grep -Fq 'usr/share/kodi/addons/skin.dede-tv/addon.xml' "$workflow"
+          grep -Fq 'gui.get("version") == "5.17.0"' "$workflow"
+          grep -Fq 'assert addon.get("id") == "skin.dede-tv"' "$workflow"
+          # A packaged skin must not become the default until Kodi can load it.
+          ! grep -Riq 'skin.dede-tv' build/config/includes.chroot/home/ 2>/dev/null || {
+            echo 'Skin was activated before a runtime loading test' >&2
+            exit 1
+          }
+      - name: Validate image workflow structure and audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -ryaml -rjson -e 'File.write("/tmp/dede-image-workflow.json", JSON.generate(YAML.load_file(".github/workflows/os-image.yml")))'
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p = Path(".github/workflows/os-image.yml")
+          text = p.read_text()
+          document = json.loads(Path("/tmp/dede-image-workflow.json").read_text())
+          jobs = document["jobs"]
+          assert set(jobs) == {"image", "report-failure"}, set(jobs)
+          # Validate every embedded Bash step, not only the YAML structure.
+          # This catches truncated grep conditions before an expensive ISO build.
+          import subprocess
+          for job_name, job in jobs.items():
+              for index, step in enumerate(job.get("steps", []), 1):
+                  script = step.get("run")
+                  if script is None or step.get("shell", "bash") != "bash":
+                      continue
+                  result = subprocess.run(["bash", "-n"], input=script,
+                                          text=True, capture_output=True)
+                  assert result.returncode == 0, (
+                      f"{job_name} step {index}: {result.stderr}")
+          # Preserve active ISO boot verification when a new commit arrives.
+          # GitHub may still replace a pending run in the same group.
+          assert document["concurrency"]["cancel-in-progress"] is False
+          assert "dede-os-image-" in document["concurrency"]["group"]
+          assert "var/lib/dpkg/status > installed-dpkg-status" in text
+          assert "test -s installed-dpkg-status" in text
+          assert text.count("name: Upload installed package inventory") == 1
+          assert text.count("name: Publish failed ISO run ID") == 1
+          assert "pull_request_target" not in str(document.get("on", {}))
+          assert "Reject stock Kodi visual regressions" in text
+          assert "tests/check_qemu_tv_visual.py" in text
+
+          # Shell comments between QEMU line continuations caused a real
+          # failure: -audiodev was executed as a separate command.
+          qemu = text.split("timeout --signal=TERM --kill-after=5s 150s", 1)[1]
+          qemu = qemu.split("qemu_pid=$!", 1)[0].splitlines()
+          for previous, current in zip(qemu, qemu[1:]):
+              assert not (previous.rstrip().endswith(chr(92)) and
+                          current.lstrip().startswith("#")), (
+                  "Shell-breaking comment inside continued QEMU command", current)
+          PY
+      - name: Report latest trusted-branch ISO results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GH_REPO}/actions/workflows/os-image.yml/runs?branch=feat/initial-foundation&per_page=5" \
+            --jq '.workflow_runs[] | [.id, .status, (.conclusion // "pending"), .html_url] | @tsv'
