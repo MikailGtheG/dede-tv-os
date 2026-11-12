@@ -409,6 +409,18 @@ jobs:
           document = json.loads(Path("/tmp/dede-image-workflow.json").read_text())
           jobs = document["jobs"]
           assert set(jobs) == {"image", "report-failure"}, set(jobs)
+          # Validate every embedded Bash step, not only the YAML structure.
+          # This catches truncated grep conditions before an expensive ISO build.
+          import subprocess
+          for job_name, job in jobs.items():
+              for index, step in enumerate(job.get("steps", []), 1):
+                  script = step.get("run")
+                  if script is None or step.get("shell", "bash") != "bash":
+                      continue
+                  result = subprocess.run(["bash", "-n"], input=script,
+                                          text=True, capture_output=True)
+                  assert result.returncode == 0, (
+                      f"{job_name} step {index}: {result.stderr}")
           # Preserve active ISO boot verification when a new commit arrives.
           # GitHub may still replace a pending run in the same group.
           assert document["concurrency"]["cancel-in-progress"] is False
