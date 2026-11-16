@@ -28,7 +28,7 @@ fi
 skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml
 # The profile initializer already parses addon.xml and validates the root addon ID.
 # Do not re-validate with a quote-sensitive grep: valid XML may use single quotes.
-if [ ! -f "$skin_addon" ]; then
+if [ -L "$skin_addon" ] || [ -L "$(dirname "$skin_addon")" ] || [ ! -f "$skin_addon" ]; then
   echo "Dede TV skin is missing; refusing to expose the Kodi interface" >&2
   exit 1
 fi
