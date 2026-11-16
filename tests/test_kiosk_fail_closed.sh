@@ -142,4 +142,28 @@ if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-test" >"$tmp/skin-dir-link-outp
 fi
 grep -q 'Dede TV skin is missing' "$tmp/skin-dir-link-output"
 
+
+# A valid, regular skin manifest must pass the kiosk preflight and reach
+# profile provisioning. Stop deliberately at that boundary; never start Xorg.
+# This catches accidental fail-always regressions in the negative tests above.
+mkdir -p "$tmp/valid-skin"
+printf '%s\n' '<addon id="skin.dede-tv"/>' > "$tmp/valid-skin/addon.xml"
+python3 - "$script" "$tmp/kiosk-valid" "$tmp/valid-skin/addon.xml" <<'PY'
+import sys
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+skin = 'skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml'
+initializer = '/usr/local/libexec/dede-kodi-profile-init'
+assert source.count(skin) == 1
+assert source.count(initializer) == 1
+source = source.replace(skin, 'skin_addon=' + sys.argv[3])
+source = source.replace(initializer, 'echo DEDE_PROFILE_INIT_REACHED >&2; exit 42')
+Path(sys.argv[2]).write_text(source)
+PY
+if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-valid" >"$tmp/valid-output" 2>&1; then
+  echo 'Kiosk did not stop at mocked profile initialization' >&2
+  exit 1
+fi
+grep -qx 'DEDE_PROFILE_INIT_REACHED' "$tmp/valid-output"
+
 echo 'Kiosk fail-closed smoke checks passed'
