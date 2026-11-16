@@ -116,6 +116,24 @@ if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-test" >"$tmp/skin-file-link-out
 fi
 grep -q 'Dede TV skin is missing' "$tmp/skin-file-link-output"
 rm "$tmp/skin/addon.xml"
+# A directory named addon.xml is not a valid skin manifest. Reject it
+# before profile initialization, rather than attempting to launch Kodi.
+mkdir "$tmp/skin/addon.xml"
+if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-test" >"$tmp/skin-manifest-dir-output" 2>&1; then
+  echo 'Kiosk accepted a directory as skin addon.xml' >&2
+  exit 1
+fi
+grep -q 'Dede TV skin is missing' "$tmp/skin-manifest-dir-output"
+rmdir "$tmp/skin/addon.xml"
+# Broken symlinks must fail closed even if a future implementation checks
+# for existence using a different predicate.
+ln -s "$tmp/does-not-exist.xml" "$tmp/skin/addon.xml"
+if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-test" >"$tmp/skin-broken-link-output" 2>&1; then
+  echo 'Kiosk accepted a broken skin manifest symlink' >&2
+  exit 1
+fi
+grep -q 'Dede TV skin is missing' "$tmp/skin-broken-link-output"
+rm "$tmp/skin/addon.xml"
 rmdir "$tmp/skin"
 ln -s "$tmp/real-skin" "$tmp/skin"
 if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-test" >"$tmp/skin-dir-link-output" 2>&1; then
