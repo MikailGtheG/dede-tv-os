@@ -160,8 +160,13 @@ source = source.replace(skin, 'skin_addon=' + sys.argv[3])
 source = source.replace(initializer, 'echo DEDE_PROFILE_INIT_REACHED >&2; exit 42')
 Path(sys.argv[2]).write_text(source)
 PY
-if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-valid" >"$tmp/valid-output" 2>&1; then
-  echo 'Kiosk did not stop at mocked profile initialization' >&2
+# Capture the exact exit code: a failure earlier in preflight must not be
+# mistaken for reaching the deliberately mocked profile initializer.
+valid_status=0
+XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-valid" >"$tmp/valid-output" 2>&1 || valid_status=$?
+if [ "$valid_status" -ne 42 ]; then
+  echo "Kiosk did not reach mocked profile initialization (exit $valid_status)" >&2
+  cat "$tmp/valid-output" >&2
   exit 1
 fi
 grep -qx 'DEDE_PROFILE_INIT_REACHED' "$tmp/valid-output"
