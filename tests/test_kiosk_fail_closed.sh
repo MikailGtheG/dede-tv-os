@@ -89,4 +89,33 @@ profile = source.index('/usr/local/libexec/dede-kodi-profile-init', parent)
 launch = source.index('exec /usr/bin/xinit', profile)
 assert skin < symlink < parent < profile < launch, "Skin preflight must precede profile writes and launch"
 PY
+
+# Exercise the actual skin symlink guard, not just its source-code ordering.
+# Redirect only the immutable image skin path in a temporary script copy.
+# A rejected skin must never reach the profile initializer or Xorg.
+python3 - "$script" "$tmp/kiosk-test" "$tmp/skin/addon.xml" <<'PY'
+import sys
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+original = 'skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml'
+assert source.count(original) == 1
+Path(sys.argv[2]).write_text(source.replace(original, 'skin_addon=' + sys.argv[3]))
+PY
+mkdir -p "$tmp/skin" "$tmp/real-skin"
+printf '<addon id="skin.dede-tv"/>\n' > "$tmp/real-skin/addon.xml"
+ln -s "$tmp/real-skin/addon.xml" "$tmp/skin/addon.xml"
+if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-test" >"$tmp/skin-file-link-output" 2>&1; then
+  echo 'Kiosk accepted a symlinked skin addon.xml' >&2
+  exit 1
+fi
+grep -q 'Dede TV skin is missing' "$tmp/skin-file-link-output"
+rm "$tmp/skin/addon.xml"
+rmdir "$tmp/skin"
+ln -s "$tmp/real-skin" "$tmp/skin"
+if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-test" >"$tmp/skin-dir-link-output" 2>&1; then
+  echo 'Kiosk accepted a symlinked skin directory' >&2
+  exit 1
+fi
+grep -q 'Dede TV skin is missing' "$tmp/skin-dir-link-output"
+
 echo 'Kiosk fail-closed smoke checks passed'
