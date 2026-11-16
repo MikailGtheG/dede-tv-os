@@ -101,6 +101,18 @@ original = 'skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml'
 assert source.count(original) == 1
 Path(sys.argv[2]).write_text(source.replace(original, 'skin_addon=' + sys.argv[3]))
 PY
+# A missing or non-directory skin must fail before the profile initializer.
+if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-test" >"$tmp/skin-absent-output" 2>&1; then
+  echo 'Kiosk accepted an absent skin' >&2
+  exit 1
+fi
+grep -q 'Dede TV skin is missing' "$tmp/skin-absent-output"
+mkdir -p "$tmp/skin"
+printf 'not an addon\\n' > "$tmp/skin/addon.xml"
+# An ordinary addon.xml passes this early presence check; its contents are
+# validated by the profile initializer. Do not claim XML validation here.
+rm "$tmp/skin/addon.xml"
+rmdir "$tmp/skin"
 mkdir -p "$tmp/skin" "$tmp/real-skin"
 printf '<addon id="skin.dede-tv"/>\n' > "$tmp/real-skin/addon.xml"
 ln -s "$tmp/real-skin/addon.xml" "$tmp/skin/addon.xml"
