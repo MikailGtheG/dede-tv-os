@@ -75,4 +75,18 @@ if XDG_RUNTIME_DIR="$tmp/no-owner-runtime" sh "$script" >"$tmp/no-owner-output" 
   exit 1
 fi
 grep -Eq 'unavailable|mode 0700' "$tmp/no-owner-output"
+
+# Ensure skin checks remain before any profile write or Kodi/Xorg launch.
+# The real skin path is image-owned and cannot be replaced in unprivileged CI.
+python3 - "$script" <<'PY'
+import sys
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+skin = source.index('skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml')
+symlink = source.index('[ -L "$skin_addon" ]', skin)
+parent = source.index('[ -L "$(dirname "$skin_addon")" ]', symlink)
+profile = source.index('/usr/local/libexec/dede-kodi-profile-init', parent)
+launch = source.index('exec /usr/bin/xinit', profile)
+assert skin < symlink < parent < profile < launch, "Skin preflight must precede profile writes and launch"
+PY
 echo 'Kiosk fail-closed smoke checks passed'
