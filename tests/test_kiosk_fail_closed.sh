@@ -107,12 +107,6 @@ if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-test" >"$tmp/skin-absent-output
   exit 1
 fi
 grep -q 'Dede TV skin is missing' "$tmp/skin-absent-output"
-mkdir -p "$tmp/skin"
-printf 'not an addon\\n' > "$tmp/skin/addon.xml"
-# An ordinary addon.xml passes this early presence check; its contents are
-# validated by the profile initializer. Do not claim XML validation here.
-rm "$tmp/skin/addon.xml"
-rmdir "$tmp/skin"
 mkdir -p "$tmp/skin" "$tmp/real-skin"
 printf '<addon id="skin.dede-tv"/>\n' > "$tmp/real-skin/addon.xml"
 ln -s "$tmp/real-skin/addon.xml" "$tmp/skin/addon.xml"
