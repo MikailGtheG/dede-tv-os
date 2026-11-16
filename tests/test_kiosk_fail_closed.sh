@@ -6,6 +6,16 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/runtime"
 chmod 700 "$tmp/runtime"
+# Simulate root even on an unprivileged CI runner: the kiosk must stop
+# before profile initialization or starting Kodi/Xorg.
+mkdir -p "$tmp/fake-bin"
+printf '#!/bin/sh\nprintf "0\\n"\n' > "$tmp/fake-bin/id"
+chmod 755 "$tmp/fake-bin/id"
+if PATH="$tmp/fake-bin:$PATH" XDG_RUNTIME_DIR="$tmp/runtime" sh "$script" >"$tmp/root-output" 2>&1; then
+  echo 'Kiosk accepted root execution' >&2
+  exit 1
+fi
+grep -q 'Kodi kiosk refuses to run as root' "$tmp/root-output"
 # The packaged skin is not present on the CI runner. Fail before starting
 # Xorg; this also catches accidental removal of the skin preflight.
 if XDG_RUNTIME_DIR="$tmp/runtime" sh "$script" >"$tmp/output" 2>&1; then
