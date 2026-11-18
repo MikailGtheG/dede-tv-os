@@ -35,6 +35,9 @@ OOMPolicy=kill
 # Bound shutdown of a wedged Kodi/Xorg process tree during service recovery.
 TimeoutStopSec=15s
 NoNewPrivileges=true
+# The media engine must never modify host kernel settings or load modules.
+ProtectKernelTunables=true
+ProtectKernelModules=true
 ProtectSystem=strict
 ReadWritePaths=/home/dede /run/dede-tv
 ProtectHome=read-only
