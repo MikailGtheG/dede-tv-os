@@ -35,6 +35,8 @@ jobs:
           # Kodi-created profile files must remain private to the appliance user.
           grep -qx 'UMask=0077' "$unit"
           # A clean Kodi exit must not strand the appliance on a blank screen.
+          # A crash loop must not exhaust systemd's start burst and strand the TV.
+          grep -qx 'StartLimitIntervalSec=0' "$unit"
           grep -qx 'Restart=always' "$unit"
           grep -qx 'RestartSec=5' "$unit"
           grep -qx 'RuntimeDirectory=dede-tv' "$unit"
