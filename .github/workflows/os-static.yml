@@ -34,6 +34,8 @@ jobs:
           grep -qx 'NoNewPrivileges=true' "$unit"
           # Kodi-created profile files must remain private to the appliance user.
           grep -qx 'UMask=0077' "$unit"
+          # Kodi crashes must not persist IPTV tokens in process memory dumps.
+          grep -qx 'LimitCORE=0' "$unit"
           # A clean Kodi exit must not strand the appliance on a blank screen.
           # A crash loop must not exhaust systemd's start burst and strand the TV.
           grep -qx 'StartLimitIntervalSec=0' "$unit"
