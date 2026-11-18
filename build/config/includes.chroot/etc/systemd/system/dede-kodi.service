@@ -29,6 +29,8 @@ StandardError=journal
 ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk
 Restart=always
 RestartSec=5
+# Bound shutdown of a wedged Kodi/Xorg process tree during service recovery.
+TimeoutStopSec=15s
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/home/dede /run/dede-tv
