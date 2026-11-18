@@ -32,6 +32,8 @@ jobs:
           done
           grep -qx 'User=dede' "$unit"
           grep -qx 'NoNewPrivileges=true' "$unit"
+          # Kodi-created profile files must remain private to the appliance user.
+          grep -qx 'UMask=0077' "$unit"
           # A clean Kodi exit must not strand the appliance on a blank screen.
           grep -qx 'Restart=always' "$unit"
           grep -qx 'RestartSec=5' "$unit"
