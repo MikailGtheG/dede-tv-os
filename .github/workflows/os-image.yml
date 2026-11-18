@@ -39,7 +39,7 @@ jobs:
       - name: Build pinned Rust TV core for the Debian 13 appliance
         shell: bash
         env:
-          DEDE_CORE_SHA: 012ac5993c8ca7a70f8112e6ca3a5e7d4b4b54f9
+          DEDE_CORE_SHA: 3daa032760248d683c6e7b75ec4e5b7278fab953
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
