@@ -13,6 +13,8 @@ User=dede
 Group=dede
 # Keep newly created Kodi profile files and sockets private by default.
 UMask=0077
+# Prevent core dumps from retaining IPTV credentials or stream tokens.
+LimitCORE=0
 SupplementaryGroups=video audio render input
 WorkingDirectory=/home/dede
 Environment=HOME=/home/dede
