@@ -32,6 +32,9 @@ jobs:
           done
           grep -qx 'User=dede' "$unit"
           grep -qx 'NoNewPrivileges=true' "$unit"
+          # Kodi must not modify kernel tunables or load kernel modules.
+          grep -qx 'ProtectKernelTunables=true' "$unit"
+          grep -qx 'ProtectKernelModules=true' "$unit"
           # Kodi-created profile files must remain private to the appliance user.
           grep -qx 'UMask=0077' "$unit"
           # Kodi crashes must not persist IPTV tokens in process memory dumps.
