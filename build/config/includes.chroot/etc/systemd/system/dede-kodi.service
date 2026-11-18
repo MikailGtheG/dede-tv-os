@@ -10,6 +10,8 @@ StartLimitBurst=5
 Type=simple
 User=dede
 Group=dede
+# Keep newly created Kodi profile files and sockets private by default.
+UMask=0077
 SupplementaryGroups=video audio render input
 WorkingDirectory=/home/dede
 Environment=HOME=/home/dede
