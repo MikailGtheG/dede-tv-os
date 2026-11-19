@@ -414,4 +414,27 @@ grep -q 'TV channel database is not a regular file' "$tmp/fifo-db-output"
 test ! -s "$tmp/calls"
 test -p "$DEDE_DB_PATH"
 rm -f -- "$DEDE_DB_PATH"
+# Rewriting the same executable inode during a retry must be rejected.
+# Device/inode identity alone cannot detect this kind of in-place update.
+cat > "$tmp/bin/sleep" <<'EOF'
+#!/bin/sh
+if [ "${DEDE_TEST_MODIFY_CORE_ON_DELAY:-0}" = 1 ]; then
+  printf '%s\n' '# modified while waiting' >> "$DEDE_CORE_BIN"
+fi
+exit 0
+EOF
+chmod +x "$tmp/bin/sleep"
+: > "$tmp/calls"
+: > "$DEDE_DB_PATH"
+cp "$DEDE_CORE_BIN" "$tmp/original-core"
+export DEDE_TEST_MODE=fail DEDE_RESUME_ATTEMPTS=3 DEDE_RESUME_DELAY=1
+export DEDE_TEST_MODIFY_CORE_ON_DELAY=1
+if sh "$script" > "$tmp/core-modified-during-retry-output" 2>&1; then
+  echo 'Resume accepted an in-place modified core during retry' >&2
+  exit 1
+fi
+grep -q 'Dede TV core changed or became unavailable during resume' "$tmp/core-modified-during-retry-output"
+test "$(wc -l < "$tmp/calls")" -eq 1
+cat "$tmp/original-core" > "$DEDE_CORE_BIN"
+unset DEDE_TEST_MODIFY_CORE_ON_DELAY
 echo 'Resume service regression checks passed'
