@@ -31,6 +31,8 @@ Restart=always
 RestartSec=5
 # If the kernel OOM-kills a Kodi/Xorg child, terminate the entire service
 # cgroup so systemd can restart a clean media-engine process tree.
+# Ensure all Kodi/Xorg children are terminated on restart, not only the main PID.
+KillMode=control-group
 OOMPolicy=kill
 # Bound shutdown of a wedged Kodi/Xorg process tree during service recovery.
 TimeoutStopSec=15s
