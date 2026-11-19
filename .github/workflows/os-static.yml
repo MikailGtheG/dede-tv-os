@@ -45,6 +45,8 @@ jobs:
           grep -qx 'Restart=always' "$unit"
           grep -qx 'RestartSec=5' "$unit"
           # OOM-killed Kodi/Xorg children must not leave a half-alive kiosk.
+          # Recovery must terminate the entire Kodi/Xorg service cgroup.
+          grep -qx 'KillMode=control-group' "$unit"
           grep -qx 'OOMPolicy=kill' "$unit"
           # Hung Kodi/Xorg shutdown must not delay crash recovery indefinitely.
           grep -qx 'TimeoutStopSec=15s' "$unit"
