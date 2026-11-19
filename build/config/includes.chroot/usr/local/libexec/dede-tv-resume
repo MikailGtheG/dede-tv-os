@@ -70,6 +70,13 @@ while [ "$attempt" -le "$attempts" ]; do
     echo "TV channel database changed during resume; aborting" >&2
     exit 1
   fi
+  # A failed invocation can also coincide with an executable update. Stop
+  # immediately rather than sleeping and attempting recovery with changed code.
+  if [ -L "$core" ] || [ ! -f "$core" ] || [ ! -x "$core" ] ||
+     [ "$(stat -Lc '%d:%i' -- "$core" 2>/dev/null || true)" != "$core_identity" ]; then
+    echo "Dede TV core changed or became unavailable during resume; aborting" >&2
+    exit 1
+  fi
   if [ "$attempt" -lt "$attempts" ]; then
     sleep "$delay"
   fi
