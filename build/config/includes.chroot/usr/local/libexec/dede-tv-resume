@@ -36,6 +36,11 @@ core_identity=$(stat -Lc '%d:%i' -- "$core") || exit 1
 command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required for core integrity checks" >&2; exit 1; }
 core_hash_line=$(sha256sum -- "$core") || { echo "Cannot hash Dede TV core; refusing unattended playback" >&2; exit 1; }
 core_digest=${core_hash_line%% *}
+# A checksum helper returning success without a valid digest must not be trusted.
+case "$core_digest" in
+  *[!0123456789abcdefABCDEF]*|'') echo "Invalid Dede TV core checksum; refusing unattended playback" >&2; exit 1 ;;
+esac
+[ "${#core_digest}" -eq 64 ] || { echo "Invalid Dede TV core checksum; refusing unattended playback" >&2; exit 1; }
 core_unchanged() {
   [ ! -L "$core" ] && [ -f "$core" ] && [ -x "$core" ] &&
   [ "$(stat -Lc '%d:%i' -- "$core" 2>/dev/null || true)" = "$core_identity" ] &&
