@@ -465,4 +465,23 @@ grep -q 'Dede TV core changed or became unavailable during resume' "$tmp/core-mo
 test "$(wc -l < "$tmp/calls")" -eq 1
 cat "$tmp/original-core" > "$DEDE_CORE_BIN"
 unset DEDE_TEST_MODIFY_CORE_ON_DELAY
+# A checksum utility can exit successfully yet emit no usable digest.
+# Fail closed before invoking the playback engine in that case.
+cat > "$tmp/bin/sha256sum" <<'EOF'
+#!/bin/sh
+printf '%s\\n' 'not-a-sha256-digest  mocked-core'
+exit 0
+EOF
+chmod +x "$tmp/bin/sha256sum"
+: > "$tmp/calls"
+rm -f -- "$DEDE_DB_PATH"
+: > "$DEDE_DB_PATH"
+export PATH="$tmp/bin:/usr/bin:/bin" DEDE_TEST_MODE=success
+if sh "$script" > "$tmp/malformed-hash-output" 2>&1; then
+  echo 'Resume accepted malformed SHA-256 output' >&2
+  exit 1
+fi
+grep -q 'Invalid Dede TV core checksum' "$tmp/malformed-hash-output"
+test ! -s "$tmp/calls"
+rm -f -- "$tmp/bin/sha256sum"
 echo 'Resume service regression checks passed'
