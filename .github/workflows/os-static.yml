@@ -15,6 +15,8 @@ jobs:
         run: |
           set -euo pipefail
           bash -n build/auto/config build/auto/build build/build-image.sh
+          # Catch malformed shell case separators before executing resume regressions.
+          sh -n tests/test_resume_service.sh
           kiosk=build/config/includes.chroot/usr/local/bin/dede-kodi-kiosk
           hook=build/config/hooks/live/0500-dede-kiosk.hook.chroot
           unit=build/config/includes.chroot/etc/systemd/system/dede-kodi.service
