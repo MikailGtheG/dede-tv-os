@@ -55,6 +55,12 @@ while [ "$attempt" -le "$attempts" ]; do
       echo "TV channel database changed during resume; aborting" >&2
       exit 1
     fi
+    # A successful request must not conceal replacement of the executable.
+    if [ -L "$core" ] || [ ! -f "$core" ] || [ ! -x "$core" ] ||
+       [ "$(stat -Lc '%d:%i' -- "$core" 2>/dev/null || true)" != "$core_identity" ]; then
+      echo "Dede TV core changed or became unavailable during resume; aborting" >&2
+      exit 1
+    fi
     exit 0
   fi
   # The channel store may be removed or replaced during administration.
