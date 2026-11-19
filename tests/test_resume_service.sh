@@ -24,7 +24,8 @@ case "$DEDE_TEST_MODE" in
       exit 1
     fi
     exit 0 ;;
-  success) exit 0 ;;\n  success-core-swap) mv "$DEDE_CORE_BIN" "$DEDE_CORE_BIN.before-success"; cp "$DEDE_CORE_BIN.before-success" "$DEDE_CORE_BIN"; chmod +x "$DEDE_CORE_BIN"; exit 0 ;;
+  success) exit 0 ;;
+  success-core-swap) mv "$DEDE_CORE_BIN" "$DEDE_CORE_BIN.before-success"; cp "$DEDE_CORE_BIN.before-success" "$DEDE_CORE_BIN"; chmod +x "$DEDE_CORE_BIN"; exit 0 ;;
   success-swap) mv "$DEDE_DB_PATH" "$DEDE_DB_PATH.before-success"; printf '%s\n' replacement > "$DEDE_DB_PATH"; exit 0 ;;
   success-remove) rm -f -- "$DEDE_DB_PATH"; exit 0 ;;
   success-redirect) rm -f "$DEDE_DB_PATH"; ln -s "$DEDE_TEST_REDIRECT_TARGET" "$DEDE_DB_PATH"; exit 0 ;;
