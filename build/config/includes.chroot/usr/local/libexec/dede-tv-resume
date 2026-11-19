@@ -29,6 +29,8 @@ fi
 # must not silently change which channel list unattended playback uses.
 command -v timeout >/dev/null 2>&1 || { echo "GNU timeout is required for bounded playback resume" >&2; exit 1; }
 db_identity=$(stat -Lc '%d:%i' -- "$db") || exit 1
+# Reject executable replacement during unattended retry loops.
+core_identity=$(stat -Lc '%d:%i' -- "$core") || exit 1
 attempt=1
 while [ "$attempt" -le "$attempts" ]; do
   # Recheck immediately before each invocation: the database can be replaced
@@ -40,7 +42,8 @@ while [ "$attempt" -le "$attempts" ]; do
   fi
   # The core may be removed or replaced while waiting for Kodi or retrying.
   # Do not execute a symlink, directory or non-executable file on a later attempt.
-  if [ -L "$core" ] || [ ! -f "$core" ] || [ ! -x "$core" ]; then
+  if [ -L "$core" ] || [ ! -f "$core" ] || [ ! -x "$core" ] ||
+     [ "$(stat -Lc '%d:%i' -- "$core" 2>/dev/null || true)" != "$core_identity" ]; then
     echo "Dede TV core changed or became unavailable during resume; aborting" >&2
     exit 1
   fi
