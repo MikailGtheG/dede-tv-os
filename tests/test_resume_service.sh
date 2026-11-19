@@ -25,6 +25,7 @@ case "$DEDE_TEST_MODE" in
     fi
     exit 0 ;;
   success) exit 0 ;;
+  success-core-modify) printf '%s\n' '# modified during successful call' >> "$DEDE_CORE_BIN"; exit 0 ;;
   fail-core-swap) mv "$DEDE_CORE_BIN" "$DEDE_CORE_BIN.before-failure"; cp "$DEDE_CORE_BIN.before-failure" "$DEDE_CORE_BIN"; chmod +x "$DEDE_CORE_BIN"; exit 1 ;;
   success-core-swap) mv "$DEDE_CORE_BIN" "$DEDE_CORE_BIN.before-success"; cp "$DEDE_CORE_BIN.before-success" "$DEDE_CORE_BIN"; chmod +x "$DEDE_CORE_BIN"; exit 0 ;;
   success-swap) mv "$DEDE_DB_PATH" "$DEDE_DB_PATH.before-success"; printf '%s\n' replacement > "$DEDE_DB_PATH"; exit 0 ;;
@@ -363,6 +364,19 @@ test "$(wc -l < "$tmp/calls")" -eq 1
 test -f "$DEDE_CORE_BIN.before-success"
 rm -f -- "$DEDE_CORE_BIN"
 mv "$DEDE_CORE_BIN.before-success" "$DEDE_CORE_BIN"
+# An in-place executable rewrite during a successful call must also fail.
+# Unlike an atomic rename, this preserves the inode and exercises SHA-256.
+: > "$tmp/calls"
+: > "$DEDE_DB_PATH"
+cp "$DEDE_CORE_BIN" "$tmp/core-before-success-modify"
+export DEDE_TEST_MODE=success-core-modify DEDE_RESUME_ATTEMPTS=2 DEDE_RESUME_DELAY=0
+if sh "$script" > "$tmp/success-core-modify-output" 2>&1; then
+  echo 'Resume accepted in-place core modification during successful playback' >&2
+  exit 1
+fi
+grep -q 'Dede TV core changed or became unavailable during resume' "$tmp/success-core-modify-output"
+test "$(wc -l < "$tmp/calls")" -eq 1
+cat "$tmp/core-before-success-modify" > "$DEDE_CORE_BIN"
 # A core that returns success after replacing the DB must not be accepted.
 : > "$tmp/calls"
 : > "$DEDE_DB_PATH"
