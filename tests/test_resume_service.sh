@@ -24,7 +24,7 @@ case "$DEDE_TEST_MODE" in
       exit 1
     fi
     exit 0 ;;
-  success) exit 0 ;;
+  success) exit 0 ;;\n  success-core-swap) mv "$DEDE_CORE_BIN" "$DEDE_CORE_BIN.before-success"; cp "$DEDE_CORE_BIN.before-success" "$DEDE_CORE_BIN"; chmod +x "$DEDE_CORE_BIN"; exit 0 ;;
   success-swap) mv "$DEDE_DB_PATH" "$DEDE_DB_PATH.before-success"; printf '%s\n' replacement > "$DEDE_DB_PATH"; exit 0 ;;
   success-remove) rm -f -- "$DEDE_DB_PATH"; exit 0 ;;
   success-redirect) rm -f "$DEDE_DB_PATH"; ln -s "$DEDE_TEST_REDIRECT_TARGET" "$DEDE_DB_PATH"; exit 0 ;;
@@ -333,6 +333,20 @@ test -f "$DEDE_CORE_BIN.before-delay"
 rm -f -- "$DEDE_CORE_BIN"
 mv "$DEDE_CORE_BIN.before-delay" "$DEDE_CORE_BIN"
 unset DEDE_TEST_REPLACE_CORE_ON_DELAY
+# A successful playback request must not hide replacement of its executable.
+# An updater may atomically swap the binary while the original is running.
+: > "$tmp/calls"
+: > "$DEDE_DB_PATH"
+export DEDE_TEST_MODE=success-core-swap DEDE_RESUME_ATTEMPTS=2 DEDE_RESUME_DELAY=0
+if sh "$script" > "$tmp/success-core-swap-output" 2>&1; then
+  echo 'Resume accepted executable replacement during successful playback' >&2
+  exit 1
+fi
+grep -q 'Dede TV core changed or became unavailable during resume' "$tmp/success-core-swap-output"
+test "$(wc -l < "$tmp/calls")" -eq 1
+test -f "$DEDE_CORE_BIN.before-success"
+rm -f -- "$DEDE_CORE_BIN"
+mv "$DEDE_CORE_BIN.before-success" "$DEDE_CORE_BIN"
 # A core that returns success after replacing the DB must not be accepted.
 : > "$tmp/calls"
 : > "$DEDE_DB_PATH"
