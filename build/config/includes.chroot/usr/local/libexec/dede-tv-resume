@@ -31,6 +31,15 @@ command -v timeout >/dev/null 2>&1 || { echo "GNU timeout is required for bounde
 db_identity=$(stat -Lc '%d:%i' -- "$db") || exit 1
 # Reject executable replacement during unattended retry loops.
 core_identity=$(stat -Lc '%d:%i' -- "$core") || exit 1
+# Inode checks alone miss in-place executable modifications. Pin the content
+# digest as well, so unattended retries never trust changed core bytes.
+command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required for core integrity checks" >&2; exit 1; }
+core_digest=$(sha256sum -- "$core" | cut -d " " -f 1) || exit 1
+core_unchanged() {
+  [ ! -L "$core" ] && [ -f "$core" ] && [ -x "$core" ] &&
+  [ "$(stat -Lc '%d:%i' -- "$core" 2>/dev/null || true)" = "$core_identity" ] &&
+  [ "$(sha256sum -- "$core" 2>/dev/null | cut -d " " -f 1)" = "$core_digest" ]
+}
 attempt=1
 while [ "$attempt" -le "$attempts" ]; do
   # Recheck immediately before each invocation: the database can be replaced
@@ -42,8 +51,7 @@ while [ "$attempt" -le "$attempts" ]; do
   fi
   # The core may be removed or replaced while waiting for Kodi or retrying.
   # Do not execute a symlink, directory or non-executable file on a later attempt.
-  if [ -L "$core" ] || [ ! -f "$core" ] || [ ! -x "$core" ] ||
-     [ "$(stat -Lc '%d:%i' -- "$core" 2>/dev/null || true)" != "$core_identity" ]; then
+  if ! core_unchanged; then
     echo "Dede TV core changed or became unavailable during resume; aborting" >&2
     exit 1
   fi
@@ -56,8 +64,7 @@ while [ "$attempt" -le "$attempts" ]; do
       exit 1
     fi
     # A successful request must not conceal replacement of the executable.
-    if [ -L "$core" ] || [ ! -f "$core" ] || [ ! -x "$core" ] ||
-       [ "$(stat -Lc '%d:%i' -- "$core" 2>/dev/null || true)" != "$core_identity" ]; then
+    if ! core_unchanged; then
       echo "Dede TV core changed or became unavailable during resume; aborting" >&2
       exit 1
     fi
@@ -72,8 +79,7 @@ while [ "$attempt" -le "$attempts" ]; do
   fi
   # A failed invocation can also coincide with an executable update. Stop
   # immediately rather than sleeping and attempting recovery with changed code.
-  if [ -L "$core" ] || [ ! -f "$core" ] || [ ! -x "$core" ] ||
-     [ "$(stat -Lc '%d:%i' -- "$core" 2>/dev/null || true)" != "$core_identity" ]; then
+  if ! core_unchanged; then
     echo "Dede TV core changed or became unavailable during resume; aborting" >&2
     exit 1
   fi
