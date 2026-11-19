@@ -307,6 +307,32 @@ test "$(wc -l < "$tmp/calls")" -eq 1
 test ! -e "$DEDE_CORE_BIN"
 mv "$DEDE_CORE_BIN.removed" "$DEDE_CORE_BIN"
 unset DEDE_TEST_REMOVE_CORE_ON_DELAY
+# A replacement executable at the same path must not be trusted on retry.
+# An attacker or updater can replace the core while the first call is sleeping.
+cat > "$tmp/bin/sleep" <<'EOF'
+#!/bin/sh
+if [ "${DEDE_TEST_REPLACE_CORE_ON_DELAY:-0}" = 1 ]; then
+  mv "$DEDE_CORE_BIN" "$DEDE_CORE_BIN.before-delay"
+  cp "$DEDE_CORE_BIN.before-delay" "$DEDE_CORE_BIN"
+  chmod +x "$DEDE_CORE_BIN"
+fi
+exit 0
+EOF
+chmod +x "$tmp/bin/sleep"
+: > "$tmp/calls"
+: > "$DEDE_DB_PATH"
+export DEDE_TEST_MODE=fail DEDE_RESUME_ATTEMPTS=3 DEDE_RESUME_DELAY=1
+export DEDE_TEST_REPLACE_CORE_ON_DELAY=1
+if sh "$script" > "$tmp/core-replaced-during-retry-output" 2>&1; then
+  echo 'Resume accepted a replaced core executable during retry' >&2
+  exit 1
+fi
+grep -q 'Dede TV core changed or became unavailable during resume' "$tmp/core-replaced-during-retry-output"
+test "$(wc -l < "$tmp/calls")" -eq 1
+test -f "$DEDE_CORE_BIN.before-delay"
+rm -f -- "$DEDE_CORE_BIN"
+mv "$DEDE_CORE_BIN.before-delay" "$DEDE_CORE_BIN"
+unset DEDE_TEST_REPLACE_CORE_ON_DELAY
 # A core that returns success after replacing the DB must not be accepted.
 : > "$tmp/calls"
 : > "$DEDE_DB_PATH"
