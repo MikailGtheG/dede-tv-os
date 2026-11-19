@@ -130,6 +130,20 @@ grep -q 'Symlinked TV channel database refused' "$tmp/dangling-output"
 test ! -e "$tmp/calls"
 rm "$DEDE_DB_PATH"
 : > "$DEDE_DB_PATH"
+# A failing checksum utility must never be mistaken for a valid digest.
+# The shell pipeline formerly masked sha256sum's non-zero exit status.
+cat > "$tmp/bin/sha256sum" <<'EOF'
+#!/bin/sh
+exit 74
+EOF
+chmod +x "$tmp/bin/sha256sum"
+if sh "$script" > "$tmp/checksum-failure-output" 2>&1; then
+  echo 'Resume accepted a failed core checksum' >&2
+  exit 1
+fi
+grep -q 'Cannot hash Dede TV core' "$tmp/checksum-failure-output"
+test ! -e "$tmp/calls"
+rm "$tmp/bin/sha256sum"
 sh "$script"
 test "$(wc -l < "$tmp/calls")" -eq 1
 grep -F -- "--db $DEDE_DB_PATH resume-last $DEDE_MEDIA_ROOT" "$tmp/calls"
