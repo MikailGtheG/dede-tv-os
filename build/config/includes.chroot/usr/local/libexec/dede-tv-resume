@@ -34,11 +34,13 @@ core_identity=$(stat -Lc '%d:%i' -- "$core") || exit 1
 # Inode checks alone miss in-place executable modifications. Pin the content
 # digest as well, so unattended retries never trust changed core bytes.
 command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required for core integrity checks" >&2; exit 1; }
-core_digest=$(sha256sum -- "$core" | cut -d " " -f 1) || exit 1
+core_hash_line=$(sha256sum -- "$core") || { echo "Cannot hash Dede TV core; refusing unattended playback" >&2; exit 1; }
+core_digest=${core_hash_line%% *}
 core_unchanged() {
   [ ! -L "$core" ] && [ -f "$core" ] && [ -x "$core" ] &&
   [ "$(stat -Lc '%d:%i' -- "$core" 2>/dev/null || true)" = "$core_identity" ] &&
-  [ "$(sha256sum -- "$core" 2>/dev/null | cut -d " " -f 1)" = "$core_digest" ]
+  core_hash_line=$(sha256sum -- "$core" 2>/dev/null) &&
+  [ "${core_hash_line%% *}" = "$core_digest" ]
 }
 attempt=1
 while [ "$attempt" -le "$attempts" ]; do
