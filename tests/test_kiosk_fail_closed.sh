@@ -38,6 +38,15 @@ if XDG_RUNTIME_DIR="$tmp/runtime-link" sh "$script" >"$tmp/symlink-output" 2>&1;
   exit 1
 fi
 grep -q 'Kodi runtime directory is unavailable' "$tmp/symlink-output"
+# A symlink in a parent directory must not redirect Kodi's socket root.
+mkdir -p "$tmp/actual-parent/private"
+chmod 700 "$tmp/actual-parent/private"
+ln -s "$tmp/actual-parent" "$tmp/linked-parent"
+if XDG_RUNTIME_DIR="$tmp/linked-parent/private" sh "$script" >"$tmp/parent-link-output" 2>&1; then
+  echo 'Kiosk accepted a runtime directory with a symlinked parent' >&2
+  exit 1
+fi
+grep -q 'must not traverse symlinks' "$tmp/parent-link-output"
 # A relative runtime path can resolve differently across working directories.
 # Reject it before profile initialization or Xorg startup.
 if (cd "$tmp" && XDG_RUNTIME_DIR=runtime sh "$OLDPWD/$script") >"$tmp/relative-output" 2>&1; then
