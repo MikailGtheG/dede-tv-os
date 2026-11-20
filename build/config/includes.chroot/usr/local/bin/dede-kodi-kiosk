@@ -13,6 +13,10 @@ case "$XDG_RUNTIME_DIR" in
   /*) ;;
   *) echo "Kodi runtime directory must be absolute" >&2; exit 1 ;;
 esac
+if [ -L "$XDG_RUNTIME_DIR" ] || [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
+  echo "Kodi runtime directory is unavailable or not writable" >&2
+  exit 1
+fi
 # A symlink in any parent component can redirect the private socket directory
 # even when the final runtime directory itself is not a symlink.
 resolved_runtime=$(realpath -e -- "$XDG_RUNTIME_DIR" 2>/dev/null) || {
@@ -21,10 +25,6 @@ resolved_runtime=$(realpath -e -- "$XDG_RUNTIME_DIR" 2>/dev/null) || {
 }
 if [ "$resolved_runtime" != "$XDG_RUNTIME_DIR" ]; then
   echo "Kodi runtime directory must not traverse symlinks" >&2
-  exit 1
-fi
-if [ -L "$XDG_RUNTIME_DIR" ] || [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
-  echo "Kodi runtime directory is unavailable or not writable" >&2
   exit 1
 fi
 # Require a private runtime directory before creating Kodi sockets.
