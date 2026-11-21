@@ -8,6 +8,10 @@ ConditionPathExists=/usr/share/kodi/addons/skin.dede-tv/addon.xml
 Type=oneshot
 User=dede
 Group=dede
+# Skin activation writes profile state; keep it private like the Kodi kiosk.
+UMask=0077
+# Do not persist process memory that may contain local control credentials.
+LimitCORE=0
 WorkingDirectory=/home/dede
 Environment=HOME=/home/dede
 ExecStart=/usr/bin/python3 /usr/local/libexec/dede-kodi-activate-skin
