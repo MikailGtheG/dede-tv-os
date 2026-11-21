@@ -170,7 +170,7 @@ def run():
             actual = rpc("Settings.GetSettingValue", {"setting": "lookandfeel.skin"})
             skin = (actual or {}).get("value")
             if skin == "skin.dede-tv":
-                MARKER.write_text("skin.dede-tv\n", encoding="ascii")
+                write_activation_marker()
                 # Remove the recovery permission after first successful
                 # activation, so later intentional administrator skin choices
                 # are never overridden.
