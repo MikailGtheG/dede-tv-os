@@ -81,7 +81,7 @@ def rpc(method, params=None, *, timeout=4):
 
 
 def desired_skin():
-    if SETTINGS.is_symlink() or not SETTINGS.is_file():
+    if not SETTINGS.is_file() or SETTINGS.resolve() != SETTINGS:
         return None
     # Match the profile initializer: never parse unbounded or entity-bearing
     # metadata from a potentially corrupted Kodi profile.
@@ -103,7 +103,7 @@ def desired_skin():
 
 
 def first_boot_pending():
-    if PENDING.is_symlink() or not PENDING.is_file():
+    if not PENDING.is_file() or PENDING.resolve() != PENDING:
         return False
     try:
         return PENDING.read_text(encoding="ascii") == "skin.dede-tv\n"
