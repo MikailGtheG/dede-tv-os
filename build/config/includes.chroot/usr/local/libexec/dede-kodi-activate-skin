@@ -85,10 +85,11 @@ def desired_skin():
         return None
     root = ET.parse(SETTINGS).getroot()
     # Kodi may rewrite guisettings.xml with settings nested in sections/categories.
-    for item in root.iter("setting"):
-        if item.get("id") == "lookandfeel.skin":
-            return item.text
-    return None
+    # Duplicate preferences are ambiguous even when the first one is Dede TV.
+    # Never allow a second skin entry to bypass the kiosk's fail-closed gate.
+    skins = [item.text for item in root.iter("setting")
+             if item.get("id") == "lookandfeel.skin"]
+    return skins[0] if len(skins) == 1 else None
 
 
 def first_boot_pending():
