@@ -67,6 +67,20 @@ then
   exit 1
 fi
 skin_addon="${DEDE_SKIN_ADDON:-/usr/share/kodi/addons/skin.dede-tv/addon.xml}"
+# Reject redirected skin metadata even when the final addon.xml is regular.
+# The kiosk checks this too, but the initializer is independently callable.
+case "$skin_addon" in
+  /*) ;;
+  *) echo "Dede TV skin path must be absolute" >&2; exit 1 ;;
+esac
+resolved_skin=$(realpath -e -- "$skin_addon" 2>/dev/null) || {
+  echo "Dede TV skin path cannot be resolved" >&2
+  exit 1
+}
+if [ "$resolved_skin" != "$skin_addon" ]; then
+  echo "Dede TV skin path must not traverse symlinks or noncanonical components" >&2
+  exit 1
+fi
 # Validate the skin and existing GUI settings before creating any profile files. Never seed Estuary.
 if [ -L "$skin_addon" ] || [ -L "$(dirname "$skin_addon")" ] || [ ! -f "$skin_addon" ] || ! python3 - "$skin_addon" <<'PY'
 import sys
