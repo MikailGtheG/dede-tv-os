@@ -206,6 +206,8 @@ jobs:
         run: sh tests/test_skin_addon_identity.sh
       - name: Test bounded Kodi JSON-RPC socket send
         run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
+      - name: Regression - atomic private Kodi activation marker
+        run: python3 tests/test_skin_marker_atomic.py
       - name: Regression - malformed Kodi addon metadata
         run: python3 -m unittest discover -s tests -p "test_skin_addon_response.py" -v
       - name: Regression - real screen must not be stock Kodi
