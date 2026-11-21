@@ -42,6 +42,16 @@ if [ -L "$skin_addon" ] || [ -L "$(dirname "$skin_addon")" ] || [ ! -f "$skin_ad
   echo "Dede TV skin is missing; refusing to expose the Kodi interface" >&2
   exit 1
 fi
+# Reject symlinks in ancestors as well: a redirected addons root could
+# replace the TV-only skin while passing the final-component checks.
+resolved_skin=$(realpath -e -- "$skin_addon" 2>/dev/null) || {
+  echo "Dede TV skin path cannot be resolved" >&2
+  exit 1
+}
+if [ "$resolved_skin" != "$skin_addon" ]; then
+  echo "Dede TV skin path must not traverse symlinks" >&2
+  exit 1
+fi
 # Do not modify the persistent Kodi profile when the required skin is missing.
 export XDG_SESSION_TYPE=x11
 /usr/local/libexec/dede-kodi-profile-init
