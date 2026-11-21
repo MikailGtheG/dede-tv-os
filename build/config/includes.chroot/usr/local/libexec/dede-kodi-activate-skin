@@ -83,7 +83,17 @@ def rpc(method, params=None, *, timeout=4):
 def desired_skin():
     if SETTINGS.is_symlink() or not SETTINGS.is_file():
         return None
-    root = ET.parse(SETTINGS).getroot()
+    # Match the profile initializer: never parse unbounded or entity-bearing
+    # metadata from a potentially corrupted Kodi profile.
+    with SETTINGS.open("rb") as source:
+        xml = source.read(1024 * 1024 + 1)
+    if len(xml) > 1024 * 1024:
+        raise ValueError("Kodi XML exceeds 1 MiB")
+    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+        raise ValueError("DTD/entity declarations are not allowed")
+    root = ET.fromstring(xml)
+    if root.tag != "settings":
+        raise ValueError("unexpected Kodi settings root")
     # Kodi may rewrite guisettings.xml with settings nested in sections/categories.
     # Duplicate preferences are ambiguous even when the first one is Dede TV.
     # Never allow a second skin entry to bypass the kiosk's fail-closed gate.
