@@ -152,6 +152,26 @@ fi
 grep -q 'Dede TV skin is missing' "$tmp/skin-dir-link-output"
 
 
+# A symlinked ancestor (not just the skin directory itself) must be rejected.
+# Use a temporary replacement path so the test never changes system files.
+mkdir -p "$tmp/real-addons/skin.dede-tv"
+printf '%s\n' '<addon id="skin.dede-tv"/>' > "$tmp/real-addons/skin.dede-tv/addon.xml"
+ln -s "$tmp/real-addons" "$tmp/linked-addons"
+python3 - "$script" "$tmp/kiosk-ancestor" "$tmp/linked-addons/skin.dede-tv/addon.xml" <<'PY'
+import sys
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+original = 'skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml'
+assert source.count(original) == 1
+Path(sys.argv[2]).write_text(source.replace(original, 'skin_addon=' + sys.argv[3]))
+PY
+if XDG_RUNTIME_DIR="$tmp/runtime" sh "$tmp/kiosk-ancestor" >"$tmp/skin-ancestor-output" 2>&1; then
+  echo 'Kiosk accepted a symlinked ancestor of the TV skin' >&2
+  exit 1
+fi
+grep -q 'Dede TV skin path must not traverse symlinks' "$tmp/skin-ancestor-output"
+
+
 # A valid, regular skin manifest must pass the kiosk preflight and reach
 # profile provisioning. Stop deliberately at that boundary; never start Xorg.
 # This catches accidental fail-always regressions in the negative tests above.
