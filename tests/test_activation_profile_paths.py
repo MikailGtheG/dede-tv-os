@@ -47,6 +47,18 @@ class ActivationPathTests(TestCase):
             with patch.object(activation, "PENDING", pending):
                 self.assertFalse(activation.first_boot_pending())
 
+    def test_utf16_entity_declaration_is_rejected_before_parsing(self):
+        # A byte search for <!ENTITY misses UTF-16 encoded declarations.
+        payload = ('<?xml version="1.0" encoding="UTF-16"?>'
+                   '<!DOCTYPE settings [<!ENTITY secret "unsafe">]>'
+                   '<settings><setting id="lookandfeel.skin">&secret;</setting></settings>')
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Path(directory) / "guisettings.xml"
+            settings.write_bytes(payload.encode("utf-16"))
+            with patch.object(activation, "SETTINGS", settings):
+                with self.assertRaisesRegex(ValueError, "UTF-8"):
+                    activation.desired_skin()
+
     def test_regular_profile_files_remain_valid(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
