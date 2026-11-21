@@ -53,7 +53,7 @@ if sh "$init" >"$tmp/skin-link-output" 2>&1; then
   echo 'FAIL: symlinked Dede TV addon metadata accepted' >&2
   exit 1
 fi
-grep -q 'Dede TV skin metadata missing or invalid' "$tmp/skin-link-output"
+grep -q 'Dede TV skin path must not traverse symlinks or noncanonical components' "$tmp/skin-link-output"
 test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
 rm "$manifest"
 mv "$tmp/skin/real-addon.xml" "$manifest"
@@ -64,7 +64,7 @@ if sh "$init" >"$tmp/skin-dir-link-output" 2>&1; then
   echo 'FAIL: symlinked Dede TV skin directory accepted' >&2
   exit 1
 fi
-grep -q 'Dede TV skin metadata missing or invalid' "$tmp/skin-dir-link-output"
+grep -q 'Dede TV skin path must not traverse symlinks or noncanonical components' "$tmp/skin-dir-link-output"
 test ! -e "$HOME/.kodi/userdata/advancedsettings.xml"
 rm "$tmp/skin"
 mv "$tmp/real-skin" "$tmp/skin"
