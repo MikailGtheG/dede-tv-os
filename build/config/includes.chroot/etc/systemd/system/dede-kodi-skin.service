@@ -3,6 +3,9 @@ Description=Activate and verify Dede TV skin on initial Kodi start
 After=dede-kodi.service
 Requires=dede-kodi.service
 ConditionPathExists=/usr/share/kodi/addons/skin.dede-tv/addon.xml
+# Retry transient Kodi JSON-RPC readiness failures without an endless boot loop.
+StartLimitIntervalSec=180
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
@@ -16,6 +19,8 @@ WorkingDirectory=/home/dede
 Environment=HOME=/home/dede
 ExecStart=/usr/bin/python3 /usr/local/libexec/dede-kodi-activate-skin
 TimeoutStartSec=360
+Restart=on-failure
+RestartSec=5s
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/home/dede
