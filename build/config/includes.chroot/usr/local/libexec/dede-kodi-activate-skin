@@ -123,7 +123,7 @@ def write_activation_marker():
 
     A marker is diagnostic state only, never proof of a loaded Kodi skin.
     """
-    fd, temporary = tempfile.mkstemp(prefix=".dede-skin-", dir=PROFILE)
+    fd, temporary = tempfile.mkstemp(prefix=".dede-skin-", dir=MARKER.parent)
     try:
         with os.fdopen(fd, "w", encoding="ascii") as output:
             os.fchmod(output.fileno(), 0o600)
