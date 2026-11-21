@@ -20,6 +20,17 @@ printf '%s\n' '<addon id="skin.estuary"><extension id="skin.dede-tv"/></addon>' 
 reject 'matching ID in nested element'
 printf '%s\n' '<addon id="skin.dede-tv"' > "$DEDE_SKIN_ADDON"
 reject 'truncated addon XML'
+# Standalone profile initialization must reject symlinked ancestors, even
+# when addon.xml itself is a regular file and contains a valid addon ID.
+mkdir -p "$tmp/real-addons/skin.dede-tv"
+printf '%s\\n' '<addon id="skin.dede-tv"/>' > "$tmp/real-addons/skin.dede-tv/addon.xml"
+ln -s "$tmp/real-addons" "$tmp/linked-addons"
+original_addon="$DEDE_SKIN_ADDON"
+export DEDE_SKIN_ADDON="$tmp/linked-addons/skin.dede-tv/addon.xml"
+reject 'symlinked addon ancestor'
+export DEDE_SKIN_ADDON="$tmp/real-addons/skin.dede-tv/../skin.dede-tv/addon.xml"
+reject 'noncanonical addon path'
+export DEDE_SKIN_ADDON="$original_addon"
 # XML attribute quoting is not semantically significant. The kiosk must not
 # reject metadata already accepted by the strict XML identity parser.
 printf '%s\n' "<addon id='skin.dede-tv'/>" > "$DEDE_SKIN_ADDON"
