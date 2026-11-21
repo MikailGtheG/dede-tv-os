@@ -70,6 +70,17 @@ class RpcDeadlineTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "malformed result response"):
                         module.rpc("Settings.GetSettingValue", timeout=1)
 
+    def test_matching_id_requires_jsonrpc_2_protocol(self):
+        for version in ('"1.0"', '"2.1"', 'null'):
+            with self.subTest(version=version):
+                connection = FakeConnection()
+                reply = ('{"jsonrpc":' + version +
+                         ',"id":24011,"result":{"value":"skin.dede-tv"}}\\n').encode()
+                connection.recv = lambda size, reply=reply: reply
+                with patch.object(module.socket, "create_connection", return_value=connection):
+                    with self.assertRaisesRegex(RuntimeError, "invalid JSON-RPC version"):
+                        module.rpc("Settings.GetSettingValue", timeout=1)
+
     def test_notification_before_reply_is_ignored(self):
         connection = FakeConnection()
         connection.recv = lambda size: (
