@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Regression: Kodi activation markers must never follow stale symlinks."""
 import importlib.util
+from importlib.machinery import SourceFileLoader
 import os
 from pathlib import Path
 import stat
 import tempfile
 
 script = Path("build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin")
-spec = importlib.util.spec_from_file_location("dede_skin_activation", script)
+spec = importlib.util.spec_from_loader(
+    "dede_skin_activation", SourceFileLoader("dede_skin_activation", str(script))
+)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
