@@ -16,16 +16,15 @@ with tempfile.TemporaryDirectory() as directory:
     module.PROFILE = root
     module.MARKER = root / ".dede-skin-activated"
     victim = root / "unrelated-settings"
-    victim.write_text("preserve me\\n", encoding="ascii")
+    victim.write_text("preserve me\n", encoding="ascii")
     module.MARKER.symlink_to(victim)
     module.write_activation_marker()
-    assert victim.read_text(encoding="ascii") == "preserve me\\n"
+    assert victim.read_text(encoding="ascii") == "preserve me\n"
     assert not module.MARKER.is_symlink()
-    assert module.MARKER.read_text(encoding="ascii") == "skin.dede-tv\\n"
+    assert module.MARKER.read_text(encoding="ascii") == "skin.dede-tv\n"
     assert stat.S_IMODE(module.MARKER.stat().st_mode) == 0o600
     module.write_activation_marker()
-    assert module.MARKER.read_text(encoding="ascii") == "skin.dede-tv\\n"
-    assert not list(root.glob(".dede-skin-*")) == [], "marker must exist"
+    assert module.MARKER.read_text(encoding="ascii") == "skin.dede-tv\n"
     assert sorted(path.name for path in root.iterdir()) == [
         ".dede-skin-activated", "unrelated-settings"
     ]
