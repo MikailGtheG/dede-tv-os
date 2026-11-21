@@ -127,7 +127,7 @@ def write_activation_marker():
     try:
         with os.fdopen(fd, "w", encoding="ascii") as output:
             os.fchmod(output.fileno(), 0o600)
-            output.write("skin.dede-tv\\n")
+            output.write("skin.dede-tv\n")
         os.replace(temporary, MARKER)
     finally:
         if os.path.exists(temporary):
