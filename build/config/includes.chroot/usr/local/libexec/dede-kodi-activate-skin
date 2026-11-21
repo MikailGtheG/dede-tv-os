@@ -106,8 +106,11 @@ def first_boot_pending():
     if not PENDING.is_file() or PENDING.resolve() != PENDING:
         return False
     try:
-        return PENDING.read_text(encoding="ascii") == "skin.dede-tv\n"
-    except (OSError, UnicodeError):
+        # This marker is untrusted persistent state. Read only the expected
+        # token length plus one byte, even if a corrupted file is enormous.
+        with PENDING.open("rb") as source:
+            return source.read(len(b"skin.dede-tv\n") + 1) == b"skin.dede-tv\n"
+    except OSError:
         return False
 
 
