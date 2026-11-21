@@ -33,6 +33,20 @@ class ActivationPathTests(TestCase):
                 self.assertIsNone(activation.desired_skin())
                 self.assertFalse(activation.first_boot_pending())
 
+    def test_oversized_first_boot_marker_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pending = Path(directory) / ".dede-skin-first-boot-pending"
+            pending.write_bytes(b"skin.dede-tv\n" + b"x" * (1024 * 1024))
+            with patch.object(activation, "PENDING", pending):
+                self.assertFalse(activation.first_boot_pending())
+
+    def test_invalid_marker_encoding_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pending = Path(directory) / ".dede-skin-first-boot-pending"
+            pending.write_bytes(b"skin.dede-tv\xff")
+            with patch.object(activation, "PENDING", pending):
+                self.assertFalse(activation.first_boot_pending())
+
     def test_regular_profile_files_remain_valid(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
