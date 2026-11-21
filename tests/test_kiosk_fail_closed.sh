@@ -47,6 +47,15 @@ if XDG_RUNTIME_DIR="$tmp/linked-parent/private" sh "$script" >"$tmp/parent-link-
   exit 1
 fi
 grep -q 'must not traverse symlinks' "$tmp/parent-link-output"
+# Non-canonical absolute paths must not bypass the runtime directory guard.
+# Both dot and dot-dot segments can hide a redirected path from visual review.
+for runtime_path in "$tmp/runtime/." "$tmp/runtime/../runtime"; do
+  if XDG_RUNTIME_DIR="$runtime_path" sh "$script" >"$tmp/noncanonical-output" 2>&1; then
+    echo "Kiosk accepted a non-canonical runtime path: $runtime_path" >&2
+    exit 1
+  fi
+  grep -q 'must not traverse symlinks' "$tmp/noncanonical-output"
+done
 # A relative runtime path can resolve differently across working directories.
 # Reject it before profile initialization or Xorg startup.
 if (cd "$tmp" && XDG_RUNTIME_DIR=runtime sh "$OLDPWD/$script") >"$tmp/relative-output" 2>&1; then
