@@ -69,7 +69,7 @@ jobs:
           "$core" --db "$smoke/state.db" add "CI channel" "$smoke/film.mkv" 60000
           test "$("$core" --db "$smoke/state.db" list)" = 'CI channel'
           "$core" --db "$smoke/state.db" select 'CI channel'
-          test "$("$core" --db "$smoke/state.db" last)" = 'CI channel'
+          test "$("$core" --db "$smoke/state.db" last)" = 'virtual:CI channel'
           "$core" --db "$smoke/state.db" request-pvr 12 | grep -aFq '"channelid":12'
       - name: Package pinned experimental Dede TV skin
         shell: bash
