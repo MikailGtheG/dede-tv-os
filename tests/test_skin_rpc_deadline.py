@@ -75,7 +75,7 @@ class RpcDeadlineTests(unittest.TestCase):
             with self.subTest(version=version):
                 connection = FakeConnection()
                 reply = ('{"jsonrpc":' + version +
-                         ',"id":24011,"result":{"value":"skin.dede-tv"}}\\n').encode()
+                         ',"id":24011,"result":{"value":"skin.dede-tv"}}\n').encode()
                 connection.recv = lambda size, reply=reply: reply
                 with patch.object(module.socket, "create_connection", return_value=connection):
                     with self.assertRaisesRegex(RuntimeError, "invalid JSON-RPC version"):
