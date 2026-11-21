@@ -31,4 +31,21 @@ with tempfile.TemporaryDirectory() as directory:
     assert sorted(path.name for path in root.iterdir()) == [
         ".dede-skin-activated", "unrelated-settings"
     ]
+
+# The marker can be relocated independently of PROFILE. Temporary files must
+# be created next to the target so os.replace remains atomic across mounts.
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    profile = root / "profile"
+    target = root / "separate-target"
+    profile.mkdir()
+    target.mkdir()
+    module.PROFILE = profile
+    module.MARKER = target / ".dede-skin-activated"
+    module.write_activation_marker()
+    assert module.MARKER.read_text(encoding="ascii") == "skin.dede-tv\\n"
+    assert stat.S_IMODE(module.MARKER.stat().st_mode) == 0o600
+    assert list(profile.iterdir()) == []
+    assert sorted(p.name for p in target.iterdir()) == [".dede-skin-activated"]
+
 print("Skin marker atomic replacement checks passed")
