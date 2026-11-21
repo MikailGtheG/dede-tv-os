@@ -58,6 +58,8 @@ def rpc(method, params=None, *, timeout=4):
                         break
                     remaining = remaining[consumed:].lstrip()
                     if isinstance(document, dict) and document.get("id") == request_id:
+                        if document.get("jsonrpc") != "2.0":
+                            raise RuntimeError(f"{method}: invalid JSON-RPC version")
                         if "error" in document:
                             raise RuntimeError(
                                 f"{method}: error {document['error'].get('code') if isinstance(document['error'], dict) else 'malformed error response'}"
