@@ -48,4 +48,35 @@ with tempfile.TemporaryDirectory() as directory:
     assert list(profile.iterdir()) == []
     assert sorted(p.name for p in target.iterdir()) == [".dede-skin-activated"]
 
-print("Skin marker atomic replacement checks passed")
+
+# The activation gate must reject duplicate lookandfeel.skin settings, even
+# when one entry requests Dede TV. Kodi's nested setting layout is supported.
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    module.SETTINGS = root / "guisettings.xml"
+    module.SETTINGS.write_text(
+        '<settings><section><setting id="lookandfeel.skin">skin.dede-tv</setting>'
+        '<setting id="lookandfeel.skin">skin.estuary</setting></section></settings>',
+        encoding="utf-8",
+    )
+    assert module.desired_skin() is None
+    module.SETTINGS.write_text(
+        '<settings><section><setting id="lookandfeel.skin">skin.estuary</setting>'
+        '<setting id="lookandfeel.skin">skin.dede-tv</setting></section></settings>',
+        encoding="utf-8",
+    )
+    assert module.desired_skin() is None
+    module.SETTINGS.write_text(
+        '<settings><section><setting id="lookandfeel.skin">skin.dede-tv</setting>'
+        '</section></settings>',
+        encoding="utf-8",
+    )
+    assert module.desired_skin() == "skin.dede-tv"
+    module.SETTINGS.write_text(
+        '<settings><setting id="lookandfeel.skin">skin.dede-tv</setting>'
+        '<setting id="lookandfeel.skin">skin.dede-tv</setting></settings>',
+        encoding="utf-8",
+    )
+    assert module.desired_skin() is None
+
+print("Skin marker and unique skin preference checks passed")
