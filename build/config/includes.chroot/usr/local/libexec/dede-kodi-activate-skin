@@ -7,6 +7,7 @@ own public JSON-RPC API and verify the *loaded* skin, not the desired setting.
 """
 import json
 import os
+import tempfile
 from pathlib import Path
 import socket
 import sys
@@ -115,6 +116,22 @@ def enable_first_boot_pvr():
         rpc("Addons.SetAddonEnabled", {
             "addonid": "pvr.iptvsimple", "enabled": True
         })
+
+
+def write_activation_marker():
+    """Atomically publish a private marker without following a stale symlink.
+
+    A marker is diagnostic state only, never proof of a loaded Kodi skin.
+    """
+    fd, temporary = tempfile.mkstemp(prefix=".dede-skin-", dir=PROFILE)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as output:
+            os.fchmod(output.fileno(), 0o600)
+            output.write("skin.dede-tv\\n")
+        os.replace(temporary, MARKER)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def run():
