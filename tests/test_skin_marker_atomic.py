@@ -79,4 +79,31 @@ with tempfile.TemporaryDirectory() as directory:
     )
     assert module.desired_skin() is None
 
+
+# The activation gate must enforce the same bounded, DTD-free XML contract
+# as the standalone profile initializer.
+with tempfile.TemporaryDirectory() as directory:
+    module.SETTINGS = Path(directory) / "guisettings.xml"
+    valid = '<settings><setting id="lookandfeel.skin">skin.dede-tv</setting></settings>'
+    module.SETTINGS.write_text(valid, encoding="utf-8")
+    assert module.desired_skin() == "skin.dede-tv"
+    module.SETTINGS.write_text('<!DOCTYPE settings>' + valid, encoding="utf-8")
+    try:
+        module.desired_skin()
+        raise AssertionError("DTD must be rejected")
+    except ValueError:
+        pass
+    module.SETTINGS.write_text('<other>' + valid + '</other>', encoding="utf-8")
+    try:
+        module.desired_skin()
+        raise AssertionError("unexpected XML root must be rejected")
+    except ValueError:
+        pass
+    module.SETTINGS.write_bytes(b" " * (1024 * 1024 + 1))
+    try:
+        module.desired_skin()
+        raise AssertionError("oversized XML must be rejected")
+    except ValueError:
+        pass
+
 print("Skin marker and unique skin preference checks passed")
