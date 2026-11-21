@@ -43,7 +43,7 @@ with tempfile.TemporaryDirectory() as directory:
     module.PROFILE = profile
     module.MARKER = target / ".dede-skin-activated"
     module.write_activation_marker()
-    assert module.MARKER.read_text(encoding="ascii") == "skin.dede-tv\\n"
+    assert module.MARKER.read_text(encoding="ascii") == "skin.dede-tv\n"
     assert stat.S_IMODE(module.MARKER.stat().st_mode) == 0o600
     assert list(profile.iterdir()) == []
     assert sorted(p.name for p in target.iterdir()) == [".dede-skin-activated"]
