@@ -57,7 +57,8 @@ def rpc(method, params=None, *, timeout=4):
                     except json.JSONDecodeError:
                         break
                     remaining = remaining[consumed:].lstrip()
-                    if isinstance(document, dict) and document.get("id") == request_id:
+                    if (isinstance(document, dict) and type(document.get("id")) is int
+                            and document["id"] == request_id):
                         if document.get("jsonrpc") != "2.0":
                             raise RuntimeError(f"{method}: invalid JSON-RPC version")
                         if "error" in document:
