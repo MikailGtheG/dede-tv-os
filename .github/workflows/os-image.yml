@@ -873,7 +873,12 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           for mode in ("bios", "uefi"):
-              path = Path(f"build/boot-logs/{mode}-after-boot.ppm")
+              # Judge the first real TV picture from the E2E autostart step;
+              # a fixed 90 s capture is legitimately black on a quiet boot
+              # before Kodi's first frame. Fall back to it if E2E has none.
+              path = Path(f"build/boot-logs/e2e/{mode}-01-autostart.ppm")
+              if not path.is_file():
+                  path = Path(f"build/boot-logs/{mode}-after-boot.ppm")
               if not path.is_file():
                   raise SystemExit(f"{mode}: no post-boot display captured")
               # Reuse the bounded, descriptor-validated PPM parser. The old
@@ -916,7 +921,9 @@ jobs:
         run: |
           set -euo pipefail
           for mode in bios uefi; do
-            python3 tests/check_qemu_tv_visual.py "build/boot-logs/$mode-after-boot.ppm"
+            capture="build/boot-logs/e2e/$mode-01-autostart.ppm"
+            [ -f "$capture" ] || capture="build/boot-logs/$mode-after-boot.ppm"
+            python3 tests/check_qemu_tv_visual.py "$capture"
           done
       - name: Audit installed packages and image footprint
         shell: bash
