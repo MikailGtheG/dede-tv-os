@@ -93,15 +93,18 @@ class Connection:
         readable, _, _ = select.select([self.sock], [], [], max(0.0, wait))
         if not readable:
             return
-        try:
-            part = self.sock.recv(65536)
-        except BlockingIOError:
-            return
-        if not part:
-            raise ConnectionError("Kodi closed the JSON-RPC connection")
-        self.buffer += part
-        if len(self.buffer) > MAX_REPLY:
-            raise ConnectionError("oversized JSON-RPC data from Kodi")
+        # Drain everything available: Kodi sends notifications synchronously,
+        # so a slow reader could back up Kodi's own send path.
+        while True:
+            try:
+                part = self.sock.recv(65536)
+            except BlockingIOError:
+                break
+            if not part:
+                raise ConnectionError("Kodi closed the JSON-RPC connection")
+            self.buffer += part
+            if len(self.buffer) > MAX_REPLY:
+                raise ConnectionError("oversized JSON-RPC data from Kodi")
         try:
             text = self.buffer.decode("utf-8")
         except UnicodeDecodeError:

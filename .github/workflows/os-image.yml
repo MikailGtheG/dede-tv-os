@@ -735,6 +735,11 @@ jobs:
           PY
             wait "$qemu_pid"
             status=$?
+            # Always show the guest timeline (any later check may fail first).
+            echo "::group::$mode guest TV timeline"
+            grep -aE 'DEDE_CI_KODI:|DEDE_GUARD:|DEDE_AUTOPLAY:|DEDE_WATCHDOG:|DEDE_CI_HANG:|DEDE_CI_CRASH: (channel|kodi)|NRestarts' \
+              "boot-logs/$mode.log" | tail -250 || true
+            echo "::endgroup::"
             set -e
             if [ "$boot_menu_status" -ne 0 ]; then
               echo "$mode: boot-menu VGA capture/control failed (exit $boot_menu_status)" >&2
