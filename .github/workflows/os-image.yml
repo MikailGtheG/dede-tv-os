@@ -951,11 +951,12 @@ jobs:
           python3 - <<'PY'
           from xml.etree import ElementTree as ET
           home = ET.parse("/tmp/dede-tv-home.xml").getroot()
-          assert "DEDE TV" in [n.text for n in home.findall(".//label")]
-          # Home may only open the channel-list overlay, never Kodi's full
-          # TVChannels window with its menus.
-          assert [n.text for n in home.findall(".//onclick")] == ["ActivateWindow(PVROSDChannels)"]
-          assert len(home.findall(".//control")) <= 8
+          # Home is the no-picture screen: its own PVR channel list, no
+          # path into Kodi windows or menus.
+          channels = home.find(".//control[@id='50']")
+          assert channels is not None and channels.findtext("content") == "pvr://channels/tv/*"
+          assert home.findall(".//onclick") == []
+          assert "Fernsehen wird verbunden …" in [n.text for n in home.iter("label")]
           PY
           # Remote-control whitelist: dede-tv.xml must be the only active keymap.
           unsquashfs -l "$squashfs" usr/share/kodi/system/keymaps > /tmp/dede-keymaps.txt
