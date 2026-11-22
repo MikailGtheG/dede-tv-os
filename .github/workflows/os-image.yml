@@ -291,6 +291,87 @@ jobs:
           UNIT
           ln -sfn ../dede-ci-diagnostics.service \
             config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-diagnostics.service
+          # CI-only TV playback diagnostics, late enough to see channel loading.
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-tv-diagnostics <<'SH'
+          #!/bin/sh
+          sleep 150
+          redact() { sed -E 's#[a-zA-Z]+://[^ "<]+#<url>#g'; }
+          {
+            echo 'DEDE_CI_TV: begin'
+            for unit in dede-tv-autoplay systemd-networkd systemd-resolved dede-kodi-skin; do
+              echo "DEDE_CI_TV: $unit $(systemctl show "$unit" -p ActiveState -p SubState -p Result -p NRestarts --value --no-pager | tr '\n' ' ')"
+            done
+            journalctl -b -u dede-tv-autoplay -o cat --no-pager | tail -20 | redact | sed 's/^/DEDE_CI_TV: autoplay| /'
+            journalctl -b -u dede-kodi -o cat --no-pager | grep -E 'DEDE_IPTV|IPTV source' | tail -5 | redact | sed 's/^/DEDE_CI_TV: kiosk| /'
+            ip -4 -o addr show | awk '{print "DEDE_CI_TV: addr " $2 " " $4}'
+            ip -4 route show default | sed 's/^/DEDE_CI_TV: route /'
+            stat -c 'DEDE_CI_TV: iptv.conf %U:%G %a' /etc/dede-tv/iptv.conf 2>&1 | head -1
+            inst=/home/dede/.kodi/userdata/addon_data/pvr.iptvsimple/instance-settings-1.xml
+            if [ -f "$inst" ]; then
+              grep -o 'id="[A-Za-z_]*"' "$inst" | tr '\n' ' ' | sed 's/^/DEDE_CI_TV: instance-settings /'; echo
+            else
+              echo 'DEDE_CI_TV: instance-settings missing'
+            fi
+            ls /home/dede/.kodi/userdata/addon_data/pvr.iptvsimple/ 2>&1 | tr '\n' ' ' | sed 's/^/DEDE_CI_TV: iptv addon_data /'; echo
+            python3 - <<'PY2'
+          import json, socket
+          def rpc(method, params=None, rid=[900]):
+              rid[0] += 1
+              req = {"jsonrpc": "2.0", "id": rid[0], "method": method}
+              if params is not None:
+                  req["params"] = params
+              with socket.create_connection(("127.0.0.1", 9090), timeout=5) as s:
+                  s.sendall(json.dumps(req).encode())
+                  buf = b""
+                  dec = json.JSONDecoder()
+                  while True:
+                      part = s.recv(65536)
+                      if not part:
+                          return None
+                      buf += part
+                      text = buf.decode("utf-8", "replace")
+                      pos = 0
+                      while pos < len(text):
+                          while pos < len(text) and text[pos].isspace():
+                              pos += 1
+                          try:
+                              doc, pos = dec.raw_decode(text, pos)
+                          except ValueError:
+                              break
+                          if doc.get("id") == rid[0]:
+                              return doc
+          for method, params in (
+              ("PVR.GetProperties", {"properties": ["available", "recording", "scanning"]}),
+              ("PVR.GetChannelGroups", {"channeltype": "tv"}),
+              ("PVR.GetChannels", {"channelgroupid": "alltv", "properties": ["channelnumber"]}),
+              ("Player.GetActivePlayers", None),
+              ("GUI.GetProperties", {"properties": ["currentwindow", "currentcontrol"]}),
+              ("Addons.GetAddonDetails", {"addonid": "pvr.iptvsimple", "properties": ["enabled", "version"]}),
+          ):
+              try:
+                  reply = rpc(method, params)
+                  print("DEDE_CI_TV: rpc " + method + " " + json.dumps(reply)[:600])
+              except OSError as exc:
+                  print("DEDE_CI_TV: rpc " + method + " failed " + type(exc).__name__)
+          PY2
+            grep -aiE 'pvr|iptv|playlist|CCurlFile|ERROR' /home/dede/.kodi/temp/kodi.log 2>/dev/null \
+              | grep -viE 'skin|font|texture' | tail -60 | redact | sed 's/^/DEDE_CI_TV: kodi| /'
+            echo 'DEDE_CI_TV: end'
+          } > /run/dede-ci-tv.log 2>&1
+          cat /run/dede-ci-tv.log > /dev/ttyS0 2>/dev/null || cat /run/dede-ci-tv.log
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-tv-diagnostics.service <<'UNIT'
+          [Unit]
+          Description=CI-only live TV playback diagnostics
+          After=dede-kodi.service
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-tv-diagnostics
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-tv-diagnostics.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-tv-diagnostics.service
           # CI-only IPTV source: the local live test signal served on the
           # runner (QEMU user networking exposes the host as 10.0.2.2).
           # Production images ship without any playlist.
@@ -593,6 +674,9 @@ jobs:
             if [ "$e2e_status" -ne 0 ]; then
               echo "$mode: TV end-to-end acceptance failed" >&2
               grep -aE 'DEDE_E2E(_SUMMARY)?:' "boot-logs/$mode-e2e.log" >&2 || true
+              grep -aF 'DEDE_CI_TV:' "boot-logs/$mode.log" >&2 || true
+              echo "Test IPTV server requests:" >&2
+              tail -40 boot-logs/iptv-test-server.log >&2 || true
               exit 1
             fi
             # A timeout alone is NOT evidence of a successful boot.
