@@ -123,6 +123,11 @@ class AutoplayChoiceTests(unittest.TestCase):
         ])
         self.assertEqual(chosen["channelid"], 2)
 
+    def test_placeholder_lastplayed_is_not_a_watched_channel(self):
+        chosen = autoplay.choose([channel(8, 3, "1970-01-01 01:00:00"),
+                                  channel(9, 1, "garbage"), channel(7, 2, "")])
+        self.assertEqual(chosen["channelid"], 9)
+
     def test_unnumbered_channels_sort_last(self):
         chosen = autoplay.choose([channel(9, 0), channel(4, 4)])
         self.assertEqual(chosen["channelid"], 4)

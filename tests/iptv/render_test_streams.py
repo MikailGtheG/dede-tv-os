@@ -31,11 +31,11 @@ def render(channel, segment_seconds, loop_segments, output, font, size="1280x720
         video = (
             f"color=c={channel['color']}:s={size}:r={fps}:d={seconds},"
             f"drawtext=fontfile={font}:textfile={title}:fontsize=h/7.5:"
-            f"fontcolor=white:x=(w-tw)/2:y=(h-th)/2-40,"
+            f"fontcolor=white:x=(w-tw)/2:y=h*0.36,"
             f"drawtext=fontfile={font}:textfile={hint}:fontsize=h/22:"
-            f"fontcolor=0xb8b8b8:x=(w-tw)/2:y=(h/2)+70,"
+            f"fontcolor=0xb8b8b8:x=(w-tw)/2:y=h*0.62,"
             f"drawtext=fontfile={font}:text='%{{pts\\:hms}}':fontsize=h/18:"
-            f"fontcolor=0xd0d0d0:x=(w-tw)/2:y=h-120"
+            f"fontcolor=0xd0d0d0:x=(w-tw)/2:y=h*0.80"
         )
         command = [
             "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",

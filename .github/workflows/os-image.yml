@@ -863,7 +863,8 @@ jobs:
           if not packages:
               raise SystemExit("No installed Debian packages found in SquashFS")
           # An ISO without the playback engine is not a useful TV prototype.
-          required = ("linux-image-amd64", "kodi", "kodi-pvr-iptvsimple", "systemd-resolved")
+          required = ("linux-image-amd64", "kodi", "kodi-pvr-iptvsimple", "systemd-resolved",
+                      "xserver-xorg-input-libinput")
           missing = [name for name in required if name not in packages]
           if missing:
               raise SystemExit("Missing installed TV packages: " + ", ".join(missing))

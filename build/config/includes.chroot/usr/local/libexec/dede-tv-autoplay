@@ -13,6 +13,7 @@ import os
 import socket
 import sys
 import time
+from datetime import datetime
 
 HOST, PORT = "127.0.0.1", 9090
 CHANNEL_WAIT_S = int(os.environ.get("DEDE_AUTOPLAY_CHANNEL_WAIT", "240"))
@@ -90,13 +91,25 @@ def tv_channels():
     return usable
 
 
+def last_played(channel):
+    """Kodi's "YYYY-MM-DD HH:MM:SS" lastplayed, or None if never watched.
+
+    Unwatched channels may report "" or an epoch-like placeholder."""
+    value = channel.get("lastplayed")
+    if not isinstance(value, str):
+        return None
+    try:
+        when = datetime.strptime(value.strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    return when if when.year >= 2000 else None
+
+
 def choose(channels):
     """Most recently watched channel, otherwise the lowest channel number."""
-    watched = [c for c in channels
-               if isinstance(c.get("lastplayed"), str) and c["lastplayed"].strip()]
+    watched = [c for c in channels if last_played(c)]
     if watched:
-        # Kodi formats lastplayed as "YYYY-MM-DD HH:MM:SS": sortable as text.
-        return max(watched, key=lambda c: c["lastplayed"])
+        return max(watched, key=last_played)
 
     def number(channel):
         value = channel.get("channelnumber")
@@ -137,7 +150,7 @@ def main():
         print("DEDE_AUTOPLAY: playback started meanwhile")
         return 0
     channel = choose(channels)
-    reason = "last watched" if channel.get("lastplayed") else "first"
+    reason = "last watched" if last_played(channel) else "first"
     print(f"DEDE_AUTOPLAY: starting {reason} channel number {channel.get('channelnumber')}")
     rpc("Player.Open", {"item": {"channelid": channel["channelid"]}}, timeout=15)
     if not wait_for(playing, START_WAIT_S):
