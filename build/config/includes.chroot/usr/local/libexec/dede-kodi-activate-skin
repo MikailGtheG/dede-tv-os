@@ -91,7 +91,11 @@ def desired_skin():
         xml = source.read(1024 * 1024 + 1)
     if len(xml) > 1024 * 1024:
         raise ValueError("Kodi XML exceeds 1 MiB")
-    # Kodi writes UTF-8. Reject alternate encodings before scanning for DTDs:\n    # UTF-16 can hide declaration keywords behind NUL bytes.\n    if b"\\x00" in xml or xml.startswith((b"\\xff\\xfe", b"\\xfe\\xff")):\n        raise ValueError("Kodi settings must be UTF-8 XML")\n    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+    # Kodi writes UTF-8. Reject alternate encodings before scanning for DTDs:
+    # UTF-16 can hide declaration keywords behind NUL bytes.
+    if b"\x00" in xml or xml.startswith((b"\xff\xfe", b"\xfe\xff")):
+        raise ValueError("Kodi settings must be UTF-8 XML")
+    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
         raise ValueError("DTD/entity declarations are not allowed")
     root = ET.fromstring(xml)
     if root.tag != "settings":
