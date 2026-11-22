@@ -895,10 +895,19 @@ jobs:
             etc/systemd/system/dede-tv-autoplay.service \
             etc/systemd/system/multi-user.target.wants/dede-tv-autoplay.service \
             etc/systemd/system/dede-kodi.service.wants/dede-tv-autoplay.service \
-            etc/systemd/network/20-dede-wired.network \
-            etc/systemd/system/multi-user.target.wants/systemd-networkd.service; do
+            etc/systemd/network/20-dede-wired.network; do
             unsquashfs -cat "$squashfs" "$embedded" >/dev/null || {
               echo "Missing TV playback component: $embedded" >&2
+              exit 1
+            }
+          done
+          # Enablement links point to absolute /lib paths that -cat cannot
+          # resolve inside the image; verify the links by listing instead.
+          for link in multi-user.target.wants/systemd-networkd.service \
+                      multi-user.target.wants/systemd-resolved.service; do
+            unsquashfs -lls "$squashfs" "etc/systemd/system/$link" \
+              | grep -Eq "/$link -> .*/systemd/system/${link#*/}\$" || {
+              echo "Service not enabled in image: $link" >&2
               exit 1
             }
           done
