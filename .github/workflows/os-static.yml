@@ -15,6 +15,17 @@ jobs:
         run: |
           set -euo pipefail
           bash -n build/auto/config build/auto/build build/build-image.sh
+          # Syntax-check every Python regression, including tests not selected
+          # by the current CI matrix. A malformed script must fail early.
+          python3 - <<'PYCOMPILE'
+          import ast
+          from pathlib import Path
+          sources = sorted(Path('tests').rglob('*.py'))
+          sources += [Path('build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin')]
+          for source in sources:
+              ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
+          print(f'Validated Python syntax in {len(sources)} files')
+          PYCOMPILE
           # Catch malformed shell case separators before executing resume regressions.
           # Parse every POSIX shell regression before running any of them.
           # A malformed unrelated test must fail CI at the syntax gate too.
