@@ -10,7 +10,8 @@ Drives the guest only through its virtual keyboard (QEMU monitor
   4. OK opens the channel list over the still-visible picture
   5. Down + OK switches to the highlighted channel and closes the list
   6. OK then Back closes the list without switching
-  7. No capture ever shows a stock Kodi dialog or splash
+  7. Digit 6 switches directly to channel 06
+  8. No capture ever shows a stock Kodi dialog or splash
 
 Usage: qemu_tv_e2e.py MONITOR_SOCKET OUTPUT_DIR LABEL
 Prints DEDE_E2E lines; exit status 0 only if every step passed.
@@ -31,6 +32,7 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
+TOTAL_STEPS = 10
 SWITCH_TIMEOUT = int(os.environ.get("DEDE_E2E_SWITCH_TIMEOUT", "60"))
 
 
@@ -169,6 +171,10 @@ def run(guest):
     check("ok-reopens-list", wait_for(guest, "list-reopen", "kanald", mode="overlay", timeout=20))
     guest.key("esc", settle=2)
     check("back-closes-list", wait_for(guest, "list-closed", "kanald", timeout=15))
+    time.sleep(6)
+    # Direct channel number entry switches by itself after a short pause.
+    guest.key("6", settle=0.5)
+    check("number-6-switches", wait_for(guest, "number-06", "teskilat"))
     return steps
 
 
@@ -186,7 +192,7 @@ def main(argv):
     passed = sum(ok for _, ok in steps)
     print(f"DEDE_E2E_SUMMARY: {guest.label}: {passed}/{len(steps)} passed: "
           + ", ".join(f"{name}={'ok' if ok else 'FAIL'}" for name, ok in steps), flush=True)
-    return 0 if steps and all(ok for _, ok in steps) and len(steps) == 9 else 1
+    return 0 if len(steps) == TOTAL_STEPS and all(ok for _, ok in steps) else 1
 
 
 if __name__ == "__main__":

@@ -48,6 +48,11 @@ class FakeTv:
             self.list_open, self.highlight = True, self.index
         elif name == "esc" and self.broken == "back-leaves-tv":
             self.home = True
+        elif name.isdigit() and self.broken != "no-number-entry":
+            # Channel numbers: 1-4 then 6 (5 is the virtual channel).
+            numbers = [1, 2, 3, 4, 6]
+            if int(name) in numbers:
+                self.index = numbers.index(int(name))
 
     def frame(self):
         video = bytes((20, 22, 26) if self.home else self.colours[ORDER[self.index]])
@@ -71,10 +76,11 @@ class FakeTv:
         return f"P6\n{W} {H}\n255\n".encode() + b"".join(rows)
 
 
-def serve(sock_path, tv, stop):
+def serve(sock_path, tv, stop, ready):
     server = socket.socket(socket.AF_UNIX)
     server.bind(sock_path)
     server.listen(4)
+    ready.set()
     server.settimeout(0.2)
     while not stop.is_set():
         try:
@@ -105,18 +111,16 @@ class E2ESelfTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             sock = os.path.join(tmp, "mon.sock")
             stop = threading.Event()
-            thread = threading.Thread(target=serve, args=(sock, tv, stop), daemon=True)
+            ready = threading.Event()
+            thread = threading.Thread(target=serve, args=(sock, tv, stop, ready), daemon=True)
             thread.start()
+            self.assertTrue(ready.wait(5))
             try:
                 with patch.object(e2e.time, "sleep"), \
                      patch.object(e2e, "FIRST_PICTURE_TIMEOUT", 0), \
                      patch.object(e2e, "SWITCH_TIMEOUT", 0), \
                      patch.object(e2e.time, "monotonic", side_effect=_fast_clock()), \
                      patch("builtins.print"):
-                    for _ in range(50):
-                        if os.path.exists(sock):
-                            break
-                        threading.Event().wait(0.02)
                     guest = e2e.Guest(sock, os.path.join(tmp, "shots"), "sim")
                     guest.out.mkdir()
                     return e2e.run(guest)
@@ -126,7 +130,7 @@ class E2ESelfTest(unittest.TestCase):
 
     def test_correct_tv_passes_all_steps(self):
         steps = self.run_against(FakeTv())
-        self.assertEqual(len(steps), 9)
+        self.assertEqual(len(steps), e2e.TOTAL_STEPS)
         self.assertTrue(all(ok for _, ok in steps), steps)
 
     def test_back_leaving_tv_is_caught(self):
@@ -136,6 +140,10 @@ class E2ESelfTest(unittest.TestCase):
     def test_list_hiding_picture_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="list-fullscreen")))
         self.assertFalse(steps["ok-opens-list"])
+
+    def test_missing_number_entry_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="no-number-entry")))
+        self.assertFalse(steps["number-6-switches"])
 
     def test_preview_png_is_valid(self):
         with tempfile.TemporaryDirectory() as tmp:

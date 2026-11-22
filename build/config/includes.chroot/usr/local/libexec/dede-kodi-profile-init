@@ -181,6 +181,7 @@ if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
   <setting id="services.esallinterfaces">false</setting>
   <setting id="services.webserver">false</setting>
   <setting id="lookandfeel.skin">skin.dede-tv</setting>
+  <setting id="pvrplayback.confirmchannelswitch">false</setting>
 </settings>
 XML
   if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
