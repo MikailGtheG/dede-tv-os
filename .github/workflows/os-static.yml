@@ -215,6 +215,8 @@ jobs:
       - name: Regression - Kodi skin addon identity
         shell: bash
         run: sh tests/test_skin_addon_identity.sh
+      - name: Regression - live IPTV test source (playlist, live window, faults)
+        run: python3 -m unittest discover -s tests -p "test_iptv_test_source.py" -v
       - name: Regression - no Kodi add-on enable prompt (addon manifest)
         shell: bash
         run: |
