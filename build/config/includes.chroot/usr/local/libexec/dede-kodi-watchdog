@@ -13,10 +13,12 @@ restart command itself fails.
 """
 import json
 import os
-import socket
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, os.environ.get("DEDE_TV_LIB", "/usr/local/lib/dede-tv"))
+from dede_kodi_rpc import RpcError, rpc  # noqa: E402
 
 STATE = os.environ.get("DEDE_WATCHDOG_STATE", "/run/dede-kodi-watchdog.json")
 GRACE_S = 120
@@ -25,24 +27,13 @@ MIN_INTERVAL_S = 600
 SERVICE = "dede-kodi.service"
 
 
-def ping(timeout=5.0):
-    request = b'{"jsonrpc":"2.0","id":4711,"method":"JSONRPC.Ping"}\n'
+def ping(timeout=10.0):
+    """True if Kodi answers JSONRPC.Ping. Replies are matched by id, so
+    playback notifications on the same socket cannot cause a false alarm."""
     try:
-        with socket.create_connection(("127.0.0.1", 9090), timeout=timeout) as sock:
-            sock.sendall(request)
-            deadline = time.monotonic() + timeout
-            buffer = b""
-            while time.monotonic() < deadline and len(buffer) < 65536:
-                sock.settimeout(max(0.1, deadline - time.monotonic()))
-                part = sock.recv(4096)
-                if not part:
-                    return False
-                buffer += part
-                if b'"id":4711' in buffer and b'"pong"' in buffer:
-                    return True
-    except OSError:
+        return rpc("JSONRPC.Ping", timeout=timeout) == "pong"
+    except (OSError, RpcError):
         return False
-    return False
 
 
 def active_seconds():
