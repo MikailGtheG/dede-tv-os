@@ -372,6 +372,66 @@ jobs:
           UNIT
           ln -sfn ../dede-ci-tv-diagnostics.service \
             config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-tv-diagnostics.service
+          # CI-only crash simulation for the E2E restart step: once channel 06
+          # plays (the E2E's last key step), hard-kill Kodi exactly once.
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-crash-kodi <<'SH'
+          #!/bin/sh
+          python3 - <<'PY2'
+          import json, socket, time
+          def rpc(method, params=None):
+              req = {"jsonrpc": "2.0", "id": 77, "method": method}
+              if params is not None:
+                  req["params"] = params
+              with socket.create_connection(("127.0.0.1", 9090), timeout=5) as s:
+                  s.sendall(json.dumps(req).encode())
+                  buf, dec = b"", json.JSONDecoder()
+                  while True:
+                      part = s.recv(65536)
+                      if not part:
+                          return None
+                      buf += part
+                      text, pos = buf.decode("utf-8", "replace"), 0
+                      while pos < len(text):
+                          while pos < len(text) and text[pos].isspace():
+                              pos += 1
+                          try:
+                              doc, pos = dec.raw_decode(text, pos)
+                          except ValueError:
+                              break
+                          if doc.get("id") == 77:
+                              return doc.get("result")
+          deadline = time.monotonic() + 1500
+          while time.monotonic() < deadline:
+              try:
+                  item = rpc("Player.GetItem", {"playerid": 1, "properties": ["channelnumber"]})
+                  label = ((item or {}).get("item") or {}).get("label")
+                  number = ((item or {}).get("item") or {}).get("channelnumber")
+                  if number == 6:
+                      print("DEDE_CI_CRASH: channel 06 playing (" + str(label) + "), killing Kodi in 10 s", flush=True)
+                      time.sleep(10)
+                      raise SystemExit(0)
+              except (OSError, ValueError):
+                  pass
+              time.sleep(3)
+          raise SystemExit(1)
+          PY2
+          if [ $? -eq 0 ]; then
+            pkill -KILL -x kodi.bin && echo 'DEDE_CI_CRASH: kodi.bin killed (SIGKILL)'
+          fi
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-crash-kodi.service <<'UNIT'
+          [Unit]
+          Description=CI-only Kodi crash simulation for restart acceptance
+          After=dede-kodi.service
+          [Service]
+          Type=simple
+          StandardOutput=journal+console
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-crash-kodi
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-crash-kodi.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-crash-kodi.service
           # CI-only IPTV source: the local live test signal served on the
           # runner (QEMU user networking exposes the host as 10.0.2.2).
           # Production images ship without any playlist.

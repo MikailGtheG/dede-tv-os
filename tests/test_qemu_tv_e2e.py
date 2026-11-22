@@ -30,6 +30,21 @@ class FakeTv:
         self.highlight = 0
         self.home = False
         self.broken = broken
+        self.frames = 0
+        self.crash_at = None
+        self.down = False
+
+    def tick(self):
+        """Called per screendump: simulate the CI guest's crash trigger."""
+        if self.crash_at is None and ORDER[self.index] == "teskilat" and not self.list_open:
+            self.crash_at = self.frames + 2
+        if self.crash_at is not None and self.frames == self.crash_at:
+            self.down = True
+        if self.down and self.frames == self.crash_at + 3:
+            self.down = False
+            if self.broken == "restart-loses-channel":
+                self.index = 0
+        self.frames += 1
 
     def key(self, name):
         if self.list_open:
@@ -55,7 +70,8 @@ class FakeTv:
                 self.index = numbers.index(int(name))
 
     def frame(self):
-        video = bytes((20, 22, 26) if self.home else self.colours[ORDER[self.index]])
+        self.tick()
+        video = bytes((20, 22, 26) if (self.home or self.down) else self.colours[ORDER[self.index]])
         panel = bytes((30, 31, 34))
         white = bytes((240, 240, 240))
         panel_w = int(W * 0.43)
@@ -69,7 +85,7 @@ class FakeTv:
                 continue
             left = panel_w if (self.list_open and in_band) else 0
             row = panel * left + video * (W - left)
-            if not self.home and H * 0.45 < y < H * 0.55:
+            if not (self.home or self.down) and H * 0.45 < y < H * 0.55:
                 # Centred caption, like the real test signal's channel name.
                 row = row[:cap_x0 * 3] + white * (cap_x1 - cap_x0) + row[cap_x1 * 3:]
             rows.append(row)
@@ -119,6 +135,7 @@ class E2ESelfTest(unittest.TestCase):
                 with patch.object(e2e.time, "sleep"), \
                      patch.object(e2e, "FIRST_PICTURE_TIMEOUT", 0), \
                      patch.object(e2e, "SWITCH_TIMEOUT", 0), \
+                     patch.object(e2e, "RESTART_TIMEOUT", 3000), \
                      patch.object(e2e.time, "monotonic", side_effect=_fast_clock()), \
                      patch("builtins.print"):
                     guest = e2e.Guest(sock, os.path.join(tmp, "shots"), "sim")
@@ -144,6 +161,11 @@ class E2ESelfTest(unittest.TestCase):
     def test_missing_number_entry_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="no-number-entry")))
         self.assertFalse(steps["number-6-switches"])
+
+    def test_restart_to_wrong_channel_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="restart-loses-channel")))
+        self.assertTrue(steps["number-6-switches"])
+        self.assertFalse(steps["crash-restart-resumes-06"])
 
     def test_preview_png_is_valid(self):
         with tempfile.TemporaryDirectory() as tmp:
