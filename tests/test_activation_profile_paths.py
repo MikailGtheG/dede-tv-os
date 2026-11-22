@@ -40,6 +40,35 @@ class ActivationPathTests(TestCase):
             with patch.object(activation, "PENDING", pending):
                 self.assertFalse(activation.first_boot_pending())
 
+    def test_first_boot_marker_requires_exact_bytes(self):
+        # A valid prefix is insufficient: reject truncation, CRLF and padding.
+        invalid = (
+            b"skin.dede-tv",
+            b"skin.dede-tv\\r\\n",
+            b"skin.dede-tv\\n\\n",
+            b"skin.dede-tv\\n ",
+            b" skin.dede-tv\\n",
+            b"skin.dede-tv\\x00\\n",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            pending = Path(directory) / ".dede-skin-first-boot-pending"
+            with patch.object(activation, "PENDING", pending):
+                for payload in invalid:
+                    with self.subTest(payload=payload):
+                        pending.write_bytes(payload)
+                        self.assertFalse(activation.first_boot_pending())
+
+    def test_symlinked_first_boot_marker_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            actual = root / "actual-marker"
+            actual.write_bytes(b"skin.dede-tv\\n")
+            pending = root / ".dede-skin-first-boot-pending"
+            pending.symlink_to(actual)
+            with patch.object(activation, "PENDING", pending):
+                self.assertFalse(activation.first_boot_pending())
+            self.assertEqual(actual.read_bytes(), b"skin.dede-tv\\n")
+
     def test_invalid_marker_encoding_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             pending = Path(directory) / ".dede-skin-first-boot-pending"
