@@ -48,6 +48,28 @@ class JsonRpcResponseTests(unittest.TestCase):
             )
         self.assertIn(b"Addons.SetAddonEnabled", connection.sent)
 
+    def test_notification_before_fragmented_reply_is_ignored(self):
+        class FakeSocket:
+            def __init__(self):
+                self.parts = iter([
+                    b'{"jsonrpc":"2.0","method":"GUI.OnScreensaverActivated","params":{}}\\n',
+                    b'{"jsonrpc":"2.0","id":24011,"res',
+                    b'ult":"OK"}\\n',
+                ])
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def settimeout(self, timeout):
+                pass
+            def sendall(self, data):
+                pass
+            def recv(self, count):
+                return next(self.parts, b"")
+
+        with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
+            self.assertEqual(module.rpc("Input.Back"), "OK")
+
     def test_malformed_missing_result_is_rejected(self):
         class FakeSocket:
             def __enter__(self):
