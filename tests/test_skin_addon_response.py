@@ -70,6 +70,46 @@ class JsonRpcResponseTests(unittest.TestCase):
         with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
             self.assertEqual(module.rpc("Input.Back"), "OK")
 
+    def test_unrelated_reply_id_is_not_accepted(self):
+        # A notification or reply for another request must never authorize
+        # a write operation such as dismissing the first-boot Kodi dialog.
+        class FakeSocket:
+            def __init__(self):
+                self.parts = iter([
+                    b'{"jsonrpc":"2.0","id":24012,"result":"OK"}\\n',
+                    b'{"jsonrpc":"2.0","id":24011,"result":"OK"}\\n',
+                ])
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def settimeout(self, timeout):
+                pass
+            def sendall(self, data):
+                pass
+            def recv(self, count):
+                return next(self.parts, b"")
+
+        with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
+            self.assertEqual(module.rpc("Input.Back"), "OK")
+
+    def test_jsonrpc_error_does_not_authorize_dialog_dismissal(self):
+        class FakeSocket:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def settimeout(self, timeout):
+                pass
+            def sendall(self, data):
+                pass
+            def recv(self, count):
+                return b'{"jsonrpc":"2.0","id":24011,"error":{"code":-32601,"message":"Method not found"}}'
+
+        with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
+            with self.assertRaisesRegex(RuntimeError, "error -32601"):
+                module.rpc("Input.Back")
+
     def test_malformed_missing_result_is_rejected(self):
         class FakeSocket:
             def __enter__(self):
