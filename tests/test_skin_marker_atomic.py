@@ -49,6 +49,27 @@ with tempfile.TemporaryDirectory() as directory:
     assert sorted(p.name for p in target.iterdir()) == [".dede-skin-activated"]
 
 
+# Recovery authorization is an exact, bounded token, never an arbitrary file.
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    module.PENDING = root / ".dede-skin-first-boot-pending"
+    module.PENDING.write_bytes(b"skin.dede-tv\n")
+    assert module.first_boot_pending()
+    module.PENDING.write_bytes(b"skin.dede-tv\nextra")
+    assert not module.first_boot_pending()
+    module.PENDING.write_bytes(b"skin.dede-tv")
+    assert not module.first_boot_pending()
+    module.PENDING.write_bytes(b"skin.dede-tv\r\n")
+    assert not module.first_boot_pending()
+    module.PENDING.write_bytes(b"x" * (1024 * 1024 + 1))
+    assert not module.first_boot_pending()
+    victim = root / "victim"
+    victim.write_bytes(b"skin.dede-tv\n")
+    module.PENDING.unlink()
+    module.PENDING.symlink_to(victim)
+    assert not module.first_boot_pending()
+    assert victim.read_bytes() == b"skin.dede-tv\n"
+
 # The activation gate must reject duplicate lookandfeel.skin settings, even
 # when one entry requests Dede TV. Kodi's nested setting layout is supported.
 with tempfile.TemporaryDirectory() as directory:
