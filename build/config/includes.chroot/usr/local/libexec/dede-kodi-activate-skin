@@ -136,6 +136,16 @@ def enable_first_boot_pvr():
         rpc("Addons.SetAddonEnabled", {
             "addonid": "pvr.iptvsimple", "enabled": True
         })
+        # Kodi can display the first-run IPTV enable dialog before the
+        # JSON-RPC helper starts. Dismiss it only after an actual disabled ->
+        # enabled transition; never send Back on subsequent boots or when an
+        # administrator already enabled the client.
+        verified = rpc("Addons.GetAddonDetails", {
+            "addonid": "pvr.iptvsimple", "properties": ["enabled"]
+        }).get("addon")
+        if not isinstance(verified, dict) or verified.get("enabled") is not True:
+            raise RuntimeError("IPTV Simple: enable did not persist")
+        rpc("Input.Back")
 
 
 def write_activation_marker():
