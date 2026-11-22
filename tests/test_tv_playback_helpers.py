@@ -159,12 +159,32 @@ class AutoplayChoiceTests(unittest.TestCase):
             self.assertEqual(autoplay.main(), 0)
         self.assertNotIn("Player.Open", calls)
 
+    def test_refuses_to_play_under_a_non_dede_skin(self):
+        def fake(method, params=None, timeout=5.0):
+            if method == "Player.GetActivePlayers":
+                return []
+            if method == "Settings.GetSettingValue":
+                return {"value": "skin.estuary"}
+            raise AssertionError(method)
+        with patch.object(autoplay, "rpc", side_effect=fake), \
+             patch.object(autoplay, "CHANNEL_WAIT_S", 0), \
+             patch.object(autoplay.time, "sleep"):
+            self.assertEqual(autoplay.main(), 1)
+
+    def test_unit_does_not_hard_require_the_activation_oneshot(self):
+        unit = (ROOT / "build/config/includes.chroot/etc/systemd/system/dede-tv-autoplay.service").read_text()
+        requires = [l for l in unit.splitlines() if l.startswith("Requires=")]
+        self.assertEqual(requires, ["Requires=dede-kodi.service"])
+        self.assertIn("Wants=dede-kodi-skin.service", unit)
+
     def test_starts_chosen_channel_and_requests_fullscreen(self):
         state = {"playing": False, "opened": None}
 
         def fake(method, params=None, timeout=5.0):
             if method == "Player.GetActivePlayers":
                 return [{"playerid": 1, "type": "video"}] if state["playing"] else []
+            if method == "Settings.GetSettingValue":
+                return {"value": "skin.dede-tv"}
             if method == "PVR.GetChannels":
                 return {"channels": [channel(11, 2), channel(10, 1)]}
             if method == "Player.Open":
@@ -183,6 +203,8 @@ class AutoplayChoiceTests(unittest.TestCase):
         def fake(method, params=None, timeout=5.0):
             if method == "Player.GetActivePlayers":
                 return []
+            if method == "Settings.GetSettingValue":
+                return {"value": "skin.dede-tv"}
             if method == "PVR.GetChannels":
                 return {"channels": []}
             raise AssertionError(method)

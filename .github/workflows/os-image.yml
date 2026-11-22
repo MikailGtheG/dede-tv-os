@@ -307,6 +307,7 @@ jobs:
               echo "DEDE_CI_TV: $unit $(systemctl show "$unit" -p ActiveState -p SubState -p Result -p NRestarts --value --no-pager | tr '\n' ' ')"
             done
             journalctl -b -u dede-tv-autoplay -o cat --no-pager | tail -20 | redact | sed 's/^/DEDE_CI_TV: autoplay| /'
+            journalctl -b -u dede-kodi-skin -o cat --no-pager | tail -20 | redact | sed 's/^/DEDE_CI_TV: skin| /'
             journalctl -b -u dede-kodi -o cat --no-pager | grep -E 'DEDE_IPTV|IPTV source' | tail -5 | redact | sed 's/^/DEDE_CI_TV: kiosk| /'
             ip -4 -o addr show | awk '{print "DEDE_CI_TV: addr " $2 " " $4}'
             ip -4 route show default | sed 's/^/DEDE_CI_TV: route /'

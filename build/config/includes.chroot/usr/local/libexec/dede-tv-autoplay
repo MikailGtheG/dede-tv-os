@@ -71,6 +71,11 @@ def choose(channels):
     return min(channels, key=lambda c: (number(c), c["channelid"]))
 
 
+def dede_skin_active():
+    result = rpc("Settings.GetSettingValue", {"setting": "lookandfeel.skin"})
+    return isinstance(result, dict) and result.get("value") == "skin.dede-tv"
+
+
 def playing():
     players = rpc("Player.GetActivePlayers")
     return isinstance(players, list) and any(
@@ -95,6 +100,10 @@ def main():
     if wait_for(playing, 3, step=1.0):
         print("DEDE_AUTOPLAY: playback already active")
         return 0
+    # Fail closed: never start TV underneath a stock Kodi interface.
+    if not wait_for(dede_skin_active, CHANNEL_WAIT_S):
+        print("DEDE_AUTOPLAY: Dede TV skin not active, refusing to start TV", file=sys.stderr)
+        return 1
     channels = wait_for(tv_channels, CHANNEL_WAIT_S)
     if not channels:
         # No IPTV source configured or reachable: stay on the TV home screen.
