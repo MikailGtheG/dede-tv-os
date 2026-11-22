@@ -75,7 +75,7 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: 66440cce6f0bed65f94b6ed7d08814fad05cd2a1
+          DEDE_SKIN_SHA: 93860fbb1f4707f34a353ed7ce7cd65130470139
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail

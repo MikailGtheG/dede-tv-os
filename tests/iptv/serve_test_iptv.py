@@ -131,7 +131,16 @@ def make_handler(lineup: Lineup):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
-            self.wfile.write(body)
+            if not getattr(self, "head_only", False):
+                self.wfile.write(body)
+
+        def do_HEAD(self):
+            # IPTV Simple probes cached EPG/playlist files with HEAD.
+            self.head_only = True
+            try:
+                self.do_GET()
+            finally:
+                self.head_only = False
 
         def do_GET(self):
             path = self.path.split("?", 1)[0]

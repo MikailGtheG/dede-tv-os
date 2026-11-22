@@ -158,6 +158,48 @@ class JsonRpcResponseTests(unittest.TestCase):
                 module.rpc("Settings.SetSettingValue")
 
 
+class KodiWriteResultSchemaTests(unittest.TestCase):
+    """Kodi 21 methods.json: SetAddonEnabled -> "OK", SetSettingValue -> true.
+
+    Expecting "OK" from Settings.SetSettingValue rejected every real reply,
+    kept the activation oneshot retrying for minutes and blocked the
+    services ordered after it (resume, autoplay)."""
+
+    def reply(self, method, raw_result):
+        class FakeSocket:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def settimeout(self, timeout):
+                pass
+            def sendall(self, data):
+                pass
+            sent = False
+
+            def recv(self, count):
+                if self.sent:
+                    return b""
+                self.sent = True
+                return ('{"jsonrpc":"2.0","id":24011,"result":' + raw_result + '}').encode()
+        with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
+            return module.rpc(method)
+
+    def test_schema_results_accepted(self):
+        self.assertIs(self.reply("Settings.SetSettingValue", "true"), True)
+        self.assertEqual(self.reply("Addons.SetAddonEnabled", '"OK"'), "OK")
+
+    def test_wrong_or_failed_write_results_rejected(self):
+        for method, raw in (("Settings.SetSettingValue", "false"),
+                            ("Settings.SetSettingValue", '"OK"'),
+                            ("Settings.SetSettingValue", "1"),
+                            ("Addons.SetAddonEnabled", "true"),
+                            ("Addons.SetAddonEnabled", '"ok"')):
+            with self.subTest(method=method, result=raw):
+                with self.assertRaisesRegex(RuntimeError, "malformed result"):
+                    self.reply(method, raw)
+
+
 class FirstBootRecoveryTests(unittest.TestCase):
     def test_pending_marker_requires_exact_provisioning_value(self):
         import tempfile
@@ -183,7 +225,7 @@ class FirstBootRecoveryTests(unittest.TestCase):
                  patch.object(module, "rpc", side_effect=[
                      {"addon": {"enabled": True}},  # IPTV bootstrap
                      {"addon": {"enabled": True}},  # Dede skin
-                     "OK",
+                     True,  # Settings.SetSettingValue (Kodi 21: boolean)
                      {"value": "skin.dede-tv"},
                  ]) as rpc:
                 self.assertEqual(module.run(), 0)
