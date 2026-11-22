@@ -215,6 +215,11 @@ jobs:
       - name: Regression - Kodi skin addon identity
         shell: bash
         run: sh tests/test_skin_addon_identity.sh
+      - name: Regression - no Kodi add-on enable prompt (addon manifest)
+        shell: bash
+        run: |
+          sh -n build/config/hooks/live/0510-dede-kodi-addon-manifest.hook.chroot
+          sh tests/test_kodi_addon_manifest.sh
       - name: Test bounded Kodi JSON-RPC socket send
         run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
       - name: Regression - atomic private Kodi activation marker
