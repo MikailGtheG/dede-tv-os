@@ -1,0 +1,190 @@
+#!/usr/bin/python3
+"""Dede TV playback guard: remote-control state C (playback error).
+
+Keeps live TV running without ever showing Kodi's technical error UI:
+  * remembers the channel the viewer (or autoplay) requested, taken from
+    Kodi's Player.OnPlay notification, which Kodi sends even for channels
+    whose stream then fails to open;
+  * closes Kodi's modal "Playback failed" OK dialog (only while that exact
+    dialog window is active) so the remote is never blocked; the skin shows
+    an understandable message instead;
+  * retries the requested channel with bounded backoff while it is down,
+    and restarts it when the picture freezes (time stops advancing);
+  * never fights the viewer: no retries while the channel list is open,
+    and a newly chosen channel replaces the old target immediately.
+
+Talks only to Kodi's loopback JSON-RPC port. Logs never contain URLs.
+"""
+import os
+import select
+import sys
+import time
+
+sys.path.insert(0, os.environ.get("DEDE_TV_LIB", "/usr/local/lib/dede-tv"))
+from dede_kodi_rpc import Notifications, RpcError, rpc  # noqa: E402
+
+WINDOW_HOME = 10000
+WINDOW_OK_DIALOG = 12002
+WINDOW_FULLSCREEN = 12005
+WINDOW_CHANNEL_LIST = 10608
+BACKOFF_S = (5, 10, 20, 40, 60)
+STALL_S = 30
+TICK_S = 2.0
+
+
+def log(message):
+    print(f"DEDE_GUARD: {message}", flush=True)
+
+
+class Guard:
+    def __init__(self, call=None, clock=time.monotonic):
+        self.call = call or rpc
+        self.clock = clock
+        self.target = None
+        self.failing = False
+        self.attempts = 0
+        self.next_retry = 0.0
+        self.last_time = None
+        self.last_progress = 0.0
+        self.caching_since = None
+
+    # -- notifications -------------------------------------------------
+    def on_notification(self, document):
+        if document.get("method") != "Player.OnPlay":
+            return
+        item = ((document.get("params") or {}).get("data") or {}).get("item") or {}
+        if item.get("type") != "channel" or type(item.get("id")) is not int:
+            # Not live TV (e.g. a local virtual channel): not ours to retry.
+            if item:
+                self.target = None
+                self.failing = False
+            return
+        if item["id"] != self.target:
+            # A new request by the viewer: forget the old channel's failures.
+            self.target = item["id"]
+            self.failing = False
+            self.attempts = 0
+            self.last_time = None
+
+    # -- periodic check ------------------------------------------------
+    def window(self):
+        props = self.call("GUI.GetProperties", {"properties": ["currentwindow"]})
+        current = (props or {}).get("currentwindow") or {}
+        return current.get("id")
+
+    def video_player(self):
+        players = self.call("Player.GetActivePlayers")
+        for player in players if isinstance(players, list) else []:
+            if isinstance(player, dict) and player.get("type") == "video" \
+                    and type(player.get("playerid")) is int:
+                return player["playerid"]
+        return None
+
+    def position_ms(self, playerid):
+        props = self.call("Player.GetProperties",
+                          {"playerid": playerid, "properties": ["time"]})
+        t = (props or {}).get("time") or {}
+        try:
+            return ((int(t.get("hours", 0)) * 60 + int(t.get("minutes", 0))) * 60
+                    + int(t.get("seconds", 0))) * 1000 + int(t.get("milliseconds", 0))
+        except (TypeError, ValueError):
+            return None
+
+    def caching(self):
+        result = self.call("XBMC.GetInfoBooleans", {"booleans": ["Player.Caching"]})
+        return isinstance(result, dict) and result.get("Player.Caching") is True
+
+    def stalled(self, now, position):
+        """Frozen picture: no progress, or buffering without end.
+
+        For live TV with EPG, Kodi's time may follow the programme clock
+        even when the stream hangs, so sustained buffering counts too."""
+        if self.caching():
+            if self.caching_since is None:
+                self.caching_since = now
+        else:
+            self.caching_since = None
+        if position is not None and position != self.last_time:
+            self.last_time = position
+            self.last_progress = now
+            return self.caching_since is not None and now - self.caching_since >= STALL_S
+        return (now - self.last_progress >= STALL_S or
+                (self.caching_since is not None and now - self.caching_since >= STALL_S))
+
+    def retry(self, now, reason):
+        self.attempts += 1
+        delay = BACKOFF_S[min(self.attempts, len(BACKOFF_S) - 1)]
+        self.next_retry = now + delay
+        log(f"{reason}: retry {self.attempts} of channel id {self.target}, next in {delay}s")
+        self.call("Player.Open", {"item": {"channelid": self.target}}, timeout=15)
+
+    def tick(self):
+        now = self.clock()
+        window = self.window()
+        if window == WINDOW_OK_DIALOG:
+            # Kodi's modal "Playback failed" dialog: technical and blocking.
+            log("closing Kodi error dialog")
+            self.call("Input.Back")
+            return
+        playerid = self.video_player()
+        if playerid is not None:
+            if window == WINDOW_HOME:
+                self.call("GUI.SetFullscreen", {"fullscreen": True})
+            if self.last_time is None:
+                self.last_progress = now
+            if not self.stalled(now, self.position_ms(playerid)):
+                if self.failing:
+                    log(f"channel id {self.target} recovered after {self.attempts} retries")
+                self.failing = False
+                self.attempts = 0
+            elif self.target is not None:
+                if not self.failing:
+                    self.failing = True
+                    self.next_retry = now
+                    log(f"picture frozen on channel id {self.target} (external stream stalled)")
+                if now >= self.next_retry:
+                    self.retry(now, "stalled")
+            return
+        self.last_time = None
+        self.caching_since = None
+        if self.target is None or window == WINDOW_CHANNEL_LIST:
+            return
+        if not self.failing:
+            self.failing = True
+            self.attempts = 0
+            self.next_retry = now + BACKOFF_S[0]
+            log(f"channel id {self.target} not playing (external stream unavailable)")
+        elif now >= self.next_retry:
+            self.retry(now, "unavailable")
+
+
+def run():
+    guard = Guard()
+    stream = None
+    next_tick = 0.0
+    while True:
+        try:
+            if stream is None:
+                stream = Notifications()
+                log("connected to Kodi")
+            readable, _, _ = select.select([stream], [], [], 0.5)
+            if readable:
+                for document in stream.read():
+                    guard.on_notification(document)
+            if time.monotonic() >= next_tick:
+                next_tick = time.monotonic() + TICK_S
+                guard.tick()
+        except (OSError, RpcError) as error:
+            # Kodi restarting: keep the target and reconnect.
+            if stream is not None:
+                stream.close()
+                stream = None
+                log(f"Kodi connection lost ({type(error).__name__}), reconnecting")
+            time.sleep(3)
+
+
+if __name__ == "__main__":
+    try:
+        run()
+    except KeyboardInterrupt:
+        pass

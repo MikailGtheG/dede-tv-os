@@ -12,6 +12,8 @@
     0-9           enter channel number
     Vol+ / Vol- / Mute
     Back, Left, Right, Menu, Info, Stop ... nothing (stays on TV)
+  Home (no picture: start-up or channel unavailable):
+    Up / Down / CH+ / CH-  move in the channel list, OK plays the channel
   State B, channel list (PVROSDChannels):
     Up / Down     move highlight            (CH+/CH- move it as well)
     OK            switch to channel and close the list
@@ -140,4 +142,24 @@
       <right>noop</right>
     </remote>
   </PVROSDChannels>
+
+  <Home>
+    <keyboard>
+      <pageup>Up</pageup>
+      <pagedown>Down</pagedown>
+      <left>noop</left>
+      <right>noop</right>
+      <escape>noop</escape>
+      <backspace>noop</backspace>
+    </keyboard>
+    <remote>
+      <pageplus>Up</pageplus>
+      <pageminus>Down</pageminus>
+      <channelplus>Up</channelplus>
+      <channelminus>Down</channelminus>
+      <left>noop</left>
+      <right>noop</right>
+      <back>noop</back>
+    </remote>
+  </Home>
 </keymap>

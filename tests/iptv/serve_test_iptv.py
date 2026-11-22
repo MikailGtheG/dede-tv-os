@@ -13,7 +13,8 @@ The media sequence is derived from wall-clock time, so a channel keeps
 wrap-arounds are marked with EXT-X-DISCONTINUITY.
 
 Fault channels: "http404" answers every request with 404; "stalled" serves
-a media playlist that never advances (frozen source).
+a media playlist that never advances (frozen source). While the file given
+with --pause-flag exists, every request fails with 503 (network outage).
 
 Test fixture only. Never installed into the appliance image.
 """
@@ -118,7 +119,7 @@ class Lineup:
         return "\n".join(out) + "\n"
 
 
-def make_handler(lineup: Lineup):
+def make_handler(lineup: Lineup, pause_flag=None):
     class Handler(BaseHTTPRequestHandler):
         server_version = "DedeTestIPTV/1"
 
@@ -143,6 +144,8 @@ def make_handler(lineup: Lineup):
                 self.head_only = False
 
         def do_GET(self):
+            if pause_flag is not None and pause_flag.exists():
+                return self.send_error(503)
             path = self.path.split("?", 1)[0]
             if path == "/dede-test.m3u":
                 return self.send_body(lineup.m3u().encode(), "audio/x-mpegurl")
@@ -171,10 +174,11 @@ def main(argv):
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8089)
     parser.add_argument("--base-url", help="URL clients use, e.g. http://10.0.2.2:8089 for a QEMU guest")
+    parser.add_argument("--pause-flag", type=Path, help="simulate an outage while this file exists")
     args = parser.parse_args(argv)
     base_url = args.base_url or f"http://{args.bind}:{args.port}"
     lineup = Lineup(args.media_root.resolve(), base_url)
-    server = ThreadingHTTPServer((args.bind, args.port), make_handler(lineup))
+    server = ThreadingHTTPServer((args.bind, args.port), make_handler(lineup, args.pause_flag))
     print(f"IPTV_TEST: serving {base_url}/dede-test.m3u", flush=True)
     server.serve_forever()
 

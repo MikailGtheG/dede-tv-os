@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent.parent
 LIBEXEC = ROOT / "build/config/includes.chroot/usr/local/libexec"
+os.environ["DEDE_TV_LIB"] = str(ROOT / "build/config/includes.chroot/usr/local/lib/dede-tv")
 
 
 def load(name):

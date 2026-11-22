@@ -23,7 +23,9 @@ jobs:
           sources = sorted(Path('tests').rglob('*.py'))
           sources += [Path('build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin'),
                       Path('build/config/includes.chroot/usr/local/libexec/dede-iptv-provision'),
-                      Path('build/config/includes.chroot/usr/local/libexec/dede-tv-autoplay')]
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-tv-autoplay'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-tv-guard'),
+                      Path('build/config/includes.chroot/usr/local/lib/dede-tv/dede_kodi_rpc.py')]
           for source in sources:
               ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
           print(f'Validated Python syntax in {len(sources)} files')
@@ -222,6 +224,7 @@ jobs:
           sh -n build/config/hooks/live/0520-dede-kodi-keymaps.hook.chroot
           sh -n build/config/hooks/live/0530-dede-tv-services.hook.chroot
           python3 -m unittest discover -s tests -p "test_tv_playback_helpers.py" -v
+          python3 -m unittest discover -s tests -p "test_tv_guard.py" -v
       - name: Regression - QEMU channel classifier and E2E driver self-test
         run: |
           python3 -m unittest discover -s tests -p "test_qemu_channel.py" -v
@@ -439,7 +442,7 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_SKIN_SHA: d8be90638d16cbde057d14dc2826b949b56f05f0' "$workflow"
+          grep -Fq 'DEDE_SKIN_SHA: 5b53aeab856573036f5b1545909aed48f1a619ef' "$workflow"
           grep -Fq 'DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27' "$workflow"
           grep -Fq 'git sparse-checkout set addons/skin.estuary' "$workflow"
           grep -Fq 'usr/share/kodi/addons/skin.dede-tv/addon.xml' "$workflow"

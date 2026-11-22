@@ -12,7 +12,9 @@ Drives the guest only through its virtual keyboard (QEMU monitor
   6. OK then Back closes the list without switching
   7. Digit 6 switches directly to channel 06
   8. After a Kodi crash (killed by the CI guest) channel 06 returns alone
-  9. No capture ever shows a stock Kodi dialog or splash
+  9. Dead channel 90: Dede no-picture screen, guard notices, OK plays 01
+ 10. Source outage (HTTP 503): picture interrupted, returns alone
+ 11. No capture shows a stock Kodi dialog or splash
 
 Usage: qemu_tv_e2e.py MONITOR_SOCKET OUTPUT_DIR LABEL
 Prints DEDE_E2E lines; exit status 0 only if every step passed.
@@ -33,7 +35,9 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 11
+TOTAL_STEPS = 16
+PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
+SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
 RESTART_TIMEOUT = int(os.environ.get("DEDE_E2E_RESTART_TIMEOUT", "240"))
 SWITCH_TIMEOUT = int(os.environ.get("DEDE_E2E_SWITCH_TIMEOUT", "60"))
 
@@ -114,6 +118,10 @@ def no_stock_kodi(ppm):
 def judge(ppm, expected, mode):
     result = channel_check.analyse(ppm)
     stock = no_stock_kodi(ppm)
+    if mode == "home":
+        return stock is None and result["home"], result, stock
+    if mode == "not":
+        return result["channel"] != expected, result, stock
     ok = stock is None and result["channel"] == expected
     panel = result["panel_distance_to_channel"]
     if ok and mode == "overlay":
@@ -180,8 +188,46 @@ def run(guest):
         return steps
     # The CI guest hard-kills Kodi once channel 06 plays (crash/power-loss
     # simulation). Kodi must restart and return to the last channel alone.
-    check("crash-restart-resumes-06", wait_restart(guest, "teskilat"))
+    if not check("crash-restart-resumes-06", wait_restart(guest, "teskilat")):
+        return steps
+    # State C: a dead channel (90 answers 404) must end on the Dede
+    # no-picture screen, never on a Kodi dialog, and the remote stays usable.
+    time.sleep(6)
+    guest.key("9", settle=0.3)
+    guest.key("0", settle=1)
+    check("dead-channel-shows-home", wait_for(guest, "dead-90", None, mode="home", timeout=90))
+    check("guard-detects-unavailable", serial_contains(
+        "DEDE_GUARD: channel id", "external stream unavailable", timeout=30))
+    guest.key("ret", settle=1)
+    check("home-list-plays-01", wait_for(guest, "home-ok-01", "trt1"))
+    # Network outage: the source answers 503 until the flag is removed.
+    time.sleep(6)
+    flag = Path(PAUSE_FLAG)
+    flag.touch()
+    outage = wait_for(guest, "outage", "trt1", mode="not", timeout=120)
+    time.sleep(10)
+    flag.unlink()
+    check("outage-detected", outage)
+    check("outage-recovers-01", wait_for(guest, "outage-recovered", "trt1", timeout=240))
     return steps
+
+
+def serial_contains(*needles, timeout=30):
+    """The guest's serial console (QEMU -serial) shows the guard's events."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            text = Path(SERIAL_LOG).read_bytes().decode("utf-8", "replace")
+            for line in text.splitlines():
+                if all(needle in line for needle in needles):
+                    print(f"DEDE_E2E: serial: {line.strip()[:200]}", flush=True)
+                    return True
+        except OSError:
+            pass
+        if time.monotonic() >= deadline:
+            print(f"DEDE_E2E: serial: missing {needles}", flush=True)
+            return False
+        time.sleep(2)
 
 
 def wait_restart(guest, expected, timeout=None):

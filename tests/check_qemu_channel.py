@@ -7,6 +7,7 @@ hue. The text is centred, so the outer screen regions show the pure colour.
   check_qemu_channel.py classify SHOT.ppm
   check_qemu_channel.py expect   SHOT.ppm CHANNEL_ID
   check_qemu_channel.py overlay  SHOT.ppm CHANNEL_ID
+  check_qemu_channel.py home     SHOT.ppm
 
 "expect" requires the right-hand video area to show CHANNEL_ID. "overlay"
 additionally requires the left-hand channel-list panel to cover the video
@@ -24,6 +25,12 @@ from check_qemu_tv_visual import read_ppm  # noqa: E402
 VIDEO_RECT = (0.80, 0.08, 0.95, 0.22)
 # Channel list panel area (left third, vertically central).
 PANEL_RECT = (0.06, 0.35, 0.30, 0.65)
+# Home ("no picture") screen: skin background colour, list panel on the left.
+HOME_BACKGROUND = (16, 17, 20)
+HOME_CORNER_RECT = (0.60, 0.82, 0.95, 0.95)
+# Empty strip between list panel and message text; a centred Kodi dialog
+# would always cover it.
+HOME_GAP_RECT = (0.455, 0.32, 0.515, 0.68)
 MAX_DISTANCE = 45.0
 MIN_MARGIN = 1.6
 
@@ -59,6 +66,11 @@ def distance(sample, reference):
     )
 
 
+def rgb_distance(a, b):
+    """Plain distance for skin-drawn (not video) pixels."""
+    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
 def classify_colour(sample):
     ranked = sorted((distance(sample, colour), channel)
                     for channel, colour in channel_colours().items())
@@ -75,7 +87,14 @@ def analyse(path):
     channel, video_distance = classify_colour(video)
     panel_distance = (distance(panel, channel_colours()[channel])
                       if channel else None)
+    corner = mean_colour(width, height, pixels, HOME_CORNER_RECT)
+    gap = mean_colour(width, height, pixels, HOME_GAP_RECT)
+    home = (channel is None
+            and rgb_distance(corner, HOME_BACKGROUND) < 12
+            and rgb_distance(gap, HOME_BACKGROUND) < 12
+            and rgb_distance(panel, HOME_BACKGROUND) > 8)
     return {
+        "home": home,
         "channel": channel,
         "video_rgb": [round(v) for v in video],
         "video_distance": round(video_distance, 1),
@@ -85,13 +104,15 @@ def analyse(path):
 
 
 def main(argv):
-    if len(argv) < 2 or argv[0] not in {"classify", "expect", "overlay"}:
+    if len(argv) < 2 or argv[0] not in {"classify", "expect", "overlay", "home"}:
         print(__doc__, file=sys.stderr)
         return 2
     result = analyse(Path(argv[1]))
     print("DEDE_E2E:", json.dumps(result, sort_keys=True))
     if argv[0] == "classify":
         return 0
+    if argv[0] == "home":
+        return 0 if result["home"] else 1
     expected = argv[2]
     if result["channel"] != expected:
         print(f"DEDE_E2E: expected channel {expected}, screen shows {result['channel']}", file=sys.stderr)

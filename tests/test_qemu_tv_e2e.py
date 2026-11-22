@@ -23,7 +23,7 @@ W, H = 640, 400
 class FakeTv:
     """Minimal model of the intended TV behaviour, optionally broken."""
 
-    def __init__(self, broken=None):
+    def __init__(self, broken=None, serial=None, pause_flag=None):
         self.colours = e2e.channel_check.channel_colours()
         self.index = 0
         self.list_open = False
@@ -33,10 +33,16 @@ class FakeTv:
         self.frames = 0
         self.crash_at = None
         self.down = False
+        self.entry = ""
+        self.serial = serial
+        self.pause_flag = pause_flag
+        self.outage = False
+        self.recover_at = None
 
     def tick(self):
-        """Called per screendump: simulate the CI guest's crash trigger."""
-        if self.crash_at is None and ORDER[self.index] == "teskilat" and not self.list_open:
+        """Called per screendump: CI guest crash trigger and source outage."""
+        if self.crash_at is None and ORDER[self.index] == "teskilat" and not self.list_open \
+                and not self.home:
             self.crash_at = self.frames + 2
         if self.crash_at is not None and self.frames == self.crash_at:
             self.down = True
@@ -44,6 +50,13 @@ class FakeTv:
             self.down = False
             if self.broken == "restart-loses-channel":
                 self.index = 0
+        if self.pause_flag and os.path.exists(self.pause_flag):
+            self.outage, self.recover_at = True, None
+        elif self.outage and self.broken != "no-recovery":
+            if self.recover_at is None:
+                self.recover_at = self.frames + 2
+            if self.frames >= self.recover_at:
+                self.outage = False
         self.frames += 1
 
     def key(self, name):
@@ -55,6 +68,10 @@ class FakeTv:
             elif name == "esc":
                 self.list_open = False
             return
+        if self.home:
+            if name == "ret" and self.broken != "home-list-empty":
+                self.home, self.index = False, 0
+            return
         if name == "pgup":
             self.index = min(self.index + 1, len(ORDER) - 1)
         elif name == "pgdn":
@@ -64,30 +81,40 @@ class FakeTv:
         elif name == "esc" and self.broken == "back-leaves-tv":
             self.home = True
         elif name.isdigit() and self.broken != "no-number-entry":
-            # Channel numbers: 1-4 then 6 (5 is the virtual channel).
-            numbers = [1, 2, 3, 4, 6]
-            if int(name) in numbers:
-                self.index = numbers.index(int(name))
+            self.entry += name
+            numbers = {"1": 0, "2": 1, "3": 2, "4": 3, "6": 4}
+            if self.entry in numbers:
+                self.index, self.entry = numbers[self.entry], ""
+            elif self.entry == "90":
+                self.entry, self.home = "", True
+                if self.serial:
+                    with open(self.serial, "a") as log:
+                        log.write("DEDE_GUARD: channel id 7 not playing (external stream unavailable)\n")
 
     def frame(self):
         self.tick()
-        video = bytes((20, 22, 26) if (self.home or self.down) else self.colours[ORDER[self.index]])
+        bg = bytes((16, 17, 20))
         panel = bytes((30, 31, 34))
         white = bytes((240, 240, 240))
+        on_home = self.home or self.down or self.outage
+        video = bg if on_home else bytes(self.colours[ORDER[self.index]])
         panel_w = int(W * 0.43)
         cap_x0, cap_x1 = int(W * 0.55), int(W * 0.75)
         rows = []
         for y in range(H):
             in_band = H * 0.03 < y < H * 0.97
-            full_panel = self.list_open and self.broken == "list-fullscreen"
-            if full_panel:
+            if self.list_open and self.broken == "list-fullscreen":
                 rows.append(panel * W)
                 continue
-            left = panel_w if (self.list_open and in_band) else 0
+            show_panel = (self.list_open or (self.home or self.outage)) and in_band
+            left = panel_w if show_panel else 0
             row = panel * left + video * (W - left)
-            if not (self.home or self.down) and H * 0.45 < y < H * 0.55:
-                # Centred caption, like the real test signal's channel name.
+            if not self.down and H * 0.45 < y < H * 0.55:
+                # Centred caption (channel name) or the home screen message.
                 row = row[:cap_x0 * 3] + white * (cap_x1 - cap_x0) + row[cap_x1 * 3:]
+            if self.home and self.broken == "dialog-on-dead" and H * 0.31 < y < H * 0.69:
+                x0, x1 = int(W * 0.26), int(W * 0.74)
+                row = row[:x0 * 3] + bytes((32, 35, 40)) * (x1 - x0) + row[x1 * 3:]
             rows.append(row)
         return f"P6\n{W} {H}\n255\n".encode() + b"".join(rows)
 
@@ -126,6 +153,9 @@ class E2ESelfTest(unittest.TestCase):
     def run_against(self, tv):
         with tempfile.TemporaryDirectory() as tmp:
             sock = os.path.join(tmp, "mon.sock")
+            tv.serial = os.path.join(tmp, "serial.log")
+            tv.pause_flag = os.path.join(tmp, "outage")
+            Path(tv.serial).write_text("")
             stop = threading.Event()
             ready = threading.Event()
             thread = threading.Thread(target=serve, args=(sock, tv, stop, ready), daemon=True)
@@ -136,6 +166,8 @@ class E2ESelfTest(unittest.TestCase):
                      patch.object(e2e, "FIRST_PICTURE_TIMEOUT", 0), \
                      patch.object(e2e, "SWITCH_TIMEOUT", 0), \
                      patch.object(e2e, "RESTART_TIMEOUT", 3000), \
+                     patch.object(e2e, "SERIAL_LOG", tv.serial), \
+                     patch.object(e2e, "PAUSE_FLAG", tv.pause_flag), \
                      patch.object(e2e.time, "monotonic", side_effect=_fast_clock()), \
                      patch("builtins.print"):
                     guest = e2e.Guest(sock, os.path.join(tmp, "shots"), "sim")
@@ -166,6 +198,20 @@ class E2ESelfTest(unittest.TestCase):
         steps = dict(self.run_against(FakeTv(broken="restart-loses-channel")))
         self.assertTrue(steps["number-6-switches"])
         self.assertFalse(steps["crash-restart-resumes-06"])
+
+    def test_kodi_dialog_on_dead_channel_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="dialog-on-dead")))
+        self.assertTrue(steps["crash-restart-resumes-06"])
+        self.assertFalse(steps["dead-channel-shows-home"])
+
+    def test_empty_home_list_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="home-list-empty")))
+        self.assertFalse(steps["home-list-plays-01"])
+
+    def test_missing_outage_recovery_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="no-recovery")))
+        self.assertTrue(steps["outage-detected"])
+        self.assertFalse(steps["outage-recovers-01"])
 
     def test_preview_png_is_valid(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -5,7 +5,10 @@ mkdir -p /etc/systemd/system/multi-user.target.wants \
   /etc/systemd/system/dede-kodi.service.wants \
   /etc/systemd/system/network-online.target.wants \
   /etc/systemd/system/sockets.target.wants
-chmod 0755 /usr/local/libexec/dede-iptv-provision /usr/local/libexec/dede-tv-autoplay
+chmod 0755 /usr/local/libexec/dede-iptv-provision /usr/local/libexec/dede-tv-autoplay \
+  /usr/local/libexec/dede-tv-guard
+chmod 0755 /usr/local/lib/dede-tv
+chmod 0644 /usr/local/lib/dede-tv/dede_kodi_rpc.py
 # The IPTV source may carry subscriber credentials: readable by the TV user only.
 install -d -m 0750 -o root -g dede /etc/dede-tv
 if [ -f /etc/dede-tv/iptv.conf ]; then
@@ -26,3 +29,8 @@ ln -sfn ../dede-tv-autoplay.service \
   /etc/systemd/system/multi-user.target.wants/dede-tv-autoplay.service
 ln -sfn ../dede-tv-autoplay.service \
   /etc/systemd/system/dede-kodi.service.wants/dede-tv-autoplay.service
+# Playback guard (stream errors, retries) runs alongside every Kodi start.
+ln -sfn ../dede-tv-guard.service \
+  /etc/systemd/system/multi-user.target.wants/dede-tv-guard.service
+ln -sfn ../dede-tv-guard.service \
+  /etc/systemd/system/dede-kodi.service.wants/dede-tv-guard.service

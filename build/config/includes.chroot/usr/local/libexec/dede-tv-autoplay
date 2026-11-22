@@ -8,69 +8,16 @@ resumed by dede-tv-resume, or the user switched meanwhile).
 
 Talks only to Kodi's loopback JSON-RPC port.
 """
-import json
 import os
-import socket
 import sys
 import time
 from datetime import datetime
 
-HOST, PORT = "127.0.0.1", 9090
+sys.path.insert(0, os.environ.get("DEDE_TV_LIB", "/usr/local/lib/dede-tv"))
+from dede_kodi_rpc import RpcError, rpc  # noqa: E402
+
 CHANNEL_WAIT_S = int(os.environ.get("DEDE_AUTOPLAY_CHANNEL_WAIT", "240"))
 START_WAIT_S = int(os.environ.get("DEDE_AUTOPLAY_START_WAIT", "60"))
-MAX_REPLY = 4 * 1024 * 1024
-_request_id = 31000
-
-
-class RpcError(RuntimeError):
-    pass
-
-
-def rpc(method, params=None, timeout=5.0):
-    global _request_id
-    _request_id += 1
-    request_id = _request_id
-    request = {"jsonrpc": "2.0", "id": request_id, "method": method}
-    if params is not None:
-        request["params"] = params
-    deadline = time.monotonic() + timeout
-    with socket.create_connection((HOST, PORT), timeout=timeout) as connection:
-        connection.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
-        buffer = b""
-        decoder = json.JSONDecoder()
-        while len(buffer) <= MAX_REPLY:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            connection.settimeout(remaining)
-            part = connection.recv(65536)
-            if not part:
-                break
-            buffer += part
-            try:
-                text = buffer.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-            position = 0
-            while True:
-                while position < len(text) and text[position].isspace():
-                    position += 1
-                if position >= len(text):
-                    break
-                try:
-                    document, position = decoder.raw_decode(text, position)
-                except json.JSONDecodeError:
-                    break
-                # Kodi interleaves notifications (no matching id) on this socket.
-                if isinstance(document, dict) and type(document.get("id")) is int \
-                        and document["id"] == request_id:
-                    if "error" in document:
-                        code = document["error"].get("code") if isinstance(document["error"], dict) else None
-                        raise RpcError(f"{method}: error {code}")
-                    if "result" not in document:
-                        raise RpcError(f"{method}: missing result")
-                    return document["result"]
-    raise RpcError(f"{method}: no bounded reply")
 
 
 def tv_channels():

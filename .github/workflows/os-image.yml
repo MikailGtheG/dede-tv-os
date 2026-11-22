@@ -21,7 +21,7 @@ jobs:
     # Privileged build chroots are ONLY allowed from owner-controlled branch.
     # Never run this job with pull_request or pull_request_target events.
     runs-on: ubuntu-24.04
-    timeout-minutes: 70
+    timeout-minutes: 100
     container:
       image: debian:trixie
       options: --privileged
@@ -75,7 +75,7 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: d8be90638d16cbde057d14dc2826b949b56f05f0
+          DEDE_SKIN_SHA: 5b53aeab856573036f5b1545909aed48f1a619ef
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
@@ -447,7 +447,7 @@ jobs:
           # runner (QEMU user networking exposes the host as 10.0.2.2).
           # Production images ship without any playlist.
           mkdir -p config/includes.chroot/etc/dede-tv
-          printf 'M3U_URL=http://10.0.2.2:8089/dede-test.m3u\n' \
+          printf 'M3U_URL=http://10.0.2.2:8089/dede-test-faults.m3u\n' \
             > config/includes.chroot/etc/dede-tv/iptv.conf
           sh build-image.sh
           test -s live-image-amd64.hybrid.iso
@@ -491,6 +491,7 @@ jobs:
             /tmp/dede-iptv-media --size 640x360
           python3 "$GITHUB_WORKSPACE/tests/iptv/serve_test_iptv.py" /tmp/dede-iptv-media \
             --bind 127.0.0.1 --port 8089 --base-url http://10.0.2.2:8089 \
+            --pause-flag /tmp/dede-iptv-outage \
             > boot-logs/iptv-test-server.log 2>&1 &
           iptv_server=$!
           trap 'kill "$iptv_server" 2>/dev/null || true' EXIT
@@ -550,7 +551,7 @@ jobs:
             # logged ActiveAE::InitSink errors. Provide emulated Intel HDA with
             # a silent host backend (no host sound server required).
             set +e
-            timeout --signal=TERM --kill-after=5s 600s \
+            timeout --signal=TERM --kill-after=5s 1200s \
               qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
               -display none -vga std \
               -audiodev none,id=ci_audio \
@@ -657,6 +658,9 @@ jobs:
             capture_status=$?
             # P0 acceptance: live TV, remote keys and channel list, judged
             # from real screen captures (tests/qemu_tv_e2e.py).
+            rm -f /tmp/dede-iptv-outage
+            DEDE_E2E_PAUSE_FLAG=/tmp/dede-iptv-outage \
+            DEDE_E2E_SERIAL_LOG="$PWD/boot-logs/$mode.log" \
             python3 "$GITHUB_WORKSPACE/tests/qemu_tv_e2e.py" "$monitor" \
               "$PWD/boot-logs/e2e" "$mode" | tee "boot-logs/$mode-e2e.log"
             e2e_status=${PIPESTATUS[0]}
@@ -904,6 +908,11 @@ jobs:
           for embedded in \
             usr/local/libexec/dede-tv-autoplay \
             usr/local/libexec/dede-iptv-provision \
+            usr/local/libexec/dede-tv-guard \
+            usr/local/lib/dede-tv/dede_kodi_rpc.py \
+            etc/systemd/system/dede-tv-guard.service \
+            etc/systemd/system/multi-user.target.wants/dede-tv-guard.service \
+            etc/systemd/system/dede-kodi.service.wants/dede-tv-guard.service \
             etc/systemd/system/dede-tv-autoplay.service \
             etc/systemd/system/multi-user.target.wants/dede-tv-autoplay.service \
             etc/systemd/system/dede-kodi.service.wants/dede-tv-autoplay.service \
