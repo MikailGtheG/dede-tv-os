@@ -108,14 +108,25 @@ class FirstBootRecoveryTests(unittest.TestCase):
 class FirstBootPvrTests(unittest.TestCase):
     def test_disabled_iptv_addon_enabled_without_playlist_or_credentials(self):
         with patch.object(module, "rpc", side_effect=[
-            {"addon": {"enabled": False}}, "OK"
+            {"addon": {"enabled": False}}, "OK",
+            {"addon": {"enabled": True}}, "OK",
         ]) as rpc:
             module.enable_first_boot_pvr()
         self.assertEqual([call.args[0] for call in rpc.call_args_list],
-                         ["Addons.GetAddonDetails", "Addons.SetAddonEnabled"])
+                         ["Addons.GetAddonDetails", "Addons.SetAddonEnabled",
+                          "Addons.GetAddonDetails", "Input.Back"])
         self.assertEqual(
             rpc.call_args_list[1].args[1],
             {"addonid": "pvr.iptvsimple", "enabled": True})
+
+    def test_unconfirmed_iptv_enable_never_dismisses_dialog(self):
+        with patch.object(module, "rpc", side_effect=[
+            {"addon": {"enabled": False}}, "OK",
+            {"addon": {"enabled": False}},
+        ]) as rpc:
+            with self.assertRaisesRegex(RuntimeError, "enable did not persist"):
+                module.enable_first_boot_pvr()
+        self.assertNotIn("Input.Back", [call.args[0] for call in rpc.call_args_list])
 
     def test_existing_enabled_iptv_addon_is_not_changed(self):
         with patch.object(module, "rpc", return_value={
