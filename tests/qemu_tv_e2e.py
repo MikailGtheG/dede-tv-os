@@ -124,7 +124,7 @@ def judge(ppm, expected, mode):
         return stock is None and result["home"], result, stock
     if mode == "not":
         # A stock Kodi dialog is not a valid Dede TV outage state.
-        return stock is None and result["channel"] != expected, result, stock
+        # An outage must remove the expected picture, not silently switch to\n        # another valid TV channel (which would mask a playback regression).\n        return stock is None and result["channel"] is None, result, stock
     ok = stock is None and result["channel"] == expected
     panel = result["panel_distance_to_channel"]
     if ok and mode == "overlay":
