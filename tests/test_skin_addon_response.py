@@ -52,9 +52,9 @@ class JsonRpcResponseTests(unittest.TestCase):
         class FakeSocket:
             def __init__(self):
                 self.parts = iter([
-                    b'{"jsonrpc":"2.0","method":"GUI.OnScreensaverActivated","params":{}}\\n',
+                    b'{"jsonrpc":"2.0","method":"GUI.OnScreensaverActivated","params":{}}\n',
                     b'{"jsonrpc":"2.0","id":24011,"res',
-                    b'ult":"OK"}\\n',
+                    b'ult":"OK"}\n',
                 ])
             def __enter__(self):
                 return self
