@@ -16,12 +16,11 @@ Keeps live TV running without ever showing Kodi's technical error UI:
 Talks only to Kodi's loopback JSON-RPC port. Logs never contain URLs.
 """
 import os
-import select
 import sys
 import time
 
 sys.path.insert(0, os.environ.get("DEDE_TV_LIB", "/usr/local/lib/dede-tv"))
-from dede_kodi_rpc import Notifications, RpcError, rpc  # noqa: E402
+from dede_kodi_rpc import Connection, RpcError, rpc  # noqa: E402
 
 WINDOW_HOME = 10000
 WINDOW_OK_DIALOG = 12002
@@ -160,25 +159,24 @@ class Guard:
 
 def run():
     guard = Guard()
-    stream = None
+    connection = None
     next_tick = 0.0
     while True:
         try:
-            if stream is None:
-                stream = Notifications()
+            if connection is None:
+                connection = Connection()
+                guard.call = connection.call
                 log("connected to Kodi")
-            readable, _, _ = select.select([stream], [], [], 0.5)
-            if readable:
-                for document in stream.read():
-                    guard.on_notification(document)
+            for document in connection.notifications(wait=0.5):
+                guard.on_notification(document)
             if time.monotonic() >= next_tick:
                 next_tick = time.monotonic() + TICK_S
                 guard.tick()
         except (OSError, RpcError) as error:
-            # Kodi restarting: keep the target and reconnect.
-            if stream is not None:
-                stream.close()
-                stream = None
+            # Kodi restarting or not answering: keep the target, reconnect.
+            if connection is not None:
+                connection.close()
+                connection = None
                 log(f"Kodi connection lost ({type(error).__name__}), reconnecting")
             time.sleep(3)
 

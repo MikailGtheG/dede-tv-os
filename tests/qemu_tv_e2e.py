@@ -257,8 +257,11 @@ def wait_restart(guest, expected, timeout=None):
         os.unlink(ppm)
         guest.shots -= 1
         time.sleep(3)
+    ppm = guest.capture("restart-final")
     print(f"DEDE_E2E: {guest.label}: FAIL restart expected={expected} "
-          f"interrupted={interrupted} after={timeout}s", flush=True)
+          f"interrupted={interrupted} after={timeout}s "
+          f"result={json.dumps(channel_check.analyse(ppm), sort_keys=True)}", flush=True)
+    log_preview(guest, ppm, "restart-final")
     return False
 
 

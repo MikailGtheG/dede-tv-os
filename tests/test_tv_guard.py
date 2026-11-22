@@ -185,22 +185,45 @@ class GuardTests(unittest.TestCase):
         self.assertIsNone(self.guard.target)
 
 
-class NotificationStreamTests(unittest.TestCase):
-    def test_fragmented_notifications_and_replies(self):
-        a, b = socket.socketpair()
-        stream = dede_kodi_rpc.Notifications.__new__(dede_kodi_rpc.Notifications)
-        stream.sock, stream.buffer = a, b""
-        a.setblocking(False)
-        b.sendall(b'{"jsonrpc":"2.0","method":"Player.OnPlay","params":{"data":{"item":{"type":"channel","id":5}}}}'
-                  b'{"jsonrpc":"2.0","id":7,"result":"OK"}{"jsonrpc":"2.0","meth')
-        docs = stream.read()
-        self.assertEqual([d["method"] for d in docs], ["Player.OnPlay"])
-        b.sendall(b'od":"Player.OnStop","params":{}}')
-        self.assertEqual([d["method"] for d in stream.read()], ["Player.OnStop"])
-        b.close()
+class PersistentConnectionTests(unittest.TestCase):
+    def pair(self):
+        kodi, client = socket.socketpair()
+        return kodi, dede_kodi_rpc.Connection(sock=client)
+
+    def test_replies_matched_and_notifications_queued_on_one_socket(self):
+        kodi, connection = self.pair()
+        # Kodi sends a notification, a stale reply and a fragment first.
+        kodi.sendall(b'{"jsonrpc":"2.0","method":"Player.OnPlay","params":{"data":{"item":{"type":"channel","id":5}}}}'
+                     b'{"jsonrpc":"2.0","id":1,"result":"stale"}'
+                     b'{"jsonrpc":"2.0","id":50001,"res')
+        kodi.sendall(b'ult":{"currentwindow":{"id":12005}}}')
+        result = connection.call("GUI.GetProperties", {"properties": ["currentwindow"]})
+        self.assertEqual(result, {"currentwindow": {"id": 12005}})
+        request = kodi.recv(4096)
+        self.assertIn(b'"id":50001', request)
+        self.assertEqual([d["method"] for d in connection.notifications()], ["Player.OnPlay"])
+        kodi.sendall(b'{"jsonrpc":"2.0","method":"Player.OnStop","params":{}}')
+        self.assertEqual([d["method"] for d in connection.notifications(wait=1)], ["Player.OnStop"])
+        kodi.close()
+        connection.close()
+
+    def test_error_reply_and_timeout(self):
+        kodi, connection = self.pair()
+        kodi.sendall(b'{"jsonrpc":"2.0","id":50001,"error":{"code":-32601}}')
+        with self.assertRaisesRegex(dede_kodi_rpc.RpcError, "-32601"):
+            connection.call("Nope")
+        with self.assertRaisesRegex(dede_kodi_rpc.RpcError, "no bounded reply"):
+            connection.call("Slow", timeout=0.2)
+        kodi.close()
         with self.assertRaises(ConnectionError):
-            stream.read()
-        a.close()
+            connection.notifications(wait=1)
+        connection.close()
+
+    def test_guard_uses_a_single_connection(self):
+        source = (ROOT / "build/config/includes.chroot/usr/local/libexec/dede-tv-guard").read_text()
+        run = source[source.index("def run():"):]
+        self.assertIn("guard.call = connection.call", run)
+        self.assertNotIn("rpc(", run)
 
 
 if __name__ == "__main__":

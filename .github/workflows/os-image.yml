@@ -498,6 +498,8 @@ jobs:
           UNIT
           ln -sfn ../dede-ci-crash-kodi.service \
             config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-crash-kodi.service
+          # CI-only debugger: Kodi's crash log then contains a stack trace.
+          printf 'gdb\n' > config/package-lists/dede-ci-debug.list.chroot
           # CI-only IPTV source: the local live test signal served on the
           # runner (QEMU user networking exposes the host as 10.0.2.2).
           # Production images ship without any playlist.

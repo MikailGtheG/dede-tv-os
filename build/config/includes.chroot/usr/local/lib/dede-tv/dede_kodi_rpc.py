@@ -5,6 +5,7 @@ but 127.0.0.1. Kodi interleaves notifications (no "id") with replies on
 the same socket; replies are matched strictly by integer id.
 """
 import json
+import select
 import socket
 import time
 
@@ -68,40 +69,86 @@ def rpc(method, params=None, timeout=5.0):
     raise RpcError(f"{method}: no bounded reply")
 
 
-class Notifications:
-    """Persistent connection receiving Kodi notifications (e.g. Player.OnPlay)."""
+class Connection:
+    """One persistent connection for requests *and* notifications.
 
-    def __init__(self, timeout=5.0):
-        self.sock = socket.create_connection((HOST, PORT), timeout=timeout)
+    Kodi 21 crashed in QEMU right after "JSONRPC Server: Disconnection
+    detected" while a helper opened several short-lived connections every
+    two seconds. Long-running helpers therefore keep a single socket open
+    and multiplex: replies are matched by id, notifications are queued.
+    """
+
+    def __init__(self, timeout=5.0, sock=None):
+        self.sock = sock or socket.create_connection((HOST, PORT), timeout=timeout)
         self.sock.setblocking(False)
         self.buffer = b""
+        self.pending = []
+        self.replies = {}
+        self.next_id = 50000
 
     def fileno(self):
         return self.sock.fileno()
 
-    def read(self):
-        """Return complete notification dicts received so far; raise on EOF."""
+    def _receive(self, wait):
+        readable, _, _ = select.select([self.sock], [], [], max(0.0, wait))
+        if not readable:
+            return
         try:
             part = self.sock.recv(65536)
         except BlockingIOError:
-            return []
+            return
         if not part:
-            raise ConnectionError("Kodi closed the notification connection")
+            raise ConnectionError("Kodi closed the JSON-RPC connection")
         self.buffer += part
         if len(self.buffer) > MAX_REPLY:
-            self.buffer = b""
-            return []
+            raise ConnectionError("oversized JSON-RPC data from Kodi")
         try:
             text = self.buffer.decode("utf-8")
         except UnicodeDecodeError:
-            return []
-        documents, consumed = [], 0
+            return
+        consumed = 0
         for document, end in iter_documents(text):
             consumed = end
-            if isinstance(document, dict) and "id" not in document \
-                    and isinstance(document.get("method"), str):
-                documents.append(document)
+            if not isinstance(document, dict):
+                continue
+            if type(document.get("id")) is int:
+                self.replies[document["id"]] = document
+            elif isinstance(document.get("method"), str):
+                self.pending.append(document)
         self.buffer = text[consumed:].encode("utf-8")
+
+    def call(self, method, params=None, timeout=5.0):
+        self.next_id += 1
+        request_id = self.next_id
+        request = {"jsonrpc": "2.0", "id": request_id, "method": method}
+        if params is not None:
+            request["params"] = params
+        self.sock.setblocking(True)
+        self.sock.settimeout(timeout)
+        try:
+            self.sock.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
+        finally:
+            self.sock.setblocking(False)
+        deadline = time.monotonic() + timeout
+        while request_id not in self.replies:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RpcError(f"{method}: no bounded reply")
+            self._receive(remaining)
+        document = self.replies.pop(request_id)
+        self.replies.clear()  # drop stale replies of timed-out calls
+        if "error" in document:
+            error = document["error"]
+            code = error.get("code") if isinstance(error, dict) else None
+            raise RpcError(f"{method}: error {code}")
+        if "result" not in document:
+            raise RpcError(f"{method}: missing result")
+        return document["result"]
+
+    def notifications(self, wait=0.0):
+        """Queued plus newly received notifications; raises on disconnect."""
+        self._receive(wait)
+        documents, self.pending = self.pending, []
         return documents
 
     def close(self):
