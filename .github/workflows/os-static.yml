@@ -439,7 +439,7 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_SKIN_SHA: 9b29fbd2187e902cebe715aa389cd95b17dea622' "$workflow"
+          grep -Fq 'DEDE_SKIN_SHA: 66440cce6f0bed65f94b6ed7d08814fad05cd2a1' "$workflow"
           grep -Fq 'DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27' "$workflow"
           grep -Fq 'git sparse-checkout set addons/skin.estuary' "$workflow"
           grep -Fq 'usr/share/kodi/addons/skin.dede-tv/addon.xml' "$workflow"
@@ -489,7 +489,8 @@ jobs:
 
           # Shell comments between QEMU line continuations caused a real
           # failure: -audiodev was executed as a separate command.
-          qemu = text.split("timeout --signal=TERM --kill-after=5s 150s", 1)[1]
+          # Anchor on the QEMU command itself, not on a tunable timeout value.
+          qemu = text.split("qemu-system-x86_64 -accel tcg", 1)[1]
           qemu = qemu.split("qemu_pid=$!", 1)[0].splitlines()
           for previous, current in zip(qemu, qemu[1:]):
               assert not (previous.rstrip().endswith(chr(92)) and
