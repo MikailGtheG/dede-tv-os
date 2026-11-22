@@ -93,6 +93,36 @@ class JsonRpcResponseTests(unittest.TestCase):
         with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
             self.assertEqual(module.rpc("Input.Back"), "OK")
 
+    def test_noninteger_response_id_cannot_acknowledge_kodi_write(self):
+        # JSON booleans and floating-point numbers compare equal to Python
+        # integers, but they are not the integer request ID we transmitted.
+        class FakeSocket:
+            def __init__(self, reply):
+                self.reply = reply
+                self.sent = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def settimeout(self, timeout):
+                pass
+            def sendall(self, data):
+                pass
+            def recv(self, count):
+                if self.sent:
+                    return b""
+                self.sent = True
+                return self.reply
+
+        for bad_id in ("24011.0", '"24011"', "true"):
+            with self.subTest(bad_id=bad_id):
+                reply = ('{"jsonrpc":"2.0","id":' + bad_id +
+                         ',"result":"OK"}').encode()
+                with patch.object(module.socket, "create_connection",
+                                  return_value=FakeSocket(reply)):
+                    with self.assertRaisesRegex(RuntimeError, "No bounded JSON-RPC reply"):
+                        module.rpc("Input.Back")
+
     def test_jsonrpc_error_does_not_authorize_dialog_dismissal(self):
         class FakeSocket:
             def __enter__(self):
