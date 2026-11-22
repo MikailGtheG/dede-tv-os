@@ -123,7 +123,8 @@ def judge(ppm, expected, mode):
     if mode == "home":
         return stock is None and result["home"], result, stock
     if mode == "not":
-        return result["channel"] != expected, result, stock
+        # A stock Kodi dialog is not a valid Dede TV outage state.
+        return stock is None and result["channel"] != expected, result, stock
     ok = stock is None and result["channel"] == expected
     panel = result["panel_distance_to_channel"]
     if ok and mode == "overlay":
@@ -205,10 +206,13 @@ def run(guest):
     # Network outage: the source answers 503 until the flag is removed.
     time.sleep(6)
     flag = Path(PAUSE_FLAG)
-    flag.touch()
-    outage = wait_for(guest, "outage", "trt1", mode="not", timeout=120)
-    time.sleep(10)
-    flag.unlink()
+    try:
+        flag.touch()
+        outage = wait_for(guest, "outage", "trt1", mode="not", timeout=120)
+        time.sleep(10)
+    finally:
+        # Do not poison later tests when capture/monitor operations fail.
+        flag.unlink(missing_ok=True)
     check("outage-detected", outage)
     if not check("outage-recovers-01", wait_for(guest, "outage-recovered", "trt1", timeout=240)):
         return steps
