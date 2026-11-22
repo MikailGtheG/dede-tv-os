@@ -75,7 +75,7 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: 5b53aeab856573036f5b1545909aed48f1a619ef
+          DEDE_SKIN_SHA: 1773bc9392580601e40a6368336a0d51ceb8b6d4
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
@@ -372,6 +372,48 @@ jobs:
           UNIT
           ln -sfn ../dede-ci-tv-diagnostics.service \
             config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-tv-diagnostics.service
+          # CI-only Kodi event timeline on the serial console (playback opens,
+          # closes, errors, kiosk exits, crash logs) for diagnosing failures.
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-kodi-events <<'SH'
+          #!/bin/sh
+          redact() { sed -u -E 's#[a-zA-Z]+://[^ "<]+#<url>#g'; }
+          (
+            journalctl -f -n0 -u dede-kodi -o short-monotonic --no-pager \
+              | grep --line-buffered -aE 'exited|Failed|signal|core|Scheduled restart|Started|Stopped' \
+              | redact | sed -u 's/^/DEDE_CI_KODI: unit| /' > /dev/ttyS0
+          ) &
+          (
+            seen=''
+            while true; do
+              for crash in /home/dede/kodi_crashlog-*.log; do
+                [ -f "$crash" ] || continue
+                case " $seen " in *" $crash "*) continue ;; esac
+                seen="$seen $crash"
+                tail -n 60 "$crash" | redact | sed 's/^/DEDE_CI_KODI: crashlog| /' > /dev/ttyS0
+              done
+              sleep 5
+            done
+          ) &
+          while true; do
+            tail -n0 -F /home/dede/.kodi/temp/kodi.log 2>/dev/null \
+              | grep --line-buffered -aE 'OpenFile|CloseFile|OnPlayBack|CCurlFile|SwitchToChannel|Previous channel|fatal|FATAL|terminate|Exception|error <general>' \
+              | grep --line-buffered -avE 'DBus|VDPAU|CAESinkALSA|parentheses|custom window|asked to focus' \
+              | redact | sed -u 's/^/DEDE_CI_KODI: log| /' > /dev/ttyS0
+            sleep 2
+          done
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-kodi-events.service <<'UNIT'
+          [Unit]
+          Description=CI-only Kodi event timeline on the serial console
+          After=dede-kodi.service
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-kodi-events
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-kodi-events.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-kodi-events.service
           # CI-only crash simulation for the E2E restart step: once channel 06
           # plays (the E2E's last key step), hard-kill Kodi exactly once.
           cat > config/includes.chroot/usr/local/sbin/dede-ci-crash-kodi <<'SH'
@@ -764,7 +806,7 @@ jobs:
               grep -aE 'DEDE_E2E(_SUMMARY)?:' "boot-logs/$mode-e2e.log" >&2 || true
               grep -aF 'DEDE_CI_TV:' "boot-logs/$mode.log" >&2 || true
               grep -aF 'DEDE_CI_CRASH:' "boot-logs/$mode.log" >&2 || true
-              grep -aE 'DEDE_CI_HANG:|DEDE_GUARD:|DEDE_WATCHDOG:' "boot-logs/$mode.log" | tail -40 >&2 || true
+              grep -aE 'DEDE_CI_HANG:|DEDE_GUARD:|DEDE_WATCHDOG:|DEDE_AUTOPLAY:|DEDE_CI_KODI:' "boot-logs/$mode.log" | tail -150 >&2 || true
               echo "Test IPTV server requests:" >&2
               tail -40 boot-logs/iptv-test-server.log >&2 || true
               exit 1
