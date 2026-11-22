@@ -38,6 +38,7 @@ class FakeTv:
         self.pause_flag = pause_flag
         self.outage = False
         self.recover_at = None
+        self.hang_at = None
 
     def tick(self):
         """Called per screendump: CI guest crash trigger and source outage."""
@@ -57,6 +58,12 @@ class FakeTv:
                 self.recover_at = self.frames + 2
             if self.frames >= self.recover_at:
                 self.outage = False
+                if self.broken != "no-watchdog":
+                    self.hang_at = self.frames + 4
+        if self.hang_at is not None and self.frames == self.hang_at:
+            self.down = True
+        if self.hang_at is not None and self.frames == self.hang_at + 2:
+            self.down, self.hang_at = False, None
         self.frames += 1
 
     def key(self, name):
@@ -166,6 +173,7 @@ class E2ESelfTest(unittest.TestCase):
                      patch.object(e2e, "FIRST_PICTURE_TIMEOUT", 0), \
                      patch.object(e2e, "SWITCH_TIMEOUT", 0), \
                      patch.object(e2e, "RESTART_TIMEOUT", 3000), \
+                     patch.object(e2e, "HANG_TIMEOUT", 3000), \
                      patch.object(e2e, "SERIAL_LOG", tv.serial), \
                      patch.object(e2e, "PAUSE_FLAG", tv.pause_flag), \
                      patch.object(e2e.time, "monotonic", side_effect=_fast_clock()), \
@@ -212,6 +220,11 @@ class E2ESelfTest(unittest.TestCase):
         steps = dict(self.run_against(FakeTv(broken="no-recovery")))
         self.assertTrue(steps["outage-detected"])
         self.assertFalse(steps["outage-recovers-01"])
+
+    def test_missing_hang_recovery_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="no-watchdog")))
+        self.assertTrue(steps["outage-recovers-01"])
+        self.assertFalse(steps["hang-watchdog-recovers-01"])
 
     def test_preview_png_is_valid(self):
         with tempfile.TemporaryDirectory() as tmp:

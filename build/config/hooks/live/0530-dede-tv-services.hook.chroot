@@ -6,7 +6,7 @@ mkdir -p /etc/systemd/system/multi-user.target.wants \
   /etc/systemd/system/network-online.target.wants \
   /etc/systemd/system/sockets.target.wants
 chmod 0755 /usr/local/libexec/dede-iptv-provision /usr/local/libexec/dede-tv-autoplay \
-  /usr/local/libexec/dede-tv-guard
+  /usr/local/libexec/dede-tv-guard /usr/local/libexec/dede-kodi-watchdog
 chmod 0755 /usr/local/lib/dede-tv
 chmod 0644 /usr/local/lib/dede-tv/dede_kodi_rpc.py
 # The IPTV source may carry subscriber credentials: readable by the TV user only.
@@ -34,3 +34,7 @@ ln -sfn ../dede-tv-guard.service \
   /etc/systemd/system/multi-user.target.wants/dede-tv-guard.service
 ln -sfn ../dede-tv-guard.service \
   /etc/systemd/system/dede-kodi.service.wants/dede-tv-guard.service
+# Hung-Kodi watchdog (root timer; crashes are handled by Restart=always).
+mkdir -p /etc/systemd/system/timers.target.wants
+ln -sfn ../dede-kodi-watchdog.timer \
+  /etc/systemd/system/timers.target.wants/dede-kodi-watchdog.timer

@@ -14,7 +14,8 @@ Drives the guest only through its virtual keyboard (QEMU monitor
   8. After a Kodi crash (killed by the CI guest) channel 06 returns alone
   9. Dead channel 90: Dede no-picture screen, guard notices, OK plays 01
  10. Source outage (HTTP 503): picture interrupted, returns alone
- 11. No capture shows a stock Kodi dialog or splash
+ 11. Kodi hung (SIGSTOP by the CI guest): watchdog restart, 01 returns
+ 12. No capture shows a stock Kodi dialog or splash
 
 Usage: qemu_tv_e2e.py MONITOR_SOCKET OUTPUT_DIR LABEL
 Prints DEDE_E2E lines; exit status 0 only if every step passed.
@@ -35,7 +36,8 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 16
+TOTAL_STEPS = 17
+HANG_TIMEOUT = int(os.environ.get("DEDE_E2E_HANG_TIMEOUT", "420"))
 PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
 SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
 RESTART_TIMEOUT = int(os.environ.get("DEDE_E2E_RESTART_TIMEOUT", "240"))
@@ -208,7 +210,11 @@ def run(guest):
     time.sleep(10)
     flag.unlink()
     check("outage-detected", outage)
-    check("outage-recovers-01", wait_for(guest, "outage-recovered", "trt1", timeout=240))
+    if not check("outage-recovers-01", wait_for(guest, "outage-recovered", "trt1", timeout=240)):
+        return steps
+    # The CI guest now freezes Kodi (SIGSTOP): process alive, picture stuck.
+    # The watchdog must restart it and channel 01 must return by itself.
+    check("hang-watchdog-recovers-01", wait_restart(guest, "trt1", timeout=HANG_TIMEOUT))
     return steps
 
 

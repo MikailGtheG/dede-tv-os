@@ -21,7 +21,7 @@ jobs:
     # Privileged build chroots are ONLY allowed from owner-controlled branch.
     # Never run this job with pull_request or pull_request_target events.
     runs-on: ubuntu-24.04
-    timeout-minutes: 100
+    timeout-minutes: 120
     container:
       image: debian:trixie
       options: --privileged
@@ -428,6 +428,19 @@ jobs:
               journalctl -b -u dede-tv-autoplay -u dede-kodi-skin -o cat --no-pager | tail -25 | redact | sed 's/^/DEDE_CI_CRASH: units| /'
               grep -a '(EE)' /home/dede/.local/share/xorg/Xorg.0.log 2>/dev/null | tail -10 | sed 's/^/DEDE_CI_CRASH: xorg| /'
             } > /dev/ttyS0 2>&1
+            # Hang simulation for the watchdog step: once the guard reports a
+            # recovered stream (the E2E outage step), freeze Kodi (SIGSTOP).
+            for _ in $(seq 1 500); do
+              if journalctl -b -u dede-tv-guard -o cat --no-pager | grep -q 'recovered after'; then
+                sleep 10
+                pkill -STOP -x kodi.bin && echo 'DEDE_CI_HANG: kodi.bin frozen (SIGSTOP)' > /dev/ttyS0
+                sleep 240
+                journalctl -b -u dede-kodi-watchdog -o cat --no-pager | grep DEDE_WATCHDOG | tail -6 \
+                  | sed 's/^/DEDE_CI_HANG: /' > /dev/ttyS0
+                break
+              fi
+              sleep 3
+            done
           fi
           SH
           cat > config/includes.chroot/etc/systemd/system/dede-ci-crash-kodi.service <<'UNIT'
@@ -551,7 +564,7 @@ jobs:
             # logged ActiveAE::InitSink errors. Provide emulated Intel HDA with
             # a silent host backend (no host sound server required).
             set +e
-            timeout --signal=TERM --kill-after=5s 1200s \
+            timeout --signal=TERM --kill-after=5s 1500s \
               qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
               -display none -vga std \
               -audiodev none,id=ci_audio \
@@ -751,6 +764,7 @@ jobs:
               grep -aE 'DEDE_E2E(_SUMMARY)?:' "boot-logs/$mode-e2e.log" >&2 || true
               grep -aF 'DEDE_CI_TV:' "boot-logs/$mode.log" >&2 || true
               grep -aF 'DEDE_CI_CRASH:' "boot-logs/$mode.log" >&2 || true
+              grep -aE 'DEDE_CI_HANG:|DEDE_GUARD:|DEDE_WATCHDOG:' "boot-logs/$mode.log" | tail -40 >&2 || true
               echo "Test IPTV server requests:" >&2
               tail -40 boot-logs/iptv-test-server.log >&2 || true
               exit 1
@@ -911,6 +925,9 @@ jobs:
             usr/local/libexec/dede-tv-guard \
             usr/local/lib/dede-tv/dede_kodi_rpc.py \
             etc/systemd/system/dede-tv-guard.service \
+            usr/local/libexec/dede-kodi-watchdog \
+            etc/systemd/system/dede-kodi-watchdog.timer \
+            etc/systemd/system/timers.target.wants/dede-kodi-watchdog.timer \
             etc/systemd/system/multi-user.target.wants/dede-tv-guard.service \
             etc/systemd/system/dede-kodi.service.wants/dede-tv-guard.service \
             etc/systemd/system/dede-tv-autoplay.service \

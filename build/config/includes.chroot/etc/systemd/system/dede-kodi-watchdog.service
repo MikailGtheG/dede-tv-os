@@ -1,0 +1,15 @@
+[Unit]
+Description=Dede TV restart a hung Kodi (controlled, rate limited)
+After=dede-kodi.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/dede-kodi-watchdog
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/run
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
