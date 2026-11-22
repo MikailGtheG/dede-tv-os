@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Dede TV OS remote-control map (whitelist).
+
+  Kodi's stock keymaps are diverted out of the load path at image build
+  time (hook 0520), so ONLY the keys below do anything. Any key that is not
+  listed here cannot open a Kodi menu, settings, file manager or OSD.
+
+  State A, live TV (FullscreenLiveTV):
+    OK            open channel list over the picture
+    CH+ / CH-     next / previous channel   (also Up/Down, Page Up/Down)
+    0-9           enter channel number
+    Vol+ / Vol- / Mute
+    Back, Left, Right, Menu, Info, Stop ... nothing (stays on TV)
+  State B, channel list (PVROSDChannels):
+    Up / Down     move highlight            (CH+/CH- move it as well)
+    OK            switch to channel and close the list
+    Back          close the list
+-->
+<keymap>
+  <global>
+    <keyboard>
+      <up>Up</up>
+      <down>Down</down>
+      <left>Left</left>
+      <right>Right</right>
+      <return>Select</return>
+      <enter>Select</enter>
+      <escape>Back</escape>
+      <backspace>Back</backspace>
+      <browser_back>Back</browser_back>
+      <pageup>PageUp</pageup>
+      <pagedown>PageDown</pagedown>
+      <plus>VolumeUp</plus>
+      <minus>VolumeDown</minus>
+      <numpadplus>VolumeUp</numpadplus>
+      <numpadminus>VolumeDown</numpadminus>
+      <volume_up>VolumeUp</volume_up>
+      <volume_down>VolumeDown</volume_down>
+      <volume_mute>Mute</volume_mute>
+      <f8>Mute</f8>
+      <zero>Number0</zero>
+      <one>Number1</one>
+      <two>Number2</two>
+      <three>Number3</three>
+      <four>Number4</four>
+      <five>Number5</five>
+      <six>Number6</six>
+      <seven>Number7</seven>
+      <eight>Number8</eight>
+      <nine>Number9</nine>
+      <numpadzero>Number0</numpadzero>
+      <numpadone>Number1</numpadone>
+      <numpadtwo>Number2</numpadtwo>
+      <numpadthree>Number3</numpadthree>
+      <numpadfour>Number4</numpadfour>
+      <numpadfive>Number5</numpadfive>
+      <numpadsix>Number6</numpadsix>
+      <numpadseven>Number7</numpadseven>
+      <numpadeight>Number8</numpadeight>
+      <numpadnine>Number9</numpadnine>
+    </keyboard>
+    <remote>
+      <up>Up</up>
+      <down>Down</down>
+      <left>Left</left>
+      <right>Right</right>
+      <select>Select</select>
+      <enter>Select</enter>
+      <back>Back</back>
+      <pageplus>PageUp</pageplus>
+      <pageminus>PageDown</pageminus>
+      <volumeplus>VolumeUp</volumeplus>
+      <volumeminus>VolumeDown</volumeminus>
+      <mute>Mute</mute>
+      <zero>Number0</zero>
+      <one>Number1</one>
+      <two>Number2</two>
+      <three>Number3</three>
+      <four>Number4</four>
+      <five>Number5</five>
+      <six>Number6</six>
+      <seven>Number7</seven>
+      <eight>Number8</eight>
+      <nine>Number9</nine>
+    </remote>
+    <appcommand>
+      <volume_up>VolumeUp</volume_up>
+      <volume_down>VolumeDown</volume_down>
+      <volume_mute>Mute</volume_mute>
+      <browser_back>Back</browser_back>
+    </appcommand>
+  </global>
+
+  <FullscreenLiveTV>
+    <keyboard>
+      <return>ActivateWindow(PVROSDChannels)</return>
+      <enter>ActivateWindow(PVROSDChannels)</enter>
+      <up>ChannelUp</up>
+      <down>ChannelDown</down>
+      <pageup>ChannelUp</pageup>
+      <pagedown>ChannelDown</pagedown>
+      <left>noop</left>
+      <right>noop</right>
+      <escape>noop</escape>
+      <backspace>noop</backspace>
+      <browser_back>noop</browser_back>
+    </keyboard>
+    <remote>
+      <select>ActivateWindow(PVROSDChannels)</select>
+      <enter>ActivateWindow(PVROSDChannels)</enter>
+      <up>ChannelUp</up>
+      <down>ChannelDown</down>
+      <pageplus>ChannelUp</pageplus>
+      <pageminus>ChannelDown</pageminus>
+      <channelplus>ChannelUp</channelplus>
+      <channelminus>ChannelDown</channelminus>
+      <left>noop</left>
+      <right>noop</right>
+      <back>noop</back>
+    </remote>
+    <appcommand>
+      <browser_back>noop</browser_back>
+    </appcommand>
+  </FullscreenLiveTV>
+
+  <PVROSDChannels>
+    <keyboard>
+      <pageup>Up</pageup>
+      <pagedown>Down</pagedown>
+      <left>noop</left>
+      <right>noop</right>
+    </keyboard>
+    <remote>
+      <pageplus>Up</pageplus>
+      <pageminus>Down</pageminus>
+      <channelplus>Up</channelplus>
+      <channelminus>Down</channelminus>
+      <left>noop</left>
+      <right>noop</right>
+    </remote>
+  </PVROSDChannels>
+</keymap>

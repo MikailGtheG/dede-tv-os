@@ -19,3 +19,4 @@ alsa-utils
 xserver-xorg-core
 xserver-xorg-video-fbdev
 xinit
+systemd-resolved

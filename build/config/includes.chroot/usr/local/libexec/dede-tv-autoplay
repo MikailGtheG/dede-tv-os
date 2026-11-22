@@ -1,0 +1,159 @@
+#!/usr/bin/python3
+"""Start live TV after Kodi (re)starts: last watched channel, else lowest number.
+
+Kodi persists each channel's "lastplayed" time in its TV database, so this
+also restores the last channel after a power cut or a Kodi crash restart.
+Does nothing when playback is already running (e.g. a virtual channel
+resumed by dede-tv-resume, or the user switched meanwhile).
+
+Talks only to Kodi's loopback JSON-RPC port.
+"""
+import json
+import os
+import socket
+import sys
+import time
+
+HOST, PORT = "127.0.0.1", 9090
+CHANNEL_WAIT_S = int(os.environ.get("DEDE_AUTOPLAY_CHANNEL_WAIT", "240"))
+START_WAIT_S = int(os.environ.get("DEDE_AUTOPLAY_START_WAIT", "60"))
+MAX_REPLY = 4 * 1024 * 1024
+_request_id = 31000
+
+
+class RpcError(RuntimeError):
+    pass
+
+
+def rpc(method, params=None, timeout=5.0):
+    global _request_id
+    _request_id += 1
+    request_id = _request_id
+    request = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        request["params"] = params
+    deadline = time.monotonic() + timeout
+    with socket.create_connection((HOST, PORT), timeout=timeout) as connection:
+        connection.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
+        buffer = b""
+        decoder = json.JSONDecoder()
+        while len(buffer) <= MAX_REPLY:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            connection.settimeout(remaining)
+            part = connection.recv(65536)
+            if not part:
+                break
+            buffer += part
+            try:
+                text = buffer.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            position = 0
+            while True:
+                while position < len(text) and text[position].isspace():
+                    position += 1
+                if position >= len(text):
+                    break
+                try:
+                    document, position = decoder.raw_decode(text, position)
+                except json.JSONDecodeError:
+                    break
+                # Kodi interleaves notifications (no matching id) on this socket.
+                if isinstance(document, dict) and type(document.get("id")) is int \
+                        and document["id"] == request_id:
+                    if "error" in document:
+                        code = document["error"].get("code") if isinstance(document["error"], dict) else None
+                        raise RpcError(f"{method}: error {code}")
+                    if "result" not in document:
+                        raise RpcError(f"{method}: missing result")
+                    return document["result"]
+    raise RpcError(f"{method}: no bounded reply")
+
+
+def tv_channels():
+    result = rpc("PVR.GetChannels", {
+        "channelgroupid": "alltv",
+        "properties": ["channelnumber", "lastplayed", "hidden", "locked"],
+    })
+    channels = result.get("channels") if isinstance(result, dict) else None
+    if not isinstance(channels, list):
+        return []
+    usable = []
+    for channel in channels:
+        if not isinstance(channel, dict) or type(channel.get("channelid")) is not int:
+            continue
+        if channel.get("hidden") is True or channel.get("locked") is True:
+            continue
+        usable.append(channel)
+    return usable
+
+
+def choose(channels):
+    """Most recently watched channel, otherwise the lowest channel number."""
+    watched = [c for c in channels
+               if isinstance(c.get("lastplayed"), str) and c["lastplayed"].strip()]
+    if watched:
+        # Kodi formats lastplayed as "YYYY-MM-DD HH:MM:SS": sortable as text.
+        return max(watched, key=lambda c: c["lastplayed"])
+
+    def number(channel):
+        value = channel.get("channelnumber")
+        return value if type(value) is int and value > 0 else sys.maxsize
+    return min(channels, key=lambda c: (number(c), c["channelid"]))
+
+
+def playing():
+    players = rpc("Player.GetActivePlayers")
+    return isinstance(players, list) and any(
+        isinstance(p, dict) and p.get("type") == "video" for p in players)
+
+
+def wait_for(predicate, seconds, step=2.0):
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            value = predicate()
+            if value:
+                return value
+        except (OSError, RpcError):
+            pass
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(step)
+
+
+def main():
+    if wait_for(playing, 3, step=1.0):
+        print("DEDE_AUTOPLAY: playback already active")
+        return 0
+    channels = wait_for(tv_channels, CHANNEL_WAIT_S)
+    if not channels:
+        # No IPTV source configured or reachable: stay on the TV home screen.
+        print("DEDE_AUTOPLAY: no TV channels available", file=sys.stderr)
+        return 1
+    if wait_for(playing, 1, step=1.0):
+        print("DEDE_AUTOPLAY: playback started meanwhile")
+        return 0
+    channel = choose(channels)
+    reason = "last watched" if channel.get("lastplayed") else "first"
+    print(f"DEDE_AUTOPLAY: starting {reason} channel number {channel.get('channelnumber')}")
+    rpc("Player.Open", {"item": {"channelid": channel["channelid"]}}, timeout=15)
+    if not wait_for(playing, START_WAIT_S):
+        print("DEDE_AUTOPLAY: channel did not start", file=sys.stderr)
+        return 1
+    try:
+        rpc("GUI.SetFullscreen", {"fullscreen": True})
+    except (OSError, RpcError) as error:
+        print(f"DEDE_AUTOPLAY: fullscreen request failed ({error})", file=sys.stderr)
+    print("DEDE_AUTOPLAY: live TV playing")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, RpcError) as error:
+        print(f"DEDE_AUTOPLAY: failed ({type(error).__name__}: {error})", file=sys.stderr)
+        sys.exit(1)

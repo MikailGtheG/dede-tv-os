@@ -197,3 +197,8 @@ XML
     fi
   fi
 fi
+
+# Apply the administrator's IPTV source (/etc/dede-tv/iptv.conf) to Kodi.
+# Non-fatal: without a valid source the TV home screen still starts.
+/usr/bin/python3 /usr/local/libexec/dede-iptv-provision ||
+  echo "IPTV source not applied; starting without channels" >&2

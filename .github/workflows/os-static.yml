@@ -21,7 +21,9 @@ jobs:
           import ast
           from pathlib import Path
           sources = sorted(Path('tests').rglob('*.py'))
-          sources += [Path('build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin')]
+          sources += [Path('build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-iptv-provision'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-tv-autoplay')]
           for source in sources:
               ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
           print(f'Validated Python syntax in {len(sources)} files')
@@ -215,6 +217,15 @@ jobs:
       - name: Regression - Kodi skin addon identity
         shell: bash
         run: sh tests/test_skin_addon_identity.sh
+      - name: Regression - IPTV provisioning, autoplay, remote keymap
+        run: |
+          sh -n build/config/hooks/live/0520-dede-kodi-keymaps.hook.chroot
+          sh -n build/config/hooks/live/0530-dede-tv-services.hook.chroot
+          python3 -m unittest discover -s tests -p "test_tv_playback_helpers.py" -v
+      - name: Regression - QEMU channel classifier and E2E driver self-test
+        run: |
+          python3 -m unittest discover -s tests -p "test_qemu_channel.py" -v
+          python3 -m unittest discover -s tests -p "test_qemu_tv_e2e.py" -v
       - name: Regression - live IPTV test source (playlist, live window, faults)
         run: python3 -m unittest discover -s tests -p "test_iptv_test_source.py" -v
       - name: Regression - no Kodi add-on enable prompt (addon manifest)

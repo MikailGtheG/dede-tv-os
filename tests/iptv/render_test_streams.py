@@ -17,7 +17,7 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 
-def render(channel, segment_seconds, loop_segments, output, font):
+def render(channel, segment_seconds, loop_segments, output, font, size="1280x720"):
     out_dir = output / channel["id"]
     out_dir.mkdir(parents=True, exist_ok=True)
     fps = 25
@@ -29,12 +29,12 @@ def render(channel, segment_seconds, loop_segments, output, font):
         hint = Path(scratch, "hint.txt")
         hint.write_text("DEDE TV TESTSIGNAL", encoding="utf-8")
         video = (
-            f"color=c={channel['color']}:s=1280x720:r={fps}:d={seconds},"
-            f"drawtext=fontfile={font}:textfile={title}:fontsize=96:"
+            f"color=c={channel['color']}:s={size}:r={fps}:d={seconds},"
+            f"drawtext=fontfile={font}:textfile={title}:fontsize=h/7.5:"
             f"fontcolor=white:x=(w-tw)/2:y=(h-th)/2-40,"
-            f"drawtext=fontfile={font}:textfile={hint}:fontsize=32:"
+            f"drawtext=fontfile={font}:textfile={hint}:fontsize=h/22:"
             f"fontcolor=0xb8b8b8:x=(w-tw)/2:y=(h/2)+70,"
-            f"drawtext=fontfile={font}:text='%{{pts\\:hms}}':fontsize=40:"
+            f"drawtext=fontfile={font}:text='%{{pts\\:hms}}':fontsize=h/18:"
             f"fontcolor=0xd0d0d0:x=(w-tw)/2:y=h-120"
         )
         command = [
@@ -60,12 +60,13 @@ def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--font", default=DEFAULT_FONT)
+    parser.add_argument("--size", default="1280x720", help="e.g. 640x360 for software-emulated CI guests")
     args = parser.parse_args(argv)
     if not Path(args.font).is_file():
         parser.error(f"font not found: {args.font}")
     config = json.loads((HERE / "channels.json").read_text(encoding="utf-8"))
     for channel in config["channels"]:
-        render(channel, config["segment_seconds"], config["loop_segments"], args.output, args.font)
+        render(channel, config["segment_seconds"], config["loop_segments"], args.output, args.font, args.size)
         print(f"rendered {channel['number']:02d} {channel['name']}")
     return 0
 

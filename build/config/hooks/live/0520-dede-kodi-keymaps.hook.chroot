@@ -1,0 +1,33 @@
+#!/bin/sh
+# Make the Dede TV remote map the ONLY active Kodi keymap.
+#
+# Kodi merges every *.xml in system/keymaps. Stock keyboard/remote maps bind
+# dozens of keys to Kodi windows (settings, file manager, guide, shutdown
+# menu, codec info ...). Hiding menu entries is not enough, so the stock
+# maps are diverted out of the load path with dpkg-divert: package
+# upgrades keep writing to the diverted location, never back into the
+# active directory. Unlisted keys then do nothing at all.
+set -eu
+keymaps="${DEDE_KODI_KEYMAPS:-/usr/share/kodi/system/keymaps}"
+disabled="${DEDE_KODI_KEYMAPS_DISABLED:-/usr/share/kodi/system/keymaps.dede-disabled}"
+ours="dede-tv.xml"
+divert="${DEDE_DPKG_DIVERT:-dpkg-divert}"
+
+[ -f "$keymaps/$ours" ] && [ ! -L "$keymaps/$ours" ] || {
+  echo "Dede TV keymap missing: $keymaps/$ours" >&2
+  exit 1
+}
+mkdir -p "$disabled"
+for map in "$keymaps"/*.xml; do
+  [ -e "$map" ] || continue
+  name=$(basename "$map")
+  [ "$name" = "$ours" ] && continue
+  $divert --local --rename --divert "$disabled/$name" --add "$map" >/dev/null
+done
+# Verify: exactly one active keymap remains.
+active=$(find "$keymaps" -maxdepth 1 -name '*.xml' | wc -l)
+if [ "$active" -ne 1 ]; then
+  echo "Expected only $ours in $keymaps, found $active keymaps" >&2
+  exit 1
+fi
+echo "DEDE_BUILD: Kodi keymaps restricted to $ours"

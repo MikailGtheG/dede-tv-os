@@ -21,7 +21,7 @@ jobs:
     # Privileged build chroots are ONLY allowed from owner-controlled branch.
     # Never run this job with pull_request or pull_request_target events.
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 70
     container:
       image: debian:trixie
       options: --privileged
@@ -35,7 +35,8 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             live-build debootstrap xorriso squashfs-tools \
             grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common \
-            ca-certificates python3 qemu-system-x86 ovmf
+            ca-certificates python3 qemu-system-x86 ovmf \
+            ffmpeg fonts-dejavu-core
       - name: Build pinned Rust TV core for the Debian 13 appliance
         shell: bash
         env:
@@ -74,7 +75,7 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: 9b29fbd2187e902cebe715aa389cd95b17dea622
+          DEDE_SKIN_SHA: 66440cce6f0bed65f94b6ed7d08814fad05cd2a1
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
@@ -290,6 +291,12 @@ jobs:
           UNIT
           ln -sfn ../dede-ci-diagnostics.service \
             config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-diagnostics.service
+          # CI-only IPTV source: the local live test signal served on the
+          # runner (QEMU user networking exposes the host as 10.0.2.2).
+          # Production images ship without any playlist.
+          mkdir -p config/includes.chroot/etc/dede-tv
+          printf 'M3U_URL=http://10.0.2.2:8089/dede-test.m3u\n' \
+            > config/includes.chroot/etc/dede-tv/iptv.conf
           sh build-image.sh
           test -s live-image-amd64.hybrid.iso
           sha256sum live-image-amd64.hybrid.iso > SHA256SUMS
@@ -326,6 +333,21 @@ jobs:
           cd build
           iso="$PWD/live-image-amd64.hybrid.iso"
           mkdir -p boot-logs
+          # Local live IPTV test signal for the guest (tests/iptv). 640x360
+          # keeps software decoding feasible under TCG emulation.
+          python3 "$GITHUB_WORKSPACE/tests/iptv/render_test_streams.py" \
+            /tmp/dede-iptv-media --size 640x360
+          python3 "$GITHUB_WORKSPACE/tests/iptv/serve_test_iptv.py" /tmp/dede-iptv-media \
+            --bind 127.0.0.1 --port 8089 --base-url http://10.0.2.2:8089 \
+            > boot-logs/iptv-test-server.log 2>&1 &
+          iptv_server=$!
+          trap 'kill "$iptv_server" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 25); do
+            python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8089/live/trt1/index.m3u8", timeout=2).read()' \
+              2>/dev/null && break
+            sleep 0.2
+          done
+          python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8089/dede-test.m3u", timeout=2).read().decode())'
           for mode in bios uefi; do
             echo "Testing $mode boot"
             firmware=()
@@ -376,7 +398,7 @@ jobs:
             # logged ActiveAE::InitSink errors. Provide emulated Intel HDA with
             # a silent host backend (no host sound server required).
             set +e
-            timeout --signal=TERM --kill-after=5s 150s \
+            timeout --signal=TERM --kill-after=5s 600s \
               qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
               -display none -vga std \
               -audiodev none,id=ci_audio \
@@ -481,6 +503,18 @@ jobs:
               sys.exit(1)
           PY
             capture_status=$?
+            # P0 acceptance: live TV, remote keys and channel list, judged
+            # from real screen captures (tests/qemu_tv_e2e.py).
+            python3 "$GITHUB_WORKSPACE/tests/qemu_tv_e2e.py" "$monitor" \
+              "$PWD/boot-logs/e2e" "$mode" | tee "boot-logs/$mode-e2e.log"
+            e2e_status=${PIPESTATUS[0]}
+            python3 - "$monitor" <<'PY'
+          import socket, sys
+          with socket.socket(socket.AF_UNIX) as sock:
+              sock.settimeout(5)
+              sock.connect(sys.argv[1])
+              sock.sendall(b"quit\n")
+          PY
             wait "$qemu_pid"
             status=$?
             set -e
@@ -556,6 +590,11 @@ jobs:
                 exit 1
               fi
             done
+            if [ "$e2e_status" -ne 0 ]; then
+              echo "$mode: TV end-to-end acceptance failed" >&2
+              grep -aE 'DEDE_E2E(_SUMMARY)?:' "boot-logs/$mode-e2e.log" >&2 || true
+              exit 1
+            fi
             # A timeout alone is NOT evidence of a successful boot.
             if ! grep -aEqi 'Reached target (Multi-User System|Graphical Interface)|login:' "boot-logs/$mode.log"; then
               echo "No login prompt or systemd boot target observed in $mode" >&2
@@ -570,7 +609,13 @@ jobs:
             echo "| BIOS | Boot target/login observed |"
             echo "| UEFI | Boot target/login observed |"
             echo ""
-            echo "This confirms a boot smoke test, not Kodi playback or hardware readiness."
+            echo ""
+            echo "## TV end-to-end (QEMU, real screen captures)"
+            for mode in bios uefi; do
+              grep -ahE '^DEDE_E2E_SUMMARY:' "boot-logs/$mode-e2e.log" | sed 's/^/- /' || true
+            done
+            echo ""
+            echo "Emulated hardware and a local test signal, not real target hardware."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload QEMU boot logs
         if: always()
@@ -689,9 +734,30 @@ jobs:
           from xml.etree import ElementTree as ET
           home = ET.parse("/tmp/dede-tv-home.xml").getroot()
           assert "DEDE TV" in [n.text for n in home.findall(".//label")]
-          assert "ActivateWindow(TVChannels)" in [n.text for n in home.findall(".//onclick")]
+          # Home may only open the channel-list overlay, never Kodi's full
+          # TVChannels window with its menus.
+          assert [n.text for n in home.findall(".//onclick")] == ["ActivateWindow(PVROSDChannels)"]
           assert len(home.findall(".//control")) <= 8
           PY
+          # Remote-control whitelist: dede-tv.xml must be the only active keymap.
+          unsquashfs -l "$squashfs" usr/share/kodi/system/keymaps > /tmp/dede-keymaps.txt
+          active_maps=$(grep -E '^squashfs-root/usr/share/kodi/system/keymaps/[^/]+\.xml$' /tmp/dede-keymaps.txt || true)
+          echo "Active Kodi keymaps: $active_maps"
+          test "$active_maps" = 'squashfs-root/usr/share/kodi/system/keymaps/dede-tv.xml'
+          unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml | grep -aFq '<addon>skin.dede-tv</addon>'
+          for embedded in \
+            usr/local/libexec/dede-tv-autoplay \
+            usr/local/libexec/dede-iptv-provision \
+            etc/systemd/system/dede-tv-autoplay.service \
+            etc/systemd/system/multi-user.target.wants/dede-tv-autoplay.service \
+            etc/systemd/system/dede-kodi.service.wants/dede-tv-autoplay.service \
+            etc/systemd/network/20-dede-wired.network \
+            etc/systemd/system/multi-user.target.wants/systemd-networkd.service; do
+            unsquashfs -cat "$squashfs" "$embedded" >/dev/null || {
+              echo "Missing TV playback component: $embedded" >&2
+              exit 1
+            }
+          done
           unsquashfs -cat "$squashfs" etc/passwd | grep -q '^dede:'
           unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -aFq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'
           unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -aFq 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core'
@@ -713,7 +779,7 @@ jobs:
           if not packages:
               raise SystemExit("No installed Debian packages found in SquashFS")
           # An ISO without the playback engine is not a useful TV prototype.
-          required = ("linux-image-amd64", "kodi", "kodi-pvr-iptvsimple")
+          required = ("linux-image-amd64", "kodi", "kodi-pvr-iptvsimple", "systemd-resolved")
           missing = [name for name in required if name not in packages]
           if missing:
               raise SystemExit("Missing installed TV packages: " + ", ".join(missing))
