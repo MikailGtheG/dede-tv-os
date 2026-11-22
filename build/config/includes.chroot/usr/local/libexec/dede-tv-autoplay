@@ -74,9 +74,12 @@ def rpc(method, params=None, timeout=5.0):
 
 
 def tv_channels():
+    # Kodi's JSON "lastplayed" carries only the date, but sorting uses the
+    # full timestamp: most recently watched channel comes first.
     result = rpc("PVR.GetChannels", {
         "channelgroupid": "alltv",
         "properties": ["channelnumber", "lastplayed", "hidden", "locked"],
+        "sort": {"method": "lastplayed", "order": "descending"},
     })
     channels = result.get("channels") if isinstance(result, dict) else None
     if not isinstance(channels, list):
@@ -91,25 +94,29 @@ def tv_channels():
     return usable
 
 
-def last_played(channel):
-    """Kodi's "YYYY-MM-DD HH:MM:SS" lastplayed, or None if never watched.
+def watched(channel):
+    """True if Kodi recorded a real viewing date (YYYY-MM-DD[ HH:MM:SS]).
 
-    Unwatched channels may report "" or an epoch-like placeholder."""
+    Never-watched channels report "" or the epoch (1970-01-01)."""
     value = channel.get("lastplayed")
     if not isinstance(value, str):
-        return None
-    try:
-        when = datetime.strptime(value.strip(), "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return None
-    return when if when.year >= 2000 else None
+        return False
+    text = value.strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt).year >= 2000
+        except ValueError:
+            continue
+    return False
 
 
 def choose(channels):
-    """Most recently watched channel, otherwise the lowest channel number."""
-    watched = [c for c in channels if last_played(c)]
-    if watched:
-        return max(watched, key=last_played)
+    """Most recently watched channel, otherwise the lowest channel number.
+
+    channels must be in Kodi's lastplayed-descending order (tv_channels)."""
+    for channel in channels:
+        if watched(channel):
+            return channel
 
     def number(channel):
         value = channel.get("channelnumber")
@@ -150,7 +157,7 @@ def main():
         print("DEDE_AUTOPLAY: playback started meanwhile")
         return 0
     channel = choose(channels)
-    reason = "last watched" if last_played(channel) else "first"
+    reason = "last watched" if watched(channel) else "first"
     print(f"DEDE_AUTOPLAY: starting {reason} channel number {channel.get('channelnumber')}")
     rpc("Player.Open", {"item": {"channelid": channel["channelid"]}}, timeout=15)
     if not wait_for(playing, START_WAIT_S):

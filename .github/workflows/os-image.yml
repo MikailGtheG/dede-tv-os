@@ -417,6 +417,17 @@ jobs:
           PY2
           if [ $? -eq 0 ]; then
             pkill -KILL -x kodi.bin && echo 'DEDE_CI_CRASH: kodi.bin killed (SIGKILL)'
+            sleep 100
+            redact() { sed -E 's#[a-zA-Z]+://[^ "<]+#<url>#g'; }
+            {
+              echo "DEDE_CI_CRASH: kodi $(systemctl show dede-kodi -p ActiveState -p SubState -p NRestarts -p Result --value | tr '\n' ' ')"
+              for name in Xorg kodi.bin; do
+                pgrep -x "$name" >/dev/null && echo "DEDE_CI_CRASH: $name running" || echo "DEDE_CI_CRASH: $name absent"
+              done
+              journalctl -b -u dede-kodi -o cat --no-pager | tail -25 | redact | sed 's/^/DEDE_CI_CRASH: kiosk| /'
+              journalctl -b -u dede-tv-autoplay -u dede-kodi-skin -o cat --no-pager | tail -25 | redact | sed 's/^/DEDE_CI_CRASH: units| /'
+              grep -a '(EE)' /home/dede/.local/share/xorg/Xorg.0.log 2>/dev/null | tail -10 | sed 's/^/DEDE_CI_CRASH: xorg| /'
+            } > /dev/ttyS0 2>&1
           fi
           SH
           cat > config/includes.chroot/etc/systemd/system/dede-ci-crash-kodi.service <<'UNIT'
@@ -735,6 +746,7 @@ jobs:
               echo "$mode: TV end-to-end acceptance failed" >&2
               grep -aE 'DEDE_E2E(_SUMMARY)?:' "boot-logs/$mode-e2e.log" >&2 || true
               grep -aF 'DEDE_CI_TV:' "boot-logs/$mode.log" >&2 || true
+              grep -aF 'DEDE_CI_CRASH:' "boot-logs/$mode.log" >&2 || true
               echo "Test IPTV server requests:" >&2
               tail -40 boot-logs/iptv-test-server.log >&2 || true
               exit 1

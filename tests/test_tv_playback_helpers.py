@@ -115,18 +115,26 @@ class AutoplayChoiceTests(unittest.TestCase):
         chosen = autoplay.choose([channel(7, 6), channel(3, 2), channel(5, 1)])
         self.assertEqual(chosen["channelid"], 5)
 
-    def test_restart_resumes_last_watched_channel(self):
+    def test_restart_resumes_most_recent_in_kodi_sort_order(self):
+        # Kodi returns lastplayed as a date only; two channels watched today
+        # are told apart solely by Kodi's lastplayed-descending sort order.
         chosen = autoplay.choose([
-            channel(1, 1, "2026-11-21 20:00:00"),
-            channel(2, 3, "2026-11-22 09:15:00"),
-            channel(3, 2, ""),
+            channel(2, 6, "2026-11-22"),
+            channel(1, 1, "2026-11-22"),
+            channel(3, 2, "1970-01-01"),
         ])
         self.assertEqual(chosen["channelid"], 2)
 
-    def test_placeholder_lastplayed_is_not_a_watched_channel(self):
-        chosen = autoplay.choose([channel(8, 3, "1970-01-01 01:00:00"),
+    def test_epoch_and_empty_lastplayed_mean_never_watched(self):
+        chosen = autoplay.choose([channel(8, 3, "1970-01-01"),
                                   channel(9, 1, "garbage"), channel(7, 2, "")])
         self.assertEqual(chosen["channelid"], 9)
+
+    def test_channel_request_sorts_by_lastplayed_descending(self):
+        with patch.object(autoplay, "rpc", return_value={"channels": []}) as rpc:
+            autoplay.tv_channels()
+        params = rpc.call_args.args[1]
+        self.assertEqual(params["sort"], {"method": "lastplayed", "order": "descending"})
 
     def test_unnumbered_channels_sort_last(self):
         chosen = autoplay.choose([channel(9, 0), channel(4, 4)])
