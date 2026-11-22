@@ -5,8 +5,8 @@ on:
     paths:
       - 'build/**'
       - '.github/workflows/os-image.yml'
-      - 'tests/check_qemu_tv_visual.py'
-      - 'tests/test_qemu_tv_visual.py'
+      # Boot/visual test changes must also exercise the real ISO/QEMU gate.
+      - 'tests/**'
   workflow_dispatch:
 # Serialize expensive ISO builds without cancelling a running BIOS/UEFI test.
 # Cancelling the previous run destroys its boot evidence and can indefinitely
