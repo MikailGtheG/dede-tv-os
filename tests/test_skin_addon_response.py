@@ -121,7 +121,7 @@ class JsonRpcResponseTests(unittest.TestCase):
                 with patch.object(module.socket, "create_connection",
                                   return_value=FakeSocket(reply)):
                     with self.assertRaisesRegex(RuntimeError, "No bounded JSON-RPC reply"):
-                        module.rpc("Input.Back")
+                        module.rpc("Addons.SetAddonEnabled")
 
     def test_jsonrpc_error_does_not_authorize_dialog_dismissal(self):
         class FakeSocket:
