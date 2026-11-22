@@ -233,12 +233,16 @@ jobs:
                                 "method": "Settings.GetSettingValue",
                                 "params": {"setting": "lookandfeel.skin"},
                                 "id": 7331}).encode() + b"\n"
+          import time
           try:
               with socket.create_connection(("127.0.0.1", 9090), timeout=4) as conn:
-                  conn.settimeout(4)
                   conn.sendall(request)
                   response = b""
-                  for _ in range(32):
+                  # Kodi interleaves playback notifications with the reply:
+                  # bound by time, not by chunk count, and drop consumed docs.
+                  deadline = time.monotonic() + 10
+                  while time.monotonic() < deadline:
+                      conn.settimeout(max(0.1, deadline - time.monotonic()))
                       chunk = conn.recv(4096)
                       if not chunk:
                           break
@@ -246,13 +250,14 @@ jobs:
                       if len(response) > 131072:
                           raise ValueError("response too large")
                       decoder = json.JSONDecoder()
-                      remaining = response.decode("utf-8")
+                      remaining = response.decode("utf-8", "replace")
                       while remaining.strip():
                           try:
                               document, size = decoder.raw_decode(remaining.lstrip())
                           except json.JSONDecodeError:
                               break
                           remaining = remaining.lstrip()[size:]
+                          response = remaining.encode("utf-8")
                           if document.get("id") == 7331:
                               active = document.get("result", {}).get("value")
                               print("DEDE_CI_DIAG: ACTIVE_SKIN=" + ("skin.dede-tv" if active == "skin.dede-tv" else "unexpected"))
