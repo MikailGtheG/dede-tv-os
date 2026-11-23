@@ -543,8 +543,9 @@ jobs:
               return None
           def seconds(t):
               return t["hours"] * 3600 + t["minutes"] * 60 + t["seconds"] + t["milliseconds"] / 1000
-          def resolved_file():
-              """Kodi exposes only the pvr:// item; the resolver logs the file."""
+          from datetime import datetime
+          def last_resolution():
+              """(file, position_s, wall_time) of the resolver's latest hand-over."""
               try:
                   with open("/home/dede/.kodi/temp/kodi.log", encoding="utf-8", errors="replace") as log:
                       lines = [l for l in log if "DEDE_VIRTUAL: Dede Film -> " in l]
@@ -552,49 +553,57 @@ jobs:
                   return None
               if not lines:
                   return None
-              return lines[-1].split("DEDE_VIRTUAL: Dede Film -> ", 1)[1].split(" @ ", 1)[0].strip()
-          session, last_time, last_summary = False, None, None
+              line = lines[-1]
+              stamp = datetime.strptime(line[:23], "%Y-%m-%d %H:%M:%S.%f").timestamp()
+              film, _, rest = line.split("DEDE_VIRTUAL: Dede Film -> ", 1)[1].partition(" @ ")
+              return film.strip(), float(rest.strip().rstrip("s")), stamp
+          checked, last_summary = None, None
           while True:
               time.sleep(2)
               try:
                   players = rpc("Player.GetActivePlayers") or []
                   if not any(p.get("type") == "video" for p in players):
-                      session = False
                       continue
                   item = (rpc("Player.GetItem", {"playerid": 1,
                                                  "properties": ["title", "channel", "channelnumber", "file"]}) or {}).get("item") or {}
-                  summary = json.dumps({k: item.get(k) for k in ("type", "label", "channel", "channelnumber", "file")},
+                  summary = json.dumps({k: item.get(k) for k in ("type", "label", "channel", "channelnumber")},
                                        ensure_ascii=False)
                   if summary != last_summary:
                       last_summary = summary
                       with open("/dev/ttyS0", "w") as console:
                           console.write("DEDE_CI_VIRTUAL: playing " + summary[:300] + "\n")
-                  if item.get("channelnumber") != 5 and "Dede Film" not in (item.get("label") or "") \
-                          and "Dede Film" not in (item.get("channel") or ""):
-                      session = False
+                  if item.get("channelnumber") != 5:
                       continue
-                  kodi = seconds((rpc("Player.GetProperties", {"playerid": 1, "properties": ["time"]}) or {})["time"])
-                  restarted = last_time is not None and kodi < last_time - 5
-                  last_time = kodi
-                  if (session and not restarted) or kodi <= 0:
+                  resolution = last_resolution()
+                  if resolution is None or resolution == checked:
                       continue
-                  session = True
-                  time.sleep(1)
-                  kodi = seconds((rpc("Player.GetProperties", {"playerid": 1, "properties": ["time"]}) or {})["time"])
+                  checked = resolution
+                  film, position, stamp = resolution
                   out = subprocess.run(["runuser", "-u", "dede", "--", "/usr/local/bin/dede-tv-core",
                                         "--db", "/home/dede/.local/share/dede-tv/channels.db", "now", "Dede Film"],
                                        capture_output=True, text=True, timeout=10).stdout.strip()
+                  now = time.time()
                   core_path, _, rest = out.partition(" @ ")
                   core_s = int(rest.split()[0]) / 1000 if rest else -1
-                  played = resolved_file() or "?"
-                  drift = kodi - core_s
-                  verdict = "ok" if core_path.endswith("/" + played) and abs(drift) <= 10 else "mismatch"
-                  line = (f"DEDE_CI_VIRTUAL: {verdict} file={played} kodi={kodi:.1f}s "
-                          f"core={core_s:.1f}s drift={drift:+.1f}s core_file={core_path.rsplit('/', 1)[-1]}")
+                  expected = position + (now - stamp)
+                  drift = expected - core_s
+                  kodi = (rpc("Player.GetProperties", {"playerid": 1, "properties": ["time"]}) or {}).get("time")
+                  kodi_s = seconds(kodi) if kodi else -1
+                  try:
+                      cache = json.load(open("/home/dede/.local/share/dede-tv/virtual-durations.json"))
+                      length = next(v / 1000 for k, v in cache.items() if k.split("|")[0].endswith("/" + film))
+                  except Exception:
+                      length = None
+                  if not core_path.endswith("/" + film) and length is not None and expected > length - 3:
+                      # The handed-over film ended before this check: no verdict.
+                      continue
+                  verdict = "ok" if core_path.endswith("/" + film) and abs(drift) <= 5 else "mismatch"
+                  line = (f"DEDE_CI_VIRTUAL: {verdict} file={film} handed={position:.1f}s "
+                          f"age={now - stamp:.1f}s core={core_s:.1f}s drift={drift:+.2f}s "
+                          f"core_file={core_path.rsplit('/', 1)[-1]} kodi_time={kodi_s:.1f}s")
                   with open("/dev/ttyS0", "w") as console:
                       console.write(line + "\n")
               except Exception as exc:
-                  session = False
                   with open("/dev/ttyS0", "w") as console:
                       console.write(f"DEDE_CI_VIRTUAL: checker error {type(exc).__name__}: {exc}"[:300] + "\n")
           PY2
