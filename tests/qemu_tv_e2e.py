@@ -244,7 +244,9 @@ def run(guest):
     guest.key("5", settle=0.5)
     if not check("virtual-05-plays", wait_for(guest, "virtual-05", "dedefilm", timeout=90)):
         return steps
-    check("virtual-position-matches-schedule", virtual_positions_ok(minimum=1, timeout=60))
+    # 120 s: a hand-over just before a film ends is skipped by the checker;
+    # the next film's hand-over then decides.
+    check("virtual-position-matches-schedule", virtual_positions_ok(minimum=1, timeout=120))
     # The running film ends within 40 s; the next one must follow by itself.
     time.sleep(45)
     continued = serial_contains("DEDE_GUARD:", "programme item ended, continuing", timeout=60)
@@ -258,7 +260,7 @@ def run(guest):
     guest.key("pgdn")
     back = wait_for(guest, "virtual-back-05", "dedefilm")
     check("virtual-time-runs-while-away",
-          away and back and virtual_positions_ok(minimum=before + 1, timeout=60))
+          away and back and virtual_positions_ok(minimum=before + 1, timeout=120))
     return steps
 
 
