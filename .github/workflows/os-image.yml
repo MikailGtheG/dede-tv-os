@@ -543,38 +543,50 @@ jobs:
               return None
           def seconds(t):
               return t["hours"] * 3600 + t["minutes"] * 60 + t["seconds"] + t["milliseconds"] / 1000
-          last_file, last_time = None, None
+          def resolved_file():
+              """Kodi exposes only the pvr:// item; the resolver logs the file."""
+              try:
+                  with open("/home/dede/.kodi/temp/kodi.log", encoding="utf-8", errors="replace") as log:
+                      lines = [l for l in log if "DEDE_VIRTUAL: Dede Film -> " in l]
+              except OSError:
+                  return None
+              if not lines:
+                  return None
+              return lines[-1].split("DEDE_VIRTUAL: Dede Film -> ", 1)[1].split(" @ ", 1)[0].strip()
+          session, last_time = False, None
           while True:
               time.sleep(2)
               try:
                   players = rpc("Player.GetActivePlayers") or []
                   if not any(p.get("type") == "video" for p in players):
-                      last_file = None
+                      session = False
                       continue
-                  item = (rpc("Player.GetItem", {"playerid": 1, "properties": ["file"]}) or {}).get("item") or {}
-                  path = item.get("file") or ""
-                  if not path.startswith("/srv/dede-tv/media/"):
-                      last_file = None
+                  item = (rpc("Player.GetItem", {"playerid": 1, "properties": ["title"]}) or {}).get("item") or {}
+                  if item.get("label") != "Dede Film":
+                      session = False
                       continue
                   kodi = seconds((rpc("Player.GetProperties", {"playerid": 1, "properties": ["time"]}) or {})["time"])
-                  fresh = path != last_file or (last_time is not None and kodi < last_time - 5)
-                  last_file, last_time = path, kodi
-                  if not fresh or kodi <= 0:
+                  restarted = last_time is not None and kodi < last_time - 5
+                  last_time = kodi
+                  if (session and not restarted) or kodi <= 0:
                       continue
+                  session = True
+                  time.sleep(1)
+                  kodi = seconds((rpc("Player.GetProperties", {"playerid": 1, "properties": ["time"]}) or {})["time"])
                   out = subprocess.run(["runuser", "-u", "dede", "--", "/usr/local/bin/dede-tv-core",
                                         "--db", "/home/dede/.local/share/dede-tv/channels.db", "now", "Dede Film"],
                                        capture_output=True, text=True, timeout=10).stdout.strip()
                   core_path, _, rest = out.partition(" @ ")
                   core_s = int(rest.split()[0]) / 1000 if rest else -1
+                  played = resolved_file() or "?"
                   drift = kodi - core_s
-                  verdict = "ok" if core_path == path and abs(drift) <= 10 else "mismatch"
-                  line = (f"DEDE_CI_VIRTUAL: {verdict} file={path.rsplit('/', 1)[1]} "
-                          f"kodi={kodi:.1f}s core={core_s:.1f}s drift={drift:+.1f}s "
-                          f"core_file={core_path.rsplit('/', 1)[-1]}")
+                  verdict = "ok" if core_path.endswith("/" + played) and abs(drift) <= 10 else "mismatch"
+                  line = (f"DEDE_CI_VIRTUAL: {verdict} file={played} kodi={kodi:.1f}s "
+                          f"core={core_s:.1f}s drift={drift:+.1f}s core_file={core_path.rsplit('/', 1)[-1]}")
                   with open("/dev/ttyS0", "w") as console:
                       console.write(line + "\n")
-              except Exception as exc:
-                  last_file = None
+              except Exception:
+                  session = False
           PY2
           SH
           cat > config/includes.chroot/etc/systemd/system/dede-ci-virtual-check.service <<'UNIT'
