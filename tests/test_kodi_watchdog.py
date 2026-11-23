@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import json
 import os
 import socket
 import threading
@@ -66,44 +67,60 @@ class WatchdogTests(unittest.TestCase):
             self.assertEqual(wd.load(str(path)), {"failures": 2, "last_restart": 5.0})
 
 
-class PingTests(unittest.TestCase):
-    def test_pong_found_behind_a_flood_of_notifications(self):
-        server = socket.socket()
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            server.bind(("127.0.0.1", 9090))
-        except OSError:
-            self.skipTest("port 9090 busy")
-        server.listen(1)
+class FakeKodi:
+    """Socketpair-backed Kodi: answers pings, floods notifications first."""
 
-        def kodi():
-            conn, _ = server.accept()
-            request = conn.recv(4096)
-            request_id = __import__("json").loads(request)["id"]
-            note = b'{"jsonrpc":"2.0","method":"Player.OnAVChange","params":{"data":{"x":"' + b"y" * 400 + b'"}}}'
-            conn.sendall(note * 400)  # ~180 KiB before the reply
-            conn.sendall(('{"jsonrpc":"2.0","id":%d,"result":"pong"}' % request_id).encode())
-            conn.close()
-        thread = threading.Thread(target=kodi, daemon=True)
-        thread.start()
-        try:
-            self.assertTrue(wd.ping(timeout=5))
-        finally:
-            thread.join(5)
-            server.close()
+    def __init__(self):
+        self.kodi, client = socket.socketpair()
+        import dede_kodi_rpc
+        self.connection = dede_kodi_rpc.Connection(sock=client)
+        self.connects = 0
+
+    def connect(self):
+        self.connects += 1
+        return self.connection
+
+    def answer(self, flood=0):
+        request = json.loads(self.kodi.recv(4096))
+        note = b'{"jsonrpc":"2.0","method":"Player.OnAVChange","params":{"data":{"x":"' + b"y" * 400 + b'"}}}'
+        self.kodi.sendall(note * flood + ('{"jsonrpc":"2.0","id":%d,"result":"pong"}' % request["id"]).encode())
+
+
+class PingTests(unittest.TestCase):
+    def test_many_pings_over_one_connection_despite_notification_floods(self):
+        kodi = FakeKodi()
+        pinger = wd.Pinger(connect=kodi.connect)
+        for flood in (0, 400, 50):
+            responder = threading.Thread(target=kodi.answer, args=(flood,), daemon=True)
+            responder.start()
+            self.assertTrue(pinger(timeout=5))
+            responder.join(5)
+        self.assertEqual(kodi.connects, 1)
+
+    def test_lost_connection_is_unhealthy_then_reconnects(self):
+        kodi = FakeKodi()
+        pinger = wd.Pinger(connect=kodi.connect)
+        kodi.kodi.close()  # Kodi went away
+        self.assertFalse(pinger(timeout=1))
+        self.assertIsNone(pinger.connection)
+        replacement = FakeKodi()
+        pinger.connect = replacement.connect
+        responder = threading.Thread(target=replacement.answer, daemon=True)
+        responder.start()
+        self.assertTrue(pinger(timeout=5))
+        responder.join(5)
 
     def test_unreachable_kodi_is_unhealthy(self):
-        probe = socket.socket()
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-        probe.close()
-        import dede_kodi_rpc
-        original = dede_kodi_rpc.PORT
-        dede_kodi_rpc.PORT = port
-        try:
-            self.assertFalse(wd.ping(timeout=1))
-        finally:
-            dede_kodi_rpc.PORT = original
+        def refuse():
+            raise ConnectionRefusedError
+        self.assertFalse(wd.Pinger(connect=refuse)(timeout=1))
+
+    def test_watchdog_is_a_long_running_service(self):
+        units = ROOT / "build/config/includes.chroot/etc/systemd/system"
+        self.assertFalse((units / "dede-kodi-watchdog.timer").exists())
+        service = (units / "dede-kodi-watchdog.service").read_text()
+        self.assertIn("Type=simple", service)
+        self.assertIn("Restart=always", service)
 
 
 if __name__ == "__main__":

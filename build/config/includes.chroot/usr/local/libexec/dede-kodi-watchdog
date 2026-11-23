@@ -2,8 +2,10 @@
 """Restart a hung Kodi (process alive, but not answering) in a controlled way.
 
 Crashes are already handled by dede-kodi.service (Restart=always). A hang
-keeps the process alive with a frozen picture, so this timer-driven check
-pings Kodi's loopback JSON-RPC and restarts the service only when:
+keeps the process alive with a frozen picture, so this service pings Kodi's
+loopback JSON-RPC every CHECK_INTERVAL_S over ONE persistent connection
+(Kodi 21's JSON-RPC TCP server can crash when a client disconnects during
+an announcement; fixed upstream after 21.x) and restarts Kodi only when:
   * the service has been active for at least GRACE_S (Kodi starts slowly),
   * FAILURES_NEEDED consecutive checks failed, and
   * no watchdog restart happened within the last MIN_INTERVAL_S
@@ -18,7 +20,7 @@ import sys
 import time
 
 sys.path.insert(0, os.environ.get("DEDE_TV_LIB", "/usr/local/lib/dede-tv"))
-from dede_kodi_rpc import RpcError, rpc  # noqa: E402
+from dede_kodi_rpc import Connection, RpcError  # noqa: E402
 
 STATE = os.environ.get("DEDE_WATCHDOG_STATE", "/run/dede-kodi-watchdog.json")
 GRACE_S = 120
@@ -27,13 +29,29 @@ MIN_INTERVAL_S = 600
 SERVICE = "dede-kodi.service"
 
 
-def ping(timeout=10.0):
-    """True if Kodi answers JSONRPC.Ping. Replies are matched by id, so
-    playback notifications on the same socket cannot cause a false alarm."""
-    try:
-        return rpc("JSONRPC.Ping", timeout=timeout) == "pong"
-    except (OSError, RpcError):
-        return False
+CHECK_INTERVAL_S = 30
+
+
+class Pinger:
+    """JSONRPC.Ping over one long-lived connection; reconnect only after a
+    failure (Kodi restarted or not answering)."""
+
+    def __init__(self, connect=None):
+        self.connect = connect or Connection
+        self.connection = None
+
+    def __call__(self, timeout=10.0):
+        try:
+            if self.connection is None:
+                self.connection = self.connect()
+            healthy = self.connection.call("JSONRPC.Ping", timeout=timeout) == "pong"
+            self.connection.notifications()  # drop queued announcements
+            return healthy
+        except (OSError, RpcError):
+            if self.connection is not None:
+                self.connection.close()
+                self.connection = None
+            return False
 
 
 def active_seconds():
@@ -78,7 +96,7 @@ def decide(state, uptime, healthy, now):
     return {"failures": failures, "last_restart": state["last_restart"]}, False
 
 
-def main():
+def check(ping):
     now = time.clock_gettime(time.CLOCK_MONOTONIC)
     uptime = active_seconds()
     healthy = ping() if uptime is not None and uptime >= GRACE_S else True
@@ -88,8 +106,14 @@ def main():
         print(f"DEDE_WATCHDOG: Kodi not answering ({state['failures']}/{FAILURES_NEEDED})", flush=True)
     if restart:
         print("DEDE_WATCHDOG: Kodi hung, restarting dede-kodi.service", flush=True)
-        return subprocess.run(["systemctl", "restart", SERVICE], check=False).returncode
-    return 0
+        subprocess.run(["systemctl", "restart", "--no-block", SERVICE], check=False)
+
+
+def main():
+    ping = Pinger()
+    while True:
+        check(ping)
+        time.sleep(CHECK_INTERVAL_S)
 
 
 if __name__ == "__main__":

@@ -35,10 +35,9 @@ ln -sfn ../dede-tv-guard.service \
   /etc/systemd/system/multi-user.target.wants/dede-tv-guard.service
 ln -sfn ../dede-tv-guard.service \
   /etc/systemd/system/dede-kodi.service.wants/dede-tv-guard.service
-# Hung-Kodi watchdog (root timer; crashes are handled by Restart=always).
-mkdir -p /etc/systemd/system/timers.target.wants
-ln -sfn ../dede-kodi-watchdog.timer \
-  /etc/systemd/system/timers.target.wants/dede-kodi-watchdog.timer
+# Hung-Kodi watchdog (root service; crashes are handled by Restart=always).
+ln -sfn ../dede-kodi-watchdog.service \
+  /etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service
 # Media for local 24/7 channels: administrator-managed, readable by the TV.
 install -d -m 0755 -o root -g root /srv/dede-tv /srv/dede-tv/media
 if [ -f /etc/dede-tv/virtual-channels.conf ]; then

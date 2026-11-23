@@ -430,29 +430,23 @@ jobs:
           cat > config/includes.chroot/usr/local/sbin/dede-ci-crash-kodi <<'SH'
           #!/bin/sh
           python3 - <<'PY2'
-          import json, socket, time
+          import sys, time
+          sys.path.insert(0, "/usr/local/lib/dede-tv")
+          from dede_kodi_rpc import Connection
+          # One persistent connection (Kodi 21 can crash on client disconnects).
+          connection = None
           def rpc(method, params=None):
-              req = {"jsonrpc": "2.0", "id": 77, "method": method}
-              if params is not None:
-                  req["params"] = params
-              with socket.create_connection(("127.0.0.1", 9090), timeout=5) as s:
-                  s.sendall(json.dumps(req).encode())
-                  buf, dec = b"", json.JSONDecoder()
-                  while True:
-                      part = s.recv(65536)
-                      if not part:
-                          return None
-                      buf += part
-                      text, pos = buf.decode("utf-8", "replace"), 0
-                      while pos < len(text):
-                          while pos < len(text) and text[pos].isspace():
-                              pos += 1
-                          try:
-                              doc, pos = dec.raw_decode(text, pos)
-                          except ValueError:
-                              break
-                          if doc.get("id") == 77:
-                              return doc.get("result")
+              global connection
+              if connection is None:
+                  connection = Connection()
+              try:
+                  result = connection.call(method, params, timeout=8)
+                  connection.notifications()
+                  return result
+              except Exception:
+                  connection.close()
+                  connection = None
+                  raise
           deadline = time.monotonic() + 1500
           while time.monotonic() < deadline:
               try:
@@ -462,6 +456,11 @@ jobs:
                   if number == 6:
                       print("DEDE_CI_CRASH: channel 06 playing (" + str(label) + "), killing Kodi in 10 s", flush=True)
                       time.sleep(10)
+                      # Kill while still connected: our disconnect happens only
+                      # after Kodi is gone.
+                      import subprocess
+                      if subprocess.run(["pkill", "-KILL", "-x", "kodi.bin"]).returncode == 0:
+                          print("DEDE_CI_CRASH: kodi.bin killed (SIGKILL)", flush=True)
                       raise SystemExit(0)
               except (OSError, ValueError):
                   pass
@@ -469,7 +468,6 @@ jobs:
           raise SystemExit(1)
           PY2
           if [ $? -eq 0 ]; then
-            pkill -KILL -x kodi.bin && echo 'DEDE_CI_CRASH: kodi.bin killed (SIGKILL)'
             sleep 100
             redact() { sed -E 's#[a-zA-Z]+://[^ "<]+#<url>#g'; }
             {
@@ -1107,8 +1105,8 @@ jobs:
             usr/share/kodi/addons/plugin.video.dede-virtual/addon.xml \
             usr/share/kodi/addons/plugin.video.dede-virtual/default.py \
             usr/bin/ffprobe \
-            etc/systemd/system/dede-kodi-watchdog.timer \
-            etc/systemd/system/timers.target.wants/dede-kodi-watchdog.timer \
+            etc/systemd/system/dede-kodi-watchdog.service \
+            etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service \
             etc/systemd/system/multi-user.target.wants/dede-tv-guard.service \
             etc/systemd/system/dede-kodi.service.wants/dede-tv-guard.service \
             etc/systemd/system/dede-tv-autoplay.service \

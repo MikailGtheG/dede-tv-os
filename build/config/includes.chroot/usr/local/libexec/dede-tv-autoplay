@@ -14,7 +14,9 @@ import time
 from datetime import datetime
 
 sys.path.insert(0, os.environ.get("DEDE_TV_LIB", "/usr/local/lib/dede-tv"))
-from dede_kodi_rpc import RpcError, rpc  # noqa: E402
+from dede_kodi_rpc import Connection, RpcError, rpc  # noqa: E402
+
+DEFAULT_RPC = rpc
 
 CHANNEL_WAIT_S = int(os.environ.get("DEDE_AUTOPLAY_CHANNEL_WAIT", "240"))
 START_WAIT_S = int(os.environ.get("DEDE_AUTOPLAY_START_WAIT", "60"))
@@ -127,8 +129,23 @@ def main():
     return 0
 
 
+def use_one_connection():
+    """Kodi 21 can crash when a JSON-RPC client disconnects during an
+    announcement; one connection per run instead of one per request."""
+    global rpc
+    if rpc is DEFAULT_RPC:
+        connection = Connection()
+
+        def call(method, params=None, timeout=5.0):
+            result = connection.call(method, params, timeout=timeout)
+            connection.notifications()
+            return result
+        rpc = call
+
+
 if __name__ == "__main__":
     try:
+        use_one_connection()
         sys.exit(main())
     except (OSError, RpcError) as error:
         print(f"DEDE_AUTOPLAY: failed ({type(error).__name__}: {error})", file=sys.stderr)
