@@ -72,10 +72,28 @@ jobs:
           "$core" --db "$smoke/state.db" select 'CI channel'
           test "$("$core" --db "$smoke/state.db" last)" = 'virtual:CI channel'
           "$core" --db "$smoke/state.db" request-pvr 12 | grep -aFq '"channelid":12'
+      - name: Build pinned administration console
+        shell: bash
+        env:
+          DEDE_WEB_SHA: 6c8ef041b6840826eaeda4fe5b0f872330b3ab77
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dede-web-source
+          cd /tmp/dede-web-source
+          git init -q
+          git remote add origin https://github.com/MikailGtheG/dede-tv-web.git
+          git fetch --depth 1 origin "$DEDE_WEB_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$DEDE_WEB_SHA"
+          cd admin
+          test -s Cargo.lock
+          cargo build --release --locked
+          install -D -m 0755 target/release/dede-tv-admin \
+            "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-admin"
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: 5f0b4f61a12965b9db3b2c24d459ec980d747d3c
+          DEDE_SKIN_SHA: 30e1f4a7ad9d51779011becf76175dec7b5c6ebf
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
@@ -643,6 +661,61 @@ jobs:
           UNIT
           ln -sfn ../dede-ci-virtual-check.service \
             config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-virtual-check.service
+          # CI-only: tell the E2E driver the setup code (it has no OCR) and
+          # whether the TV shows it until the administration is set up.
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-admin-check <<'SH'
+          #!/bin/sh
+          exec python3 - <<'PY2'
+          import os, sys, time
+          sys.path.insert(0, "/usr/local/lib/dede-tv")
+          from dede_kodi_rpc import Connection
+          def say(line):
+              with open("/dev/ttyS0", "w") as console:
+                  console.write(line[:300] + "\n")
+          connection, announced, shown = None, None, False
+          while True:
+              time.sleep(2)
+              try:
+                  code = open("/run/dede-tv-admin/setup-code").read().strip()
+              except OSError:
+                  code = ""
+              if code and code != announced:
+                  announced, shown = code, False
+                  say("DEDE_CI_ADMIN_CODE: " + code)
+              try:
+                  if connection is None:
+                      connection = Connection()
+                  labels = connection.call("XBMC.GetInfoLabels", {"labels": [
+                      "Window(Home).Property(dede.setup.code)",
+                      "Window(Home).Property(dede.setup.url)"]}, timeout=8) or {}
+                  connection.notifications()
+              except Exception:
+                  if connection is not None:
+                      connection.close()
+                  connection = None
+                  continue
+              tv_code = labels.get("Window(Home).Property(dede.setup.code)", "")
+              tv_url = labels.get("Window(Home).Property(dede.setup.url)", "")
+              if code and not shown and tv_code.replace(" ", "") == code and tv_url.startswith("http://"):
+                  shown = True
+                  say(f"DEDE_CI_ADMIN: tv shows code url={tv_url}")
+              if announced and not code and not tv_code:
+                  say("DEDE_CI_ADMIN: tv code cleared")
+                  break
+          PY2
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-admin-check.service <<'UNIT'
+          [Unit]
+          Description=CI-only administration setup check
+          After=dede-kodi.service dede-tv-admin.service
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-admin-check
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-admin-check.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-admin-check.service
           # CI-only IPTV source: the local live test signal served on the
           # runner (QEMU user networking exposes the host as 10.0.2.2).
           # Production images ship without any playlist.
@@ -703,6 +776,7 @@ jobs:
           python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8089/dede-test.m3u", timeout=2).read().decode())'
           for mode in bios uefi; do
             echo "Testing $mode boot"
+            if [ "$mode" = uefi ]; then admin_port=18081; else admin_port=18080; fi
             firmware=()
             if [ "$mode" = uefi ]; then
               # Prefer the standard, non-secure-boot OVMF code image.
@@ -757,6 +831,7 @@ jobs:
               -audiodev none,id=ci_audio \
               -device ich9-intel-hda \
               -device hda-duplex,audiodev=ci_audio \
+              -nic "user,model=e1000e,hostfwd=tcp:127.0.0.1:$admin_port-:8080" \
               -monitor "unix:$monitor,server=on,wait=off" -serial stdio \
               -no-reboot -boot d \
               -device ich9-ahci,id=ahci \
@@ -861,6 +936,7 @@ jobs:
             rm -f /tmp/dede-iptv-outage
             DEDE_E2E_PAUSE_FLAG=/tmp/dede-iptv-outage \
             DEDE_E2E_SERIAL_LOG="$PWD/boot-logs/$mode.log" \
+            DEDE_E2E_ADMIN_URL="http://127.0.0.1:$admin_port" \
             python3 "$GITHUB_WORKSPACE/tests/qemu_tv_e2e.py" "$monitor" \
               "$PWD/boot-logs/e2e" "$mode" | tee "boot-logs/$mode-e2e.log"
             e2e_status=${PIPESTATUS[0]}
@@ -1120,6 +1196,7 @@ jobs:
           test "$active_maps" = 'squashfs-root/usr/share/kodi/system/keymaps/dede-tv.xml'
           unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml | grep -aFq '<addon>skin.dede-tv</addon>'
           unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml | grep -aFq '<addon>plugin.video.dede-virtual</addon>'
+          unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml | grep -aFq '<addon>service.dede-setup</addon>'
           for embedded in \
             usr/local/libexec/dede-tv-autoplay \
             usr/local/libexec/dede-iptv-provision \
@@ -1132,6 +1209,11 @@ jobs:
             usr/share/kodi/addons/plugin.video.dede-virtual/default.py \
             usr/bin/ffprobe \
             etc/systemd/system/dede-virtual-epg.service \
+            usr/local/bin/dede-tv-admin \
+            etc/systemd/system/dede-tv-admin.service \
+            etc/systemd/system/multi-user.target.wants/dede-tv-admin.service \
+            usr/share/kodi/addons/service.dede-setup/addon.xml \
+            usr/share/kodi/addons/service.dede-setup/service.py \
             etc/systemd/system/timers.target.wants/dede-virtual-epg.timer \
             etc/systemd/system/dede-kodi-watchdog.service \
             etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service \

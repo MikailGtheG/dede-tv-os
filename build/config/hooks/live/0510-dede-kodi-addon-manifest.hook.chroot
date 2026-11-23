@@ -34,7 +34,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 path = sys.argv[1]
-REQUIRED = ("skin.dede-tv", "plugin.video.dede-virtual")
+REQUIRED = ("skin.dede-tv", "plugin.video.dede-virtual", "service.dede-setup")
 OPTIONAL = ("pvr.iptvsimple",)
 
 with open(path, "rb") as source:

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Self-test for qemu_tv_e2e.py against a simulated QEMU monitor + TV."""
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.machinery
 import importlib.util
 import os
+import secrets
+import urllib.parse
 from pathlib import Path
 import socket
 import tempfile
@@ -18,6 +21,62 @@ loader.exec_module(e2e)
 
 ORDER = ["trt1", "atv", "kanald", "showtv", "dedefilm", "teskilat"]
 W, H = 640, 400
+
+
+class FakeAdmin(BaseHTTPRequestHandler):
+    """The administration console's HTTP contract (dede-tv-web/admin)."""
+    code = "24681357"
+
+    def log_message(self, *args):
+        pass
+
+    def reply(self, status, text="", location=None, cookies=()):
+        self.send_response(status)
+        if location:
+            self.send_header("Location", location)
+        for name, value in cookies:
+            self.send_header("Set-Cookie", f"{name}={value}; Path=/; HttpOnly; SameSite=Strict")
+        self.end_headers()
+        self.wfile.write(text.encode())
+
+    def cookies(self):
+        pairs = (p.strip().split("=", 1) for p in (self.headers.get("Cookie") or "").split(";") if "=" in p)
+        return dict(pairs)
+
+    def do_GET(self):
+        state = self.server.state
+        session = self.cookies().get("dede_session")
+        if self.path == "/setup" and state["password"] is None:
+            return self.reply(200, "Einrichtungscode vom Fernseher", cookies=[("dede_form", "f" * 64)])
+        if self.path == "/login":
+            return self.reply(200, "Anmelden", cookies=[("dede_form", "f" * 64)])
+        if self.path == "/" and session in state["sessions"]:
+            return self.reply(200, "Verwaltung")
+        return self.reply(303, location="/login" if state["password"] else "/setup")
+
+    def do_POST(self):
+        state = self.server.state
+        if self.headers.get("Origin") != f"http://127.0.0.1:{self.server.server_port}":
+            return self.reply(403)
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
+        form = dict(urllib.parse.parse_qsl(body))
+        if form.get("form") != self.cookies().get("dede_form"):
+            return self.reply(403)
+        if self.path == "/setup":
+            if form.get("code") != self.code or state["broken"] == "admin-setup-fails":
+                return self.reply(200, "Der Code stimmt nicht.")
+            state["password"] = form["password"]
+            state["on_password"]()
+            session = secrets.token_hex(32)
+            state["sessions"].add(session)
+            return self.reply(200, "Das Passwort ist gespeichert.", cookies=[("dede_session", session)])
+        if self.path == "/login":
+            if form.get("password") != state["password"]:
+                return self.reply(200, "Das Passwort stimmt nicht.")
+            session = secrets.token_hex(32)
+            state["sessions"].add(session)
+            return self.reply(303, location="/", cookies=[("dede_session", session)])
+        return self.reply(404)
 
 
 class FakeTv:
@@ -41,6 +100,8 @@ class FakeTv:
         self.hang_at = None
         self.last_playing = None
         self.film_frames = 0
+        self.admin = None
+        self.admin_announced = False
 
     def serial_line(self, line):
         if self.serial:
@@ -49,6 +110,12 @@ class FakeTv:
 
     def tick(self):
         """Called per screendump: CI guest crash trigger and source outage."""
+        if self.admin is not None:
+            if not self.admin_announced:
+                self.admin_announced = True
+                self.serial_line(f"DEDE_CI_ADMIN_CODE: {FakeAdmin.code}")
+                if self.broken != "admin-code-not-shown":
+                    self.serial_line("DEDE_CI_ADMIN: tv shows code url=http://10.0.2.15:8080")
         playing = ORDER[self.index] if not (self.home or self.down or self.outage) else None
         if playing == "dedefilm" and self.last_playing != "dedefilm":
             verdict = "mismatch" if self.broken == "virtual-wrong-position" else "ok"
@@ -191,6 +258,10 @@ class E2ESelfTest(unittest.TestCase):
             thread = threading.Thread(target=serve, args=(sock, tv, stop, ready), daemon=True)
             thread.start()
             self.assertTrue(ready.wait(5))
+            admin = ThreadingHTTPServer(("127.0.0.1", 0), FakeAdmin)
+            admin.state = tv.admin = {"password": None, "sessions": set(), "broken": tv.broken,
+                                      "on_password": lambda: tv.serial_line("DEDE_CI_ADMIN: tv code cleared")}
+            threading.Thread(target=admin.serve_forever, daemon=True).start()
             try:
                 with patch.object(e2e.time, "sleep"), \
                      patch.object(e2e, "FIRST_PICTURE_TIMEOUT", 0), \
@@ -198,6 +269,7 @@ class E2ESelfTest(unittest.TestCase):
                      patch.object(e2e, "RESTART_TIMEOUT", 3000), \
                      patch.object(e2e, "HANG_TIMEOUT", 3000), \
                      patch.object(e2e, "SERIAL_LOG", tv.serial), \
+                     patch.object(e2e, "ADMIN_URL", f"http://127.0.0.1:{admin.server_port}"), \
                      patch.object(e2e, "PAUSE_FLAG", tv.pause_flag), \
                      patch.object(e2e.time, "monotonic", side_effect=_fast_clock()), \
                      patch("builtins.print"):
@@ -205,6 +277,8 @@ class E2ESelfTest(unittest.TestCase):
                     guest.out.mkdir()
                     return e2e.run(guest)
             finally:
+                admin.shutdown()
+                admin.server_close()
                 stop.set()
                 thread.join()
 
@@ -212,6 +286,17 @@ class E2ESelfTest(unittest.TestCase):
         steps = self.run_against(FakeTv())
         self.assertEqual(len(steps), e2e.TOTAL_STEPS)
         self.assertTrue(all(ok for _, ok in steps), steps)
+
+    def test_setup_code_missing_on_tv_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="admin-code-not-shown")))
+        self.assertTrue(steps["autostart-channel-01"])
+        self.assertFalse(steps["admin-tv-shows-setup-code"])
+
+    def test_failed_admin_setup_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="admin-setup-fails")))
+        self.assertFalse(steps["admin-setup-via-web"])
+        self.assertFalse(steps["admin-tv-hides-code"])
+        self.assertFalse(steps["admin-sign-in"])
 
     def test_back_leaving_tv_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="back-leaves-tv")))

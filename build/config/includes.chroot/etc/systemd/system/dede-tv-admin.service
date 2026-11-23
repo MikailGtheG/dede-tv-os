@@ -1,0 +1,39 @@
+[Unit]
+Description=Dede TV administration console (web)
+After=network.target
+
+[Service]
+Type=simple
+User=dede-admin
+# Group dede lets the TV read the published setup code (0640).
+Group=dede
+UMask=0027
+StateDirectory=dede-tv-admin
+StateDirectoryMode=0700
+RuntimeDirectory=dede-tv-admin
+RuntimeDirectoryMode=0750
+ExecStart=/usr/local/bin/dede-tv-admin
+Restart=always
+RestartSec=3s
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Local networks only (RFC 1918, IPv6 ULA and link-local, loopback).
+IPAddressDeny=any
+IPAddressAllow=localhost link-local 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target
