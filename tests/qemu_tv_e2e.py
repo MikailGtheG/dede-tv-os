@@ -123,7 +123,10 @@ def judge(ppm, expected, mode):
     if mode == "home":
         return stock is None and result["home"], result, stock
     if mode == "not":
-        return result["channel"] != expected, result, stock
+        # A stock Kodi dialog is not a valid Dede TV outage state.
+        # An outage must remove the expected picture, not silently switch to
+        # another valid TV channel (which would mask a playback regression).
+        return stock is None and result["channel"] is None, result, stock
     ok = stock is None and result["channel"] == expected
     panel = result["panel_distance_to_channel"]
     if ok and mode == "overlay":
@@ -140,6 +143,21 @@ def wait_for(guest, step, expected, mode="fullscreen", timeout=None, interval=4)
         ppm = guest.capture(step)
         ok, result, stock = judge(ppm, expected, mode)
         elapsed = time.monotonic() - started
+        # Never allow a transient stock Kodi screen to pass unnoticed while
+        # waiting for a later valid TV frame. Blank restart frames are normal.
+        if stock is not None and not stock.startswith((
+                "blank or black QEMU frame", "uniform QEMU frame")):
+            print(f"DEDE_E2E: {guest.label}: FAIL {step} exposed stock Kodi UI: {stock}",
+                  flush=True)
+            log_preview(guest, ppm, f"{step}-stock-kodi")
+            return False
+        # During a source outage, switching to another playable channel is
+        # a failure even if the original source disappears on a later frame.
+        if mode == "not" and result["channel"] is not None and result["channel"] != expected:
+            print(f"DEDE_E2E: {guest.label}: FAIL {step} switched to "
+                  f"{result['channel']} instead of interrupting {expected}", flush=True)
+            log_preview(guest, ppm, f"{step}-wrong-channel")
+            return False
         if ok or elapsed >= timeout:
             status = "PASS" if ok else "FAIL"
             print(f"DEDE_E2E: {guest.label}: {status} {step} expected={expected} mode={mode} "
@@ -205,10 +223,13 @@ def run(guest):
     # Network outage: the source answers 503 until the flag is removed.
     time.sleep(6)
     flag = Path(PAUSE_FLAG)
-    flag.touch()
-    outage = wait_for(guest, "outage", "trt1", mode="not", timeout=120)
-    time.sleep(10)
-    flag.unlink()
+    try:
+        flag.touch()
+        outage = wait_for(guest, "outage", "trt1", mode="not", timeout=120)
+        time.sleep(10)
+    finally:
+        # Do not poison later tests when capture/monitor operations fail.
+        flag.unlink(missing_ok=True)
     check("outage-detected", outage)
     if not check("outage-recovers-01", wait_for(guest, "outage-recovered", "trt1", timeout=240)):
         return steps
@@ -243,6 +264,22 @@ def wait_restart(guest, expected, timeout=None):
     while time.monotonic() - started < timeout:
         ppm = guest.capture("restart")
         ok, result, stock = judge(ppm, expected, "fullscreen")
+        # Blank/uniform captures are expected while Kodi is restarting.
+        # They still count as interrupted playback and must recover before
+        # the deadline; only an actual stock Kodi UI is an immediate failure.
+        if stock is not None and not stock.startswith((
+                "blank or black QEMU frame", "uniform QEMU frame")):
+            print(f"DEDE_E2E: {guest.label}: FAIL restart exposed stock Kodi UI: {stock}",
+                  flush=True)
+            log_preview(guest, ppm, "restart-stock-kodi")
+            return False
+        # A different live channel is not a valid restart interruption:
+        # accepting it would hide an unintended channel switch on recovery.
+        if result["channel"] is not None and result["channel"] != expected:
+            print(f"DEDE_E2E: {guest.label}: FAIL restart switched to "
+                  f"{result['channel']} instead of {expected}", flush=True)
+            log_preview(guest, ppm, "restart-wrong-channel")
+            return False
         if not ok and not interrupted:
             interrupted = True
             print(f"DEDE_E2E: {guest.label}: picture interrupted (Kodi restarting) "

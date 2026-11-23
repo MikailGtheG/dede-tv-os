@@ -226,6 +226,91 @@ class E2ESelfTest(unittest.TestCase):
         self.assertTrue(steps["outage-recovers-01"])
         self.assertFalse(steps["hang-watchdog-recovers-01"])
 
+    def test_wait_for_rejects_transient_stock_kodi_before_valid_tv(self):
+        # A later valid frame must not hide a momentary kiosk escape.
+        with tempfile.TemporaryDirectory() as tmp:
+            ppm = Path(tmp, "frame.ppm")
+            ppm.write_bytes(FakeTv().frame())
+            guest = type("StubGuest", (), {
+                "label": "sim", "shots": 0,
+                "capture": lambda self, step: ppm,
+            })()
+            stock = "stock Kodi home screen"
+            with patch.object(e2e, "judge", side_effect=[
+                    (False, {"channel": None}, stock),
+                    (True, {"channel": "trt1"}, None)] ) as judge, \
+                 patch.object(e2e, "log_preview"), \
+                 patch("builtins.print"):
+                self.assertFalse(e2e.wait_for(guest, "autostart", "trt1"))
+                self.assertEqual(judge.call_count, 1)
+
+    def test_wait_for_allows_transient_blank_then_tv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ppm = Path(tmp, "frame.ppm")
+            ppm.write_bytes(FakeTv().frame())
+            guest = type("StubGuest", (), {
+                "label": "sim", "shots": 1,
+                "capture": lambda self, step: ppm,
+            })()
+            with patch.object(e2e, "judge", side_effect=[
+                    (False, {"channel": None}, "blank or black QEMU frame"),
+                    (True, {"channel": "trt1"}, None)]), \
+                 patch.object(e2e, "log_preview"), \
+                 patch.object(e2e.time, "sleep"), \
+                 patch("builtins.print"):
+                self.assertTrue(e2e.wait_for(guest, "autostart", "trt1"))
+
+    def test_restart_rejects_transient_stock_kodi_before_recovery(self):
+        # A subsequent valid channel must not hide a brief Kodi menu.
+        with tempfile.TemporaryDirectory() as tmp:
+            ppm = Path(tmp, "frame.ppm")
+            ppm.write_bytes(FakeTv().frame())
+            guest = type("StubGuest", (), {
+                "label": "sim", "shots": 1,
+                "capture": lambda self, step: ppm,
+            })()
+            with patch.object(e2e, "judge", side_effect=[
+                    (False, {"channel": None}, "stock Kodi home screen"),
+                    (True, {"channel": "trt1"}, None)]) as judge, \
+                 patch.object(e2e, "log_preview"), \
+                 patch("builtins.print"):
+                self.assertFalse(e2e.wait_restart(guest, "trt1", timeout=10))
+                self.assertEqual(judge.call_count, 1)
+
+    def test_restart_rejects_wrong_live_channel_immediately(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ppm = Path(tmp, "frame.ppm")
+            ppm.write_bytes(FakeTv().frame())
+            guest = type("StubGuest", (), {
+                "label": "sim", "shots": 1,
+                "capture": lambda self, step: ppm,
+            })()
+            with patch.object(e2e, "judge", side_effect=[
+                    (False, {"channel": "atv"}, None),
+                    (True, {"channel": "trt1"}, None)]) as judge, \
+                 patch.object(e2e, "log_preview"), \
+                 patch("builtins.print"):
+                self.assertFalse(e2e.wait_restart(guest, "trt1", timeout=10))
+                self.assertEqual(judge.call_count, 1)
+
+    def test_outage_rejects_transient_wrong_live_channel(self):
+        # A later blank frame must not hide a brief switch to another station.
+        with tempfile.TemporaryDirectory() as tmp:
+            ppm = Path(tmp, "frame.ppm")
+            ppm.write_bytes(FakeTv().frame())
+            guest = type("StubGuest", (), {
+                "label": "sim", "shots": 1,
+                "capture": lambda self, step: ppm,
+            })()
+            with patch.object(e2e, "judge", side_effect=[
+                    (False, {"channel": "atv"}, None),
+                    (True, {"channel": None}, None)]) as judge, \
+                 patch.object(e2e, "log_preview"), \
+                 patch("builtins.print"):
+                self.assertFalse(e2e.wait_for(
+                    guest, "outage", "trt1", mode="not", timeout=10))
+                self.assertEqual(judge.call_count, 1)
+
     def test_preview_png_is_valid(self):
         with tempfile.TemporaryDirectory() as tmp:
             ppm = Path(tmp, "f.ppm")
