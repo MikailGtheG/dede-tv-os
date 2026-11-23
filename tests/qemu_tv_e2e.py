@@ -151,6 +151,13 @@ def wait_for(guest, step, expected, mode="fullscreen", timeout=None, interval=4)
                   flush=True)
             log_preview(guest, ppm, f"{step}-stock-kodi")
             return False
+        # During a source outage, switching to another playable channel is
+        # a failure even if the original source disappears on a later frame.
+        if mode == "not" and result["channel"] is not None and result["channel"] != expected:
+            print(f"DEDE_E2E: {guest.label}: FAIL {step} switched to "
+                  f"{result['channel']} instead of interrupting {expected}", flush=True)
+            log_preview(guest, ppm, f"{step}-wrong-channel")
+            return False
         if ok or elapsed >= timeout:
             status = "PASS" if ok else "FAIL"
             print(f"DEDE_E2E: {guest.label}: {status} {step} expected={expected} mode={mode} "
