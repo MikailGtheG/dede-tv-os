@@ -258,6 +258,13 @@ def wait_restart(guest, expected, timeout=None):
                   flush=True)
             log_preview(guest, ppm, "restart-stock-kodi")
             return False
+        # A different live channel is not a valid restart interruption:
+        # accepting it would hide an unintended channel switch on recovery.
+        if result["channel"] is not None and result["channel"] != expected:
+            print(f"DEDE_E2E: {guest.label}: FAIL restart switched to "
+                  f"{result['channel']} instead of {expected}", flush=True)
+            log_preview(guest, ppm, "restart-wrong-channel")
+            return False
         if not ok and not interrupted:
             interrupted = True
             print(f"DEDE_E2E: {guest.label}: picture interrupted (Kodi restarting) "
