@@ -143,6 +143,14 @@ def wait_for(guest, step, expected, mode="fullscreen", timeout=None, interval=4)
         ppm = guest.capture(step)
         ok, result, stock = judge(ppm, expected, mode)
         elapsed = time.monotonic() - started
+        # Never allow a transient stock Kodi screen to pass unnoticed while
+        # waiting for a later valid TV frame. Blank restart frames are normal.
+        if stock is not None and not stock.startswith((
+                "blank or black QEMU frame", "uniform QEMU frame")):
+            print(f"DEDE_E2E: {guest.label}: FAIL {step} exposed stock Kodi UI: {stock}",
+                  flush=True)
+            log_preview(guest, ppm, f"{step}-stock-kodi")
+            return False
         if ok or elapsed >= timeout:
             status = "PASS" if ok else "FAIL"
             print(f"DEDE_E2E: {guest.label}: {status} {step} expected={expected} mode={mode} "
