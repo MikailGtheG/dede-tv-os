@@ -402,7 +402,7 @@ jobs:
           ) &
           while true; do
             tail -n0 -F /home/dede/.kodi/temp/kodi.log 2>/dev/null \
-              | grep --line-buffered -aE 'OpenFile|CloseFile|OnPlayBack|CCurlFile|SwitchToChannel|Previous channel|fatal|FATAL|terminate|Exception|error <general>' \
+              | grep --line-buffered -aE 'OpenFile|CloseFile|OnPlayBack|CCurlFile|SwitchToChannel|Previous channel|fatal|FATAL|terminate|Exception|error <general>|DEDE_VIRTUAL' \
               | grep --line-buffered -avE 'DBus|VDPAU|CAESinkALSA|parentheses|custom window|asked to focus' \
               | redact | sed -u 's/^/DEDE_CI_KODI: log| /' > /dev/ttyS0
             sleep 2
@@ -553,7 +553,7 @@ jobs:
               if not lines:
                   return None
               return lines[-1].split("DEDE_VIRTUAL: Dede Film -> ", 1)[1].split(" @ ", 1)[0].strip()
-          session, last_time = False, None
+          session, last_time, last_summary = False, None, None
           while True:
               time.sleep(2)
               try:
@@ -561,8 +561,16 @@ jobs:
                   if not any(p.get("type") == "video" for p in players):
                       session = False
                       continue
-                  item = (rpc("Player.GetItem", {"playerid": 1, "properties": ["title"]}) or {}).get("item") or {}
-                  if item.get("label") != "Dede Film":
+                  item = (rpc("Player.GetItem", {"playerid": 1,
+                                                 "properties": ["title", "channel", "channelnumber", "file"]}) or {}).get("item") or {}
+                  summary = json.dumps({k: item.get(k) for k in ("type", "label", "channel", "channelnumber", "file")},
+                                       ensure_ascii=False)
+                  if summary != last_summary:
+                      last_summary = summary
+                      with open("/dev/ttyS0", "w") as console:
+                          console.write("DEDE_CI_VIRTUAL: playing " + summary[:300] + "\n")
+                  if item.get("channelnumber") != 5 and "Dede Film" not in (item.get("label") or "") \
+                          and "Dede Film" not in (item.get("channel") or ""):
                       session = False
                       continue
                   kodi = seconds((rpc("Player.GetProperties", {"playerid": 1, "properties": ["time"]}) or {})["time"])
@@ -585,8 +593,10 @@ jobs:
                           f"core={core_s:.1f}s drift={drift:+.1f}s core_file={core_path.rsplit('/', 1)[-1]}")
                   with open("/dev/ttyS0", "w") as console:
                       console.write(line + "\n")
-              except Exception:
+              except Exception as exc:
                   session = False
+                  with open("/dev/ttyS0", "w") as console:
+                      console.write(f"DEDE_CI_VIRTUAL: checker error {type(exc).__name__}: {exc}"[:300] + "\n")
           PY2
           SH
           cat > config/includes.chroot/etc/systemd/system/dede-ci-virtual-check.service <<'UNIT'
