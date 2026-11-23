@@ -249,7 +249,11 @@ def wait_restart(guest, expected, timeout=None):
     while time.monotonic() - started < timeout:
         ppm = guest.capture("restart")
         ok, result, stock = judge(ppm, expected, "fullscreen")
-        if stock is not None:
+        # Blank/uniform captures are expected while Kodi is restarting.
+        # They still count as interrupted playback and must recover before
+        # the deadline; only an actual stock Kodi UI is an immediate failure.
+        if stock is not None and not stock.startswith((
+                "blank or black QEMU frame", "uniform QEMU frame")):
             print(f"DEDE_E2E: {guest.label}: FAIL restart exposed stock Kodi UI: {stock}",
                   flush=True)
             log_preview(guest, ppm, "restart-stock-kodi")
