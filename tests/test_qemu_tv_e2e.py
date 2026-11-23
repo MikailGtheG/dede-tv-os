@@ -260,6 +260,39 @@ class E2ESelfTest(unittest.TestCase):
                  patch("builtins.print"):
                 self.assertTrue(e2e.wait_for(guest, "autostart", "trt1"))
 
+    def test_restart_rejects_transient_stock_kodi_before_recovery(self):
+        # A subsequent valid channel must not hide a brief Kodi menu.
+        with tempfile.TemporaryDirectory() as tmp:
+            ppm = Path(tmp, "frame.ppm")
+            ppm.write_bytes(FakeTv().frame())
+            guest = type("StubGuest", (), {
+                "label": "sim", "shots": 1,
+                "capture": lambda self, step: ppm,
+            })()
+            with patch.object(e2e, "judge", side_effect=[
+                    (False, {"channel": None}, "stock Kodi home screen"),
+                    (True, {"channel": "trt1"}, None)]) as judge, \
+                 patch.object(e2e, "log_preview"), \
+                 patch("builtins.print"):
+                self.assertFalse(e2e.wait_restart(guest, "trt1", timeout=10))
+                self.assertEqual(judge.call_count, 1)
+
+    def test_restart_rejects_wrong_live_channel_immediately(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ppm = Path(tmp, "frame.ppm")
+            ppm.write_bytes(FakeTv().frame())
+            guest = type("StubGuest", (), {
+                "label": "sim", "shots": 1,
+                "capture": lambda self, step: ppm,
+            })()
+            with patch.object(e2e, "judge", side_effect=[
+                    (False, {"channel": "atv"}, None),
+                    (True, {"channel": "trt1"}, None)]) as judge, \
+                 patch.object(e2e, "log_preview"), \
+                 patch("builtins.print"):
+                self.assertFalse(e2e.wait_restart(guest, "trt1", timeout=10))
+                self.assertEqual(judge.call_count, 1)
+
     def test_preview_png_is_valid(self):
         with tempfile.TemporaryDirectory() as tmp:
             ppm = Path(tmp, "f.ppm")
