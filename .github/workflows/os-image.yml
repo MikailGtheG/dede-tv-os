@@ -75,7 +75,7 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: 8adb7de4e726e23b1520157893855b8a8ff618e5
+          DEDE_SKIN_SHA: 5f0b4f61a12965b9db3b2c24d459ec980d747d3c
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
@@ -582,12 +582,16 @@ jobs:
                                                   "--db", "/home/dede/.local/share/dede-tv/channels.db", "now", "Dede Film"],
                                                  capture_output=True, text=True, timeout=10).stdout.partition(" @ ")[0]
                       expected_title = scheduled.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-                      if now_title and now_title == expected_title and next_title:
+                      # What the banner shows (skin: Player.Title / VideoPlayer.NextTitle).
+                      shown = rpc("XBMC.GetInfoLabels", {"labels": ["Player.Title", "VideoPlayer.NextTitle"]}) or {}
+                      banner_now, banner_next = shown.get("Player.Title"), shown.get("VideoPlayer.NextTitle")
+                      if now_title and now_title == expected_title == banner_now and next_title == banner_next:
                           epg_ok = True
                           epg_line = f"DEDE_CI_EPG: ok now={now_title} next={next_title}"
                       elif time.time() - epg_logged > 20:
                           epg_logged = time.time()
-                          epg_line = f"DEDE_CI_EPG: waiting now={now_title} next={next_title} core={expected_title}"
+                          epg_line = (f"DEDE_CI_EPG: waiting now={now_title} next={next_title} core={expected_title} "
+                                      f"banner={banner_now}/{banner_next}")
                       else:
                           epg_line = None
                       if epg_line:
