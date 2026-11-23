@@ -293,6 +293,24 @@ class E2ESelfTest(unittest.TestCase):
                 self.assertFalse(e2e.wait_restart(guest, "trt1", timeout=10))
                 self.assertEqual(judge.call_count, 1)
 
+    def test_outage_rejects_transient_wrong_live_channel(self):
+        # A later blank frame must not hide a brief switch to another station.
+        with tempfile.TemporaryDirectory() as tmp:
+            ppm = Path(tmp, "frame.ppm")
+            ppm.write_bytes(FakeTv().frame())
+            guest = type("StubGuest", (), {
+                "label": "sim", "shots": 1,
+                "capture": lambda self, step: ppm,
+            })()
+            with patch.object(e2e, "judge", side_effect=[
+                    (False, {"channel": "atv"}, None),
+                    (True, {"channel": None}, None)]) as judge, \
+                 patch.object(e2e, "log_preview"), \
+                 patch("builtins.print"):
+                self.assertFalse(e2e.wait_for(
+                    guest, "outage", "trt1", mode="not", timeout=10))
+                self.assertEqual(judge.call_count, 1)
+
     def test_preview_png_is_valid(self):
         with tempfile.TemporaryDirectory() as tmp:
             ppm = Path(tmp, "f.ppm")
