@@ -249,6 +249,11 @@ def wait_restart(guest, expected, timeout=None):
     while time.monotonic() - started < timeout:
         ppm = guest.capture("restart")
         ok, result, stock = judge(ppm, expected, "fullscreen")
+        if stock is not None:
+            print(f"DEDE_E2E: {guest.label}: FAIL restart exposed stock Kodi UI: {stock}",
+                  flush=True)
+            log_preview(guest, ppm, "restart-stock-kodi")
+            return False
         if not ok and not interrupted:
             interrupted = True
             print(f"DEDE_E2E: {guest.label}: picture interrupted (Kodi restarting) "
