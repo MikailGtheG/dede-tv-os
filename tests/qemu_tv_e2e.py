@@ -188,8 +188,9 @@ def run(guest):
                                                   timeout=FIRST_PICTURE_TIMEOUT, interval=6)):
         return steps  # nothing further can be judged without a picture
     # P3: first-time administration setup with the code shown on the TV.
-    check("admin-tv-shows-setup-code", serial_contains("DEDE_CI_ADMIN: tv shows code", timeout=180))
-    log_preview(guest, guest.capture("admin-setup-card"), "admin-setup-card")
+    check("admin-tv-shows-setup-code",
+          serial_contains("DEDE_CI_ADMIN: tv shows code", timeout=180)
+          and setup_card_on_screen(guest, "trt1"))
     check("admin-setup-via-web", admin_setup())
     check("admin-tv-hides-code", serial_contains("DEDE_CI_ADMIN: tv code cleared", timeout=60))
     check("admin-sign-in", admin_sign_in())
@@ -275,6 +276,29 @@ def run(guest):
     check("virtual-time-runs-while-away",
           away and back and virtual_positions_ok(minimum=before + 1, timeout=120))
     return steps
+
+
+# Setup card (skin: dialog 1109, 920,40 560x280 of 1920x1080).
+SETUP_CARD_RECT = (0.49, 0.05, 0.76, 0.28)
+
+
+def setup_card_on_screen(guest, channel, timeout=20):
+    """A dark card covers the top of the picture instead of the channel colour."""
+    reference = channel_check.channel_colours()[channel]
+    deadline = time.monotonic() + timeout
+    while True:
+        ppm = guest.capture("admin-setup-card")
+        width, height, pixels = read_ppm(ppm)
+        card = channel_check.mean_colour(width, height, pixels, SETUP_CARD_RECT)
+        ok = channel_check.distance(card, reference) > 50 and max(card) < 110
+        if ok or time.monotonic() >= deadline:
+            print(f"DEDE_E2E: {guest.label}: {'PASS' if ok else 'FAIL'} setup card "
+                  f"mean={tuple(round(v) for v in card)}", flush=True)
+            log_preview(guest, ppm, "admin-setup-card")
+            return ok
+        os.unlink(ppm)
+        guest.shots -= 1
+        time.sleep(2)
 
 
 def admin_request(method, path, form=None, cookies=None, origin=True):

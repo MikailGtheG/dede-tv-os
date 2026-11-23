@@ -188,6 +188,11 @@ class FakeTv:
                     with open(self.serial, "a") as log:
                         log.write("DEDE_GUARD: channel id 7 not playing (external stream unavailable)\n")
 
+    def admin_card(self):
+        """The setup card shows until the password is set."""
+        return (self.admin is not None and self.admin_announced and self.admin["password"] is None
+                and self.broken not in ("admin-code-not-shown", "admin-card-hidden"))
+
     def frame(self):
         self.tick()
         bg = bytes((16, 17, 20))
@@ -209,6 +214,9 @@ class FakeTv:
             if not self.down and H * 0.45 < y < H * 0.55:
                 # Centred caption (channel name) or the home screen message.
                 row = row[:cap_x0 * 3] + white * (cap_x1 - cap_x0) + row[cap_x1 * 3:]
+            if self.admin_card() and H * 0.037 < y < H * 0.296:
+                x0, x1 = int(W * 0.479), int(W * 0.771)
+                row = row[:x0 * 3] + bytes((38, 30, 32)) * (x1 - x0) + row[x1 * 3:]
             if self.home and self.broken == "dialog-on-dead" and H * 0.31 < y < H * 0.69:
                 x0, x1 = int(W * 0.26), int(W * 0.74)
                 row = row[:x0 * 3] + bytes((32, 35, 40)) * (x1 - x0) + row[x1 * 3:]
@@ -290,6 +298,10 @@ class E2ESelfTest(unittest.TestCase):
     def test_setup_code_missing_on_tv_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="admin-code-not-shown")))
         self.assertTrue(steps["autostart-channel-01"])
+        self.assertFalse(steps["admin-tv-shows-setup-code"])
+
+    def test_setup_card_missing_on_screen_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="admin-card-hidden")))
         self.assertFalse(steps["admin-tv-shows-setup-code"])
 
     def test_failed_admin_setup_is_caught(self):
