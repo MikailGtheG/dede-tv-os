@@ -635,10 +635,16 @@ jobs:
                       length = next(v / 1000 for k, v in cache.items() if k.split("|")[0].endswith("/" + film))
                   except Exception:
                       length = None
-                  if not core_path.endswith("/" + film) and length is not None and expected > length - 3:
+                  same_film = core_path.endswith("/" + film)
+                  if not same_film and length is not None and core_s < 10:
+                      # The schedule already moved on to the next film: compare
+                      # on one timeline (end of the handed film + core position).
+                      drift = expected - (length + core_s)
+                      same_film = True
+                  elif not same_film and length is not None and expected > length - 3:
                       # The handed-over film ended before this check: no verdict.
                       continue
-                  verdict = "ok" if core_path.endswith("/" + film) and abs(drift) <= 5 else "mismatch"
+                  verdict = "ok" if same_film and abs(drift) <= 5 else "mismatch"
                   line = (f"DEDE_CI_VIRTUAL: {verdict} file={film} handed={position:.1f}s "
                           f"age={now - stamp:.1f}s core={core_s:.1f}s drift={drift:+.2f}s "
                           f"core_file={core_path.rsplit('/', 1)[-1]} kodi_time={kodi_s:.1f}s")
