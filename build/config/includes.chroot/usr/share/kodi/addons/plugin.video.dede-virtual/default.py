@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.parse
 
 CORE = "/usr/local/bin/dede-tv-core"
@@ -19,12 +20,16 @@ DB = os.path.join(HOME, ".local", "share", "dede-tv", "channels.db")
 DURATIONS = os.path.join(HOME, ".local", "share", "dede-tv", "virtual-durations.json")
 
 
-def current_playback(name, run=subprocess.run):
+def current_playback(name, run=subprocess.run, clock=time.monotonic):
     """Return (file, position_seconds) from dede-tv-core, or raise ValueError."""
     if not name or len(name.encode()) > 92 or any(ord(c) < 0x20 for c in name):
         raise ValueError("invalid channel name")
+    started = clock()
     result = run([CORE, "--db", DB, "request-virtual", name, MEDIA_ROOT],
                  capture_output=True, text=True, timeout=8, check=False)
+    # The core computed the position somewhere during the call; on slow
+    # hardware starting it takes seconds, so hand Kodi the position for now.
+    latency = max(0.0, clock() - started) / 2
     if result.returncode != 0:
         raise ValueError("channel not available")
     request = json.loads(result.stdout)
@@ -36,7 +41,7 @@ def current_playback(name, run=subprocess.run):
     resume = params["options"]["resume"]
     position = (int(resume["hours"]) * 3600 + int(resume["minutes"]) * 60
                 + int(resume["seconds"]) + int(resume["milliseconds"]) / 1000.0)
-    return path, position
+    return path, position + latency
 
 
 def duration_seconds(path, position):

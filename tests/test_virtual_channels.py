@@ -253,6 +253,19 @@ class ResolverTests(Fixture):
         _, second = self.resolver.current_playback("Dede Film")
         self.assertAlmostEqual(second - first, 2.1, delta=0.6)
 
+    def test_core_call_latency_is_compensated(self):
+        # A slow core start must not make the film start behind schedule.
+        reply = {"params": {"item": {"file": str(self.media.resolve()) + "/film/a.mkv"},
+                            "options": {"resume": {"hours": 0, "minutes": 0, "seconds": 10,
+                                                   "milliseconds": 0}}}}
+
+        class Result:
+            returncode, stdout = 0, json.dumps(reply)
+        ticks = iter([100.0, 104.0])
+        _, position = self.resolver.current_playback(
+            "Dede Film", run=lambda *a, **k: Result(), clock=lambda: next(ticks))
+        self.assertAlmostEqual(position, 12.0)
+
     def test_unknown_or_invalid_channel_fails_cleanly(self):
         for name in ("Unbekannt", "", "x\nPlayer.Quit", "a" * 200):
             with self.subTest(name=name[:20]):
