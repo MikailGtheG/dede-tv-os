@@ -394,8 +394,13 @@ jobs:
               for crash in /home/dede/kodi_crashlog-*.log; do
                 [ -f "$crash" ] || continue
                 case " $seen " in *" $crash "*) continue ;; esac
+                # Kodi writes the stack trace after the header: wait for the end.
+                grep -q 'END Kodi CRASH LOG' "$crash" || continue
                 seen="$seen $crash"
-                tail -n 60 "$crash" | redact | sed 's/^/DEDE_CI_KODI: crashlog| /' > /dev/ttyS0
+                {
+                  sed -n '/STACK TRACE/,/END STACK TRACE/p' "$crash" | head -120
+                  sed -n '/LOG FILE/,/END LOG FILE/p' "$crash" | tail -40
+                } | redact | sed 's/^/DEDE_CI_KODI: crashlog| /' > /dev/ttyS0
               done
               sleep 5
             done
@@ -517,30 +522,24 @@ jobs:
           cat > config/includes.chroot/usr/local/sbin/dede-ci-virtual-check <<'SH'
           #!/bin/sh
           exec python3 - <<'PY2'
-          import json, socket, subprocess, time
+          import json, subprocess, sys, time
+          sys.path.insert(0, "/usr/local/lib/dede-tv")
+          from dede_kodi_rpc import Connection
+          # One persistent connection: short-lived connection churn has
+          # crashed Kodi's JSON-RPC server before.
+          connection = None
           def rpc(method, params=None):
-              req = {"jsonrpc": "2.0", "id": 88, "method": method}
-              if params is not None:
-                  req["params"] = params
-              with socket.create_connection(("127.0.0.1", 9090), timeout=5) as s:
-                  s.sendall(json.dumps(req).encode())
-                  buf, dec, end = b"", json.JSONDecoder(), time.monotonic() + 8
-                  while time.monotonic() < end:
-                      part = s.recv(65536)
-                      if not part:
-                          return None
-                      buf += part
-                      text, pos = buf.decode("utf-8", "replace"), 0
-                      while pos < len(text):
-                          while pos < len(text) and text[pos].isspace():
-                              pos += 1
-                          try:
-                              doc, pos = dec.raw_decode(text, pos)
-                          except ValueError:
-                              break
-                          if doc.get("id") == 88:
-                              return doc.get("result")
-              return None
+              global connection
+              if connection is None:
+                  connection = Connection()
+              try:
+                  result = connection.call(method, params, timeout=8)
+                  connection.notifications()
+                  return result
+              except Exception:
+                  connection.close()
+                  connection = None
+                  raise
           def seconds(t):
               return t["hours"] * 3600 + t["minutes"] * 60 + t["seconds"] + t["milliseconds"] / 1000
           from datetime import datetime
