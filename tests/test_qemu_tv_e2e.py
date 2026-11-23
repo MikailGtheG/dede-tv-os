@@ -16,7 +16,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 e2e = importlib.util.module_from_spec(spec)
 loader.exec_module(e2e)
 
-ORDER = ["trt1", "atv", "kanald", "showtv", "teskilat"]
+ORDER = ["trt1", "atv", "kanald", "showtv", "dedefilm", "teskilat"]
 W, H = 640, 400
 
 
@@ -39,9 +39,30 @@ class FakeTv:
         self.outage = False
         self.recover_at = None
         self.hang_at = None
+        self.last_playing = None
+        self.film_frames = 0
+
+    def serial_line(self, line):
+        if self.serial:
+            with open(self.serial, "a") as log:
+                log.write(line + "\n")
 
     def tick(self):
         """Called per screendump: CI guest crash trigger and source outage."""
+        playing = ORDER[self.index] if not (self.home or self.down or self.outage) else None
+        if playing == "dedefilm" and self.last_playing != "dedefilm":
+            verdict = "mismatch" if self.broken == "virtual-wrong-position" else "ok"
+            self.serial_line(f"DEDE_CI_VIRTUAL: {verdict} file=film-01.mkv drift=+0.4s")
+            self.film_frames = 0
+        if playing == "dedefilm":
+            self.film_frames += 1
+            # The E2E's waits are patched out, so the guard's "next film"
+            # event is emitted at once; the broken variant drops to Home.
+            if self.film_frames == 1 and self.broken != "virtual-stops-after-film":
+                self.serial_line("DEDE_GUARD: channel id 9: programme item ended, continuing")
+            if self.film_frames == 2 and self.broken == "virtual-stops-after-film":
+                self.home = True
+        self.last_playing = playing
         if self.crash_at is None and ORDER[self.index] == "teskilat" and not self.list_open \
                 and not self.home:
             self.crash_at = self.frames + 2
@@ -89,7 +110,7 @@ class FakeTv:
             self.home = True
         elif name.isdigit() and self.broken != "no-number-entry":
             self.entry += name
-            numbers = {"1": 0, "2": 1, "3": 2, "4": 3, "6": 4}
+            numbers = {"1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5}
             if self.entry in numbers:
                 self.index, self.entry = numbers[self.entry], ""
             elif self.entry == "90":
@@ -310,6 +331,16 @@ class E2ESelfTest(unittest.TestCase):
                 self.assertFalse(e2e.wait_for(
                     guest, "outage", "trt1", mode="not", timeout=10))
                 self.assertEqual(judge.call_count, 1)
+
+    def test_virtual_position_mismatch_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="virtual-wrong-position")))
+        self.assertTrue(steps["virtual-05-plays"])
+        self.assertFalse(steps["virtual-position-matches-schedule"])
+
+    def test_virtual_channel_stopping_after_a_film_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="virtual-stops-after-film")))
+        self.assertTrue(steps["virtual-05-plays"])
+        self.assertFalse(steps["virtual-continues-next-film"])
 
     def test_preview_png_is_valid(self):
         with tempfile.TemporaryDirectory() as tmp:

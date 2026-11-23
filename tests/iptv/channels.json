@@ -1,5 +1,5 @@
 {
-  "_comment": "Synthetic test channels mirroring the product vision line-up. Content is a generated test pattern; names are test labels only. Number 5 is reserved for the local virtual channel 'Dede Film' served by dede-tv-core, not IPTV. Colours are distinct hues (no blue/cyan, which the stock-Kodi dialog detector uses) so QEMU screenshots identify the playing channel.",
+  "_comment": "Synthetic test channels mirroring the product vision line-up. Content is a generated test pattern; names are test labels only. Number 5 is reserved for the local virtual channel 'Dede Film' served by dede-tv-core, not IPTV. Colours are distinct hues (no blue/cyan, which the stock-Kodi dialog detector uses) so QEMU screenshots identify the playing channel. virtual_channels are local 24/7 test films (CI image only), not served by the IPTV test server.",
   "segment_seconds": 2,
   "loop_segments": 10,
   "channels": [
@@ -51,6 +51,17 @@
       "number": 91,
       "name": "Test Stillstand",
       "fault": "stalled"
+    }
+  ],
+  "virtual_channels": [
+    {
+      "id": "dedefilm",
+      "number": 5,
+      "name": "Dede Film",
+      "color": "0xc8508c",
+      "tone_hz": 392,
+      "parts": 3,
+      "part_seconds": 40
     }
   ]
 }

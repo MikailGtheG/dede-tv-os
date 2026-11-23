@@ -11,6 +11,7 @@
 # CAddonDatabase::SyncInstalled first discovers them, so no dialog is shown:
 #   - skin.dede-tv:   required system add-on. Kodi re-enables it on every
 #                     start and refuses to let any UI disable the TV skin.
+#   - plugin.video.dede-virtual: required; resolves local 24/7 channels.
 #   - pvr.iptvsimple: optional system add-on. Enabled on first discovery;
 #                     a later administrator decision to disable it is kept.
 #
@@ -33,7 +34,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 path = sys.argv[1]
-REQUIRED = ("skin.dede-tv",)
+REQUIRED = ("skin.dede-tv", "plugin.video.dede-virtual")
 OPTIONAL = ("pvr.iptvsimple",)
 
 with open(path, "rb") as source:

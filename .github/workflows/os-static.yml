@@ -26,6 +26,8 @@ jobs:
                       Path('build/config/includes.chroot/usr/local/libexec/dede-tv-autoplay'),
                       Path('build/config/includes.chroot/usr/local/libexec/dede-tv-guard'),
                       Path('build/config/includes.chroot/usr/local/libexec/dede-kodi-watchdog'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-virtual-sync'),
+                      Path('build/config/includes.chroot/usr/share/kodi/addons/plugin.video.dede-virtual/default.py'),
                       Path('build/config/includes.chroot/usr/local/lib/dede-tv/dede_kodi_rpc.py')]
           for source in sources:
               ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
@@ -227,6 +229,7 @@ jobs:
           python3 -m unittest discover -s tests -p "test_tv_playback_helpers.py" -v
           python3 -m unittest discover -s tests -p "test_tv_guard.py" -v
           python3 -m unittest discover -s tests -p "test_kodi_watchdog.py" -v
+          python3 -m unittest discover -s tests -p "test_virtual_channels.py" -v
       - name: Regression - QEMU channel classifier and E2E driver self-test
         run: |
           python3 -m unittest discover -s tests -p "test_qemu_channel.py" -v

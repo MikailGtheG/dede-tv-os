@@ -6,7 +6,8 @@ mkdir -p /etc/systemd/system/multi-user.target.wants \
   /etc/systemd/system/network-online.target.wants \
   /etc/systemd/system/sockets.target.wants
 chmod 0755 /usr/local/libexec/dede-iptv-provision /usr/local/libexec/dede-tv-autoplay \
-  /usr/local/libexec/dede-tv-guard /usr/local/libexec/dede-kodi-watchdog
+  /usr/local/libexec/dede-tv-guard /usr/local/libexec/dede-kodi-watchdog \
+  /usr/local/libexec/dede-virtual-sync
 chmod 0755 /usr/local/lib/dede-tv
 chmod 0644 /usr/local/lib/dede-tv/dede_kodi_rpc.py
 # The IPTV source may carry subscriber credentials: readable by the TV user only.
@@ -38,3 +39,9 @@ ln -sfn ../dede-tv-guard.service \
 mkdir -p /etc/systemd/system/timers.target.wants
 ln -sfn ../dede-kodi-watchdog.timer \
   /etc/systemd/system/timers.target.wants/dede-kodi-watchdog.timer
+# Media for local 24/7 channels: administrator-managed, readable by the TV.
+install -d -m 0755 -o root -g root /srv/dede-tv /srv/dede-tv/media
+if [ -f /etc/dede-tv/virtual-channels.conf ]; then
+  chown root:dede /etc/dede-tv/virtual-channels.conf
+  chmod 0640 /etc/dede-tv/virtual-channels.conf
+fi

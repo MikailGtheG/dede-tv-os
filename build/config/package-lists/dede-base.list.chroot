@@ -22,3 +22,5 @@ xserver-xorg-video-fbdev
 xserver-xorg-input-libinput
 xinit
 systemd-resolved
+# ffprobe measures local 24/7 channel video durations.
+ffmpeg

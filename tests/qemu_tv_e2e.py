@@ -15,7 +15,9 @@ Drives the guest only through its virtual keyboard (QEMU monitor
   9. Dead channel 90: Dede no-picture screen, guard notices, OK plays 01
  10. Source outage (HTTP 503): picture interrupted, returns alone
  11. Kodi hung (SIGSTOP by the CI guest): watchdog restart, 01 returns
- 12. No capture shows a stock Kodi dialog or splash
+ 12. Local 24/7 channel 05: plays at the scheduled position, continues
+     with the next film, and its time runs on while the viewer is away
+ 13. No capture shows a stock Kodi dialog or splash
 
 Usage: qemu_tv_e2e.py MONITOR_SOCKET OUTPUT_DIR LABEL
 Prints DEDE_E2E lines; exit status 0 only if every step passed.
@@ -36,7 +38,7 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 17
+TOTAL_STEPS = 21
 HANG_TIMEOUT = int(os.environ.get("DEDE_E2E_HANG_TIMEOUT", "420"))
 PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
 SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
@@ -235,8 +237,55 @@ def run(guest):
         return steps
     # The CI guest now freezes Kodi (SIGSTOP): process alive, picture stuck.
     # The watchdog must restart it and channel 01 must return by itself.
-    check("hang-watchdog-recovers-01", wait_restart(guest, "trt1", timeout=HANG_TIMEOUT))
+    if not check("hang-watchdog-recovers-01", wait_restart(guest, "trt1", timeout=HANG_TIMEOUT)):
+        return steps
+    # P2: local 24/7 channel "Dede Film" on 05 (three 40 s films).
+    time.sleep(6)
+    guest.key("5", settle=0.5)
+    if not check("virtual-05-plays", wait_for(guest, "virtual-05", "dedefilm", timeout=90)):
+        return steps
+    check("virtual-position-matches-schedule", virtual_positions_ok(minimum=1, timeout=60))
+    # The running film ends within 40 s; the next one must follow by itself.
+    time.sleep(45)
+    continued = serial_contains("DEDE_GUARD:", "programme item ended, continuing", timeout=60)
+    check("virtual-continues-next-film",
+          continued and wait_for(guest, "virtual-next-film", "dedefilm", timeout=60))
+    # Leave the channel and come back: its time must have kept running.
+    before = serial_count("DEDE_CI_VIRTUAL: ok")
+    guest.key("pgup")
+    away = wait_for(guest, "virtual-away-06", "teskilat")
+    time.sleep(25)
+    guest.key("pgdn")
+    back = wait_for(guest, "virtual-back-05", "dedefilm")
+    check("virtual-time-runs-while-away",
+          away and back and virtual_positions_ok(minimum=before + 1, timeout=60))
     return steps
+
+
+def serial_count(needle):
+    try:
+        text = Path(SERIAL_LOG).read_bytes().decode("utf-8", "replace")
+    except OSError:
+        return 0
+    return sum(1 for line in text.splitlines() if needle in line)
+
+
+def virtual_positions_ok(minimum, timeout=60):
+    """The CI guest compares Kodi's position with the core schedule on
+    every local-channel start; require enough "ok" lines and no mismatch."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if serial_count("DEDE_CI_VIRTUAL: mismatch"):
+            print("DEDE_E2E: serial: local channel position does not match its schedule", flush=True)
+            serial_contains("DEDE_CI_VIRTUAL: mismatch", timeout=0)
+            return False
+        if serial_count("DEDE_CI_VIRTUAL: ok") >= minimum:
+            serial_contains("DEDE_CI_VIRTUAL: ok", timeout=0)
+            return True
+        if time.monotonic() >= deadline:
+            print(f"DEDE_E2E: serial: fewer than {minimum} local channel position checks", flush=True)
+            return False
+        time.sleep(2)
 
 
 def serial_contains(*needles, timeout=30):
