@@ -40,7 +40,7 @@ jobs:
       - name: Build pinned Rust TV core for the Debian 13 appliance
         shell: bash
         env:
-          DEDE_CORE_SHA: 516355e46fb566f35ebe7dbeebf49f81e5d69b3a
+          DEDE_CORE_SHA: fdeffbf0fda291c939e3271f8c1f0888b648a8e9
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
@@ -75,7 +75,7 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: 1773bc9392580601e40a6368336a0d51ceb8b6d4
+          DEDE_SKIN_SHA: 8adb7de4e726e23b1520157893855b8a8ff618e5
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
@@ -555,6 +555,7 @@ jobs:
               film, _, rest = line.split("DEDE_VIRTUAL: Dede Film -> ", 1)[1].partition(" @ ")
               return film.strip(), float(rest.strip().rstrip("s")), stamp
           checked, last_summary = None, None
+          epg_ok, epg_logged = False, 0.0
           while True:
               time.sleep(2)
               try:
@@ -571,6 +572,27 @@ jobs:
                           console.write("DEDE_CI_VIRTUAL: playing " + summary[:300] + "\n")
                   if item.get("channelnumber") != 5:
                       continue
+                  if not epg_ok and item.get("id"):
+                      # The guide's "now" title must name the film the core schedules.
+                      details = (rpc("PVR.GetChannelDetails", {"channelid": item["id"],
+                                 "properties": ["broadcastnow", "broadcastnext"]}) or {}).get("channeldetails") or {}
+                      now_title = (details.get("broadcastnow") or {}).get("title")
+                      next_title = (details.get("broadcastnext") or {}).get("title")
+                      scheduled = subprocess.run(["runuser", "-u", "dede", "--", "/usr/local/bin/dede-tv-core",
+                                                  "--db", "/home/dede/.local/share/dede-tv/channels.db", "now", "Dede Film"],
+                                                 capture_output=True, text=True, timeout=10).stdout.partition(" @ ")[0]
+                      expected_title = scheduled.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                      if now_title and now_title == expected_title and next_title:
+                          epg_ok = True
+                          epg_line = f"DEDE_CI_EPG: ok now={now_title} next={next_title}"
+                      elif time.time() - epg_logged > 20:
+                          epg_logged = time.time()
+                          epg_line = f"DEDE_CI_EPG: waiting now={now_title} next={next_title} core={expected_title}"
+                      else:
+                          epg_line = None
+                      if epg_line:
+                          with open("/dev/ttyS0", "w") as console:
+                              console.write(epg_line[:300] + "\n")
                   resolution = last_resolution()
                   if resolution is None or resolution == checked:
                       continue
@@ -1105,6 +1127,8 @@ jobs:
             usr/share/kodi/addons/plugin.video.dede-virtual/addon.xml \
             usr/share/kodi/addons/plugin.video.dede-virtual/default.py \
             usr/bin/ffprobe \
+            etc/systemd/system/dede-virtual-epg.service \
+            etc/systemd/system/timers.target.wants/dede-virtual-epg.timer \
             etc/systemd/system/dede-kodi-watchdog.service \
             etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service \
             etc/systemd/system/multi-user.target.wants/dede-tv-guard.service \

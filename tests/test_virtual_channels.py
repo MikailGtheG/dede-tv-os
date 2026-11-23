@@ -3,7 +3,7 @@
 
 Uses fake ffprobe and, unless DEDE_CORE_BIN points at a real dede-tv-core
 binary, a fake core with the same CLI contract (add/list/now/remove/
-request-virtual).
+request-virtual/schedule).
 """
 import importlib.machinery
 import importlib.util
@@ -56,6 +56,17 @@ elif cmd in ("now", "request-virtual"):
              "seconds": pos // 1000 % 60, "milliseconds": pos % 1000}
         print(json.dumps({"jsonrpc": "2.0", "method": "Player.Open", "id": 1,
                           "params": {"item": {"file": v["path"]}, "options": {"resume": r}}}))
+elif cmd == "schedule":
+    ch = state.get(args[0])
+    if not ch: sys.exit(1)
+    now = int(time.time() * 1000)
+    until, t, slots = now + int(args[1]) * 3600000, ch["start"], []
+    while t < until:
+        for v in ch["videos"]:
+            if t + v["duration_ms"] > now and t < until:
+                slots.append({"path": v["path"], "start_ms": t, "end_ms": t + v["duration_ms"]})
+            t += v["duration_ms"]
+    print(json.dumps(slots))
 else:
     sys.exit(2)
 '''
@@ -223,6 +234,61 @@ class SyncTests(Fixture):
     def test_empty_folder_publishes_no_channel(self):
         self.assertEqual(self.run_sync(), [])
         self.assertFalse(self.sync.INSTANCE.exists())
+
+
+class EpgTests(Fixture):
+    def guide(self):
+        root = ET.parse(self.sync.EPG).getroot()
+        return root.findall("channel"), root.findall("programme")
+
+    def test_guide_written_and_linked_to_the_channel(self):
+        self.film("Erster_Film.mkv", 40)
+        self.film("b.mp4", 50)
+        self.run_sync()
+        settings = {s.get("id"): s.text for s in ET.parse(self.sync.INSTANCE).getroot()}
+        self.assertEqual(settings["epgPathType"], "0")
+        self.assertEqual(settings["epgPath"], str(self.sync.EPG))
+        channels, programmes = self.guide()
+        tvg = self.sync.tvg_id("Dede Film")
+        self.assertIn(f'tvg-id="{tvg}"', self.sync.PLAYLIST.read_text())
+        self.assertEqual([(c.get("id"), c.findtext("display-name")) for c in channels],
+                         [(tvg, "Dede Film")])
+        self.assertGreater(len(programmes), 100)
+        self.assertEqual({p.get("channel") for p in programmes}, {tvg})
+        for first, second in zip(programmes, programmes[1:]):
+            self.assertEqual(first.get("stop"), second.get("start"))
+        self.assertEqual({p.findtext("title") for p in programmes}, {"Erster Film", "b"})
+        now = time.strftime("%Y%m%d%H%M%S", time.gmtime())
+        self.assertLessEqual(programmes[0].get("start")[:14], now)
+        self.assertGreater(programmes[0].get("stop")[:14], now)
+        self.assertTrue(programmes[0].get("start").endswith(" +0000"))
+
+    def test_titles_are_escaped(self):
+        self.film("<b>Tom & Jerry<i>.mp4", 40)
+        self.run_sync()
+        _, programmes = self.guide()
+        self.assertEqual(programmes[0].findtext("title"), "<b>Tom & Jerry<i>")
+
+    def test_hourly_refresh_rewrites_guide_without_touching_schedule(self):
+        self.film("a.mkv", 40)
+        self.run_sync()
+        db = json.loads(self.sync.DB.read_text()) if not REAL_CORE else None
+        self.sync.EPG.unlink()
+        self.configure("[Dede Film]\nnumber = 5\nfolder = film\n[Neu]\nnumber = 6\nfolder = film\n")
+        ready = self.sync.refresh_epg(self.sync.read_config(self.config, require_root_owner=False))
+        self.assertEqual([c["name"] for c in ready], ["Dede Film"])
+        self.assertTrue(self.sync.EPG.is_file())
+        if db is not None:
+            self.assertEqual(json.loads(self.sync.DB.read_text()), db)
+
+    def test_refresh_before_first_sync_is_a_no_op(self):
+        self.assertEqual(self.sync.refresh_epg(self.configure()), [])
+        self.assertFalse(self.sync.EPG.exists())
+
+    def test_programme_titles(self):
+        title = self.sync.programme_title
+        self.assertEqual(title("/m/film/Der.grosse_Film.2020.mkv"), "Der grosse Film 2020")
+        self.assertEqual(title("/m/film/___.mp4"), "___.mp4")
 
 
 class ResolverTests(Fixture):

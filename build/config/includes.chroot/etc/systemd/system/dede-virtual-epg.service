@@ -1,0 +1,19 @@
+[Unit]
+Description=Dede TV programme guide for local channels
+ConditionPathExists=/home/dede/.local/share/dede-tv/channels.db
+
+[Service]
+Type=oneshot
+User=dede
+Group=dede
+UMask=0077
+WorkingDirectory=/home/dede
+Environment=HOME=/home/dede
+ExecStart=/usr/bin/python3 /usr/local/libexec/dede-virtual-sync --epg
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/dede/.local/share/dede-tv
+PrivateTmp=true
+PrivateNetwork=true
+MemoryMax=128M
