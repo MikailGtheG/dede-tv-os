@@ -21,7 +21,14 @@ jobs:
           import ast
           from pathlib import Path
           sources = sorted(Path('tests').rglob('*.py'))
-          sources += [Path('build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin')]
+          sources += [Path('build/config/includes.chroot/usr/local/libexec/dede-kodi-activate-skin'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-iptv-provision'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-tv-autoplay'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-tv-guard'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-kodi-watchdog'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-virtual-sync'),
+                      Path('build/config/includes.chroot/usr/share/kodi/addons/plugin.video.dede-virtual/default.py'),
+                      Path('build/config/includes.chroot/usr/local/lib/dede-tv/dede_kodi_rpc.py')]
           for source in sources:
               ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
           print(f'Validated Python syntax in {len(sources)} files')
@@ -215,6 +222,25 @@ jobs:
       - name: Regression - Kodi skin addon identity
         shell: bash
         run: sh tests/test_skin_addon_identity.sh
+      - name: Regression - IPTV provisioning, autoplay, remote keymap
+        run: |
+          sh -n build/config/hooks/live/0520-dede-kodi-keymaps.hook.chroot
+          sh -n build/config/hooks/live/0530-dede-tv-services.hook.chroot
+          python3 -m unittest discover -s tests -p "test_tv_playback_helpers.py" -v
+          python3 -m unittest discover -s tests -p "test_tv_guard.py" -v
+          python3 -m unittest discover -s tests -p "test_kodi_watchdog.py" -v
+          python3 -m unittest discover -s tests -p "test_virtual_channels.py" -v
+      - name: Regression - QEMU channel classifier and E2E driver self-test
+        run: |
+          python3 -m unittest discover -s tests -p "test_qemu_channel.py" -v
+          python3 -m unittest discover -s tests -p "test_qemu_tv_e2e.py" -v
+      - name: Regression - live IPTV test source (playlist, live window, faults)
+        run: python3 -m unittest discover -s tests -p "test_iptv_test_source.py" -v
+      - name: Regression - no Kodi add-on enable prompt (addon manifest)
+        shell: bash
+        run: |
+          sh -n build/config/hooks/live/0510-dede-kodi-addon-manifest.hook.chroot
+          sh tests/test_kodi_addon_manifest.sh
       - name: Test bounded Kodi JSON-RPC socket send
         run: python3 -m unittest discover -s tests -p "test_skin_rpc_deadline.py" -v
       - name: Regression - atomic private Kodi activation marker
@@ -421,7 +447,7 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_SKIN_SHA: 9b29fbd2187e902cebe715aa389cd95b17dea622' "$workflow"
+          grep -Fq 'DEDE_SKIN_SHA: 1773bc9392580601e40a6368336a0d51ceb8b6d4' "$workflow"
           grep -Fq 'DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27' "$workflow"
           grep -Fq 'git sparse-checkout set addons/skin.estuary' "$workflow"
           grep -Fq 'usr/share/kodi/addons/skin.dede-tv/addon.xml' "$workflow"
@@ -471,7 +497,8 @@ jobs:
 
           # Shell comments between QEMU line continuations caused a real
           # failure: -audiodev was executed as a separate command.
-          qemu = text.split("timeout --signal=TERM --kill-after=5s 150s", 1)[1]
+          # Anchor on the QEMU command itself, not on a tunable timeout value.
+          qemu = text.split("qemu-system-x86_64 -accel tcg", 1)[1]
           qemu = qemu.split("qemu_pid=$!", 1)[0].splitlines()
           for previous, current in zip(qemu, qemu[1:]):
               assert not (previous.rstrip().endswith(chr(92)) and

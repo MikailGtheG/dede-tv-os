@@ -1,0 +1,46 @@
+#!/bin/sh
+# Wired DHCP networking and live-TV autostart services.
+set -eu
+mkdir -p /etc/systemd/system/multi-user.target.wants \
+  /etc/systemd/system/dede-kodi.service.wants \
+  /etc/systemd/system/network-online.target.wants \
+  /etc/systemd/system/sockets.target.wants
+chmod 0755 /usr/local/libexec/dede-iptv-provision /usr/local/libexec/dede-tv-autoplay \
+  /usr/local/libexec/dede-tv-guard /usr/local/libexec/dede-kodi-watchdog \
+  /usr/local/libexec/dede-virtual-sync
+chmod 0755 /usr/local/lib/dede-tv
+chmod 0644 /usr/local/lib/dede-tv/dede_kodi_rpc.py
+# The IPTV source may carry subscriber credentials: readable by the TV user only.
+install -d -m 0750 -o root -g dede /etc/dede-tv
+if [ -f /etc/dede-tv/iptv.conf ]; then
+  chown root:dede /etc/dede-tv/iptv.conf
+  chmod 0640 /etc/dede-tv/iptv.conf
+fi
+# systemd-networkd brings up any wired interface by DHCP (no desktop stack).
+ln -sfn /lib/systemd/system/systemd-networkd.service \
+  /etc/systemd/system/multi-user.target.wants/systemd-networkd.service
+ln -sfn /lib/systemd/system/systemd-networkd.socket \
+  /etc/systemd/system/sockets.target.wants/systemd-networkd.socket
+ln -sfn /lib/systemd/system/systemd-networkd-wait-online.service \
+  /etc/systemd/system/network-online.target.wants/systemd-networkd-wait-online.service
+ln -sfn /lib/systemd/system/systemd-resolved.service \
+  /etc/systemd/system/multi-user.target.wants/systemd-resolved.service
+# Start autoplay at boot and again on every (crash) restart of Kodi.
+ln -sfn ../dede-tv-autoplay.service \
+  /etc/systemd/system/multi-user.target.wants/dede-tv-autoplay.service
+ln -sfn ../dede-tv-autoplay.service \
+  /etc/systemd/system/dede-kodi.service.wants/dede-tv-autoplay.service
+# Playback guard (stream errors, retries) runs alongside every Kodi start.
+ln -sfn ../dede-tv-guard.service \
+  /etc/systemd/system/multi-user.target.wants/dede-tv-guard.service
+ln -sfn ../dede-tv-guard.service \
+  /etc/systemd/system/dede-kodi.service.wants/dede-tv-guard.service
+# Hung-Kodi watchdog (root service; crashes are handled by Restart=always).
+ln -sfn ../dede-kodi-watchdog.service \
+  /etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service
+# Media for local 24/7 channels: administrator-managed, readable by the TV.
+install -d -m 0755 -o root -g root /srv/dede-tv /srv/dede-tv/media
+if [ -f /etc/dede-tv/virtual-channels.conf ]; then
+  chown root:dede /etc/dede-tv/virtual-channels.conf
+  chmod 0640 /etc/dede-tv/virtual-channels.conf
+fi

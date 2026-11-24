@@ -18,4 +18,9 @@ mesa-vulkan-drivers
 alsa-utils
 xserver-xorg-core
 xserver-xorg-video-fbdev
+# Without an input driver Xorg delivers no keyboard/remote events to Kodi.
+xserver-xorg-input-libinput
 xinit
+systemd-resolved
+# ffprobe measures local 24/7 channel video durations.
+ffmpeg

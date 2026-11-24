@@ -181,6 +181,9 @@ if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
   <setting id="services.esallinterfaces">false</setting>
   <setting id="services.webserver">false</setting>
   <setting id="lookandfeel.skin">skin.dede-tv</setting>
+  <setting id="pvrplayback.confirmchannelswitch">false</setting>
+  <setting id="pvrmanager.usebackendchannelnumbers">true</setting>
+  <setting id="pvrmanager.usebackendchannelnumbersalways">true</setting>
 </settings>
 XML
   if [ ! -e "$settings" ] && [ ! -L "$settings" ]; then
@@ -197,3 +200,13 @@ XML
     fi
   fi
 fi
+
+# Apply the administrator's IPTV source (/etc/dede-tv/iptv.conf) to Kodi.
+# Non-fatal: without a valid source the TV home screen still starts.
+/usr/bin/python3 /usr/local/libexec/dede-iptv-provision ||
+  echo "IPTV source not applied; starting without channels" >&2
+
+# Local 24/7 channels (/etc/dede-tv/virtual-channels.conf) into dede-tv-core
+# and Kodi's channel list. Non-fatal and time-bounded for the TV start.
+/usr/bin/python3 /usr/local/libexec/dede-virtual-sync ||
+  echo "Local channels not applied" >&2

@@ -1,0 +1,328 @@
+#!/usr/bin/python3
+"""Sync the administrator's local 24/7 channels into dede-tv-core and Kodi.
+
+Source of truth: /etc/dede-tv/virtual-channels.conf (root-owned), e.g.
+
+    # Eigene Sender: Nummer und Ordner unter /srv/dede-tv/media
+    [Dede Film]
+    number = 5
+    folder = film
+
+For every channel the helper
+  * lists the videos directly inside the folder (sorted, no symlinks),
+  * measures their durations once with ffprobe (cached by size and mtime),
+  * (re)defines the channel in dede-tv-core ONLY when its video list changed;
+    redefining restarts the channel's schedule, so a reboot must not do it,
+  * writes a local M3U (plugin:// stream per channel) and a second
+    IPTV Simple instance, so the channels appear in Kodi's channel list
+    with their own numbers next to the IPTV channels.
+
+Runs as the TV user at every kiosk start. Exit 0 = applied/unchanged,
+1 = configuration rejected (TV still starts).
+"""
+import configparser
+import hashlib
+import json
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.parse
+from pathlib import Path
+from xml.sax.saxutils import escape
+
+CONFIG = Path(os.environ.get("DEDE_VIRTUAL_CONFIG", "/etc/dede-tv/virtual-channels.conf"))
+MEDIA_ROOT = Path(os.environ.get("DEDE_MEDIA_ROOT", "/srv/dede-tv/media"))
+CORE = os.environ.get("DEDE_CORE_BIN", "/usr/local/bin/dede-tv-core")
+FFPROBE = os.environ.get("DEDE_FFPROBE", "/usr/bin/ffprobe")
+HOME = Path(os.environ.get("HOME", "/home/dede"))
+DATA = HOME / ".local" / "share" / "dede-tv"
+DB = DATA / "channels.db"
+STATE = DATA / "virtual-state.json"
+DURATIONS = DATA / "virtual-durations.json"
+PLAYLIST = DATA / "virtual.m3u"
+INSTANCE = HOME / ".kodi" / "userdata" / "addon_data" / "pvr.iptvsimple" / "instance-settings-2.xml"
+INSTANCE_NAME = "Dede TV Eigene Sender"
+PLUGIN = "plugin://plugin.video.dede-virtual/"
+EXTENSIONS = {".mp4", ".mkv", ".mov", ".m4v", ".webm", ".avi", ".ts"}
+# New videos are measured within this budget per start; the rest follow on
+# the next start, so a large new library never blocks the TV picture.
+PROBE_BUDGET_S = float(os.environ.get("DEDE_VIRTUAL_PROBE_BUDGET_S", "60"))
+MAX_CONFIG = 16 * 1024
+MAX_CHANNELS = 50
+MAX_FILES = 10_000
+BIDI_AND_INVISIBLE = set(range(0x202A, 0x202F)) | set(range(0x2066, 0x206A)) | {
+    0x200E, 0x200F, 0x061C, 0x00AD, 0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF}
+
+
+class ConfigError(ValueError):
+    pass
+
+
+def log(message, error=False):
+    print(f"DEDE_VIRTUAL: {message}", file=sys.stderr if error else sys.stdout, flush=True)
+
+
+def valid_name(name):
+    """Same rules as dede-tv-core's resumable names, plus M3U-safe."""
+    return (bool(name.strip()) and len(name.encode()) <= 92
+            and not any(ord(c) < 0x20 or ord(c) == 0x7F or ord(c) in BIDI_AND_INVISIBLE
+                        for c in name)
+            and not name.startswith(("pvr:", "virtual:"))
+            and "," not in name and '"' not in name)
+
+
+def read_config(path=CONFIG, require_root_owner=True):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise ConfigError(f"cannot open config safely ({type(error).__name__})") from error
+    with os.fdopen(fd, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ConfigError("config is not a regular file")
+        if require_root_owner and info.st_uid != 0:
+            raise ConfigError("config must be owned by root")
+        if info.st_mode & 0o002:
+            raise ConfigError("config must not be world-writable")
+        data = source.read(MAX_CONFIG + 1)
+    if len(data) > MAX_CONFIG:
+        raise ConfigError("config too large")
+    parser = configparser.ConfigParser(interpolation=None, strict=True)
+    try:
+        parser.read_string(data.decode("utf-8"))
+    except (UnicodeDecodeError, configparser.Error) as error:
+        raise ConfigError(f"unreadable config ({type(error).__name__})") from error
+    channels, numbers = [], set()
+    if len(parser.sections()) > MAX_CHANNELS:
+        raise ConfigError("too many channels")
+    for name in parser.sections():
+        section = parser[name]
+        if not valid_name(name):
+            raise ConfigError("invalid channel name")
+        if set(section.keys()) - {"number", "folder"}:
+            raise ConfigError(f"{name}: unknown setting")
+        try:
+            number = int(section.get("number", ""))
+        except ValueError as error:
+            raise ConfigError(f"{name}: number must be an integer") from error
+        if not 1 <= number <= 9999 or number in numbers:
+            raise ConfigError(f"{name}: number out of range or duplicate")
+        numbers.add(number)
+        folder = section.get("folder", "").strip()
+        parts = Path(folder).parts
+        if not folder or Path(folder).is_absolute() or any(p in ("..", ".") for p in parts) \
+                or any(ord(c) < 0x20 for c in folder):
+            raise ConfigError(f"{name}: folder must be a relative path below the media root")
+        channels.append({"name": name, "number": number, "folder": folder})
+    return channels
+
+
+def media_folder(folder, root=MEDIA_ROOT):
+    """Resolve a configured folder strictly inside the media root."""
+    real_root = root.resolve()
+    candidate = (root / folder)
+    if candidate.is_symlink():
+        raise ConfigError("media folder must not be a symlink")
+    real = candidate.resolve()
+    if real != real_root and real_root not in real.parents:
+        raise ConfigError("media folder escapes the media root")
+    if not real.is_dir():
+        raise ConfigError("media folder missing")
+    return real
+
+
+def discover(folder):
+    videos = []
+    for entry in sorted(os.scandir(folder), key=lambda e: e.name):
+        if not entry.is_file(follow_symlinks=False):
+            continue
+        if Path(entry.name).suffix.lower() not in EXTENSIONS:
+            continue
+        videos.append(Path(entry.path))
+        if len(videos) > MAX_FILES:
+            raise ConfigError("too many media files")
+    return videos
+
+
+def load_json(path):
+    try:
+        with open(path, encoding="utf-8") as source:
+            value = json.load(source)
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_atomic(path, content, mode=0o600):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise ConfigError(f"refusing redirected file {path.name}")
+    if path.is_file() and path.read_text(encoding="utf-8", errors="replace") == content:
+        return False
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            os.fchmod(output.fileno(), mode)
+            output.write(content)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return True
+
+
+def probe_ms(path):
+    result = subprocess.run(
+        [FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, timeout=30, check=False)
+    try:
+        seconds = float(result.stdout.strip())
+    except ValueError:
+        return None
+    return int(seconds * 1000) if seconds > 0 else None
+
+
+def durations_for(videos, cache, deadline=None):
+    """Duration per video; damaged/unreadable media are skipped, not fatal.
+
+    Returns (entries, complete). complete is False when the probe budget ran
+    out: then the channel is not redefined this time (schedule kept)."""
+    measured, complete = [], True
+    for video in videos:
+        info = video.stat()
+        key = f"{video}|{info.st_size}|{info.st_mtime_ns}"
+        ms = cache.get(key)
+        if not isinstance(ms, int) or ms <= 0:
+            if deadline is not None and time.monotonic() >= deadline:
+                complete = False
+                continue
+            ms = probe_ms(video)
+            if ms is None:
+                log(f"skipping unreadable video {video.name}", error=True)
+                continue
+            cache[key] = ms
+        measured.append((str(video), ms))
+    return measured, complete
+
+
+def core(*args, timeout=30):
+    return subprocess.run([CORE, "--db", str(DB), *args], capture_output=True,
+                          text=True, timeout=timeout, check=False)
+
+
+def fingerprint(entries):
+    return hashlib.sha256(json.dumps(entries, separators=(",", ":")).encode()).hexdigest()
+
+
+def render_playlist(channels):
+    lines = ["#EXTM3U"]
+    for channel in sorted(channels, key=lambda c: c["number"]):
+        query = urllib.parse.urlencode({"channel": channel["name"]}, quote_via=urllib.parse.quote)
+        slug = hashlib.sha1(channel["name"].encode()).hexdigest()[:12]
+        lines.append(f'#EXTINF:-1 tvg-id="virtual-{slug}" tvg-chno="{channel["number"]}" '
+                     f'tvg-name="{channel["name"]}" group-title="Eigene Sender",{channel["name"]}')
+        lines.append(f"{PLUGIN}?{query}")
+    return "\n".join(lines) + "\n"
+
+
+def render_instance():
+    settings = [
+        ("kodi_addon_instance_name", INSTANCE_NAME),
+        ("kodi_addon_instance_enabled", "true"),
+        ("m3uPathType", "0"),
+        ("m3uPath", str(PLAYLIST)),
+        ("m3uCache", "false"),
+        ("numberByOrder", "false"),
+        ("epgPathType", "0"),
+        ("epgPath", ""),
+    ]
+    body = "\n".join(f'    <setting id="{k}">{escape(v)}</setting>' for k, v in settings)
+    return f'<settings version="2">\n{body}\n</settings>\n'
+
+
+def remove_instance():
+    if INSTANCE.is_file() and not INSTANCE.is_symlink() \
+            and INSTANCE_NAME in INSTANCE.read_text(encoding="utf-8", errors="replace"):
+        INSTANCE.unlink()
+        log("no local channels configured; removed the local channel source")
+
+
+def sync(channels):
+    if DATA.is_symlink():
+        raise ConfigError("refusing redirected data directory")
+    DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
+    state = load_json(STATE)
+    cache = load_json(DURATIONS)
+    applied, new_state = [], {}
+    deadline = time.monotonic() + PROBE_BUDGET_S
+    for channel in channels:
+        name = channel["name"]
+        try:
+            folder = media_folder(channel["folder"])
+            entries, complete = durations_for(discover(folder), cache, deadline)
+        except (ConfigError, OSError) as error:
+            log(f"{name}: {error}", error=True)
+            continue
+        if not entries:
+            log(f"{name}: no playable videos", error=True)
+            continue
+        mark = fingerprint(entries)
+        known = core("now", name).returncode == 0
+        if known and not complete:
+            # Keep the running schedule until all new videos are measured.
+            log(f"{name}: new videos still being measured, schedule kept")
+            new_state[name] = state.get(name, "")
+            applied.append(channel)
+            continue
+        if not known or state.get(name) != mark:
+            args = [part for path, ms in entries for part in (path, str(ms))]
+            result = core("add", name, *args)
+            if result.returncode != 0:
+                log(f"{name}: core rejected the channel", error=True)
+                continue
+            log(f"{name}: schedule (re)created with {len(entries)} videos")
+        new_state[name] = mark
+        applied.append(channel)
+    # Channels removed from the configuration leave the core database.
+    listed = core("list")
+    if listed.returncode == 0:
+        wanted = {c["name"] for c in channels}
+        for name in listed.stdout.splitlines():
+            if name and name not in wanted:
+                core("remove", name)
+                log(f"{name}: removed")
+    write_atomic(DURATIONS, json.dumps(cache, sort_keys=True))
+    write_atomic(STATE, json.dumps(new_state, sort_keys=True))
+    if applied:
+        write_atomic(PLAYLIST, render_playlist(applied))
+        write_atomic(INSTANCE, render_instance())
+    else:
+        remove_instance()
+    return applied
+
+
+def main():
+    try:
+        channels = read_config()
+    except ConfigError as error:
+        log(f"configuration rejected: {error}", error=True)
+        return 1
+    if not channels:
+        remove_instance()
+        return 0
+    try:
+        applied = sync(channels)
+    except (ConfigError, OSError, subprocess.SubprocessError) as error:
+        log(f"local channels not applied: {error}", error=True)
+        return 1
+    log(f"{len(applied)} of {len(channels)} local channels ready")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

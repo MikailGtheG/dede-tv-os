@@ -1,0 +1,67 @@
+{
+  "_comment": "Synthetic test channels mirroring the product vision line-up. Content is a generated test pattern; names are test labels only. Number 5 is reserved for the local virtual channel 'Dede Film' served by dede-tv-core, not IPTV. Colours are distinct hues (no blue/cyan, which the stock-Kodi dialog detector uses) so QEMU screenshots identify the playing channel. virtual_channels are local 24/7 test films (CI image only), not served by the IPTV test server.",
+  "segment_seconds": 2,
+  "loop_segments": 10,
+  "channels": [
+    {
+      "id": "trt1",
+      "number": 1,
+      "name": "TRT 1",
+      "color": "0x8c2a1f",
+      "tone_hz": 440
+    },
+    {
+      "id": "atv",
+      "number": 2,
+      "name": "ATV",
+      "color": "0x1f7a3c",
+      "tone_hz": 494
+    },
+    {
+      "id": "kanald",
+      "number": 3,
+      "name": "Kanal D",
+      "color": "0xa08c14",
+      "tone_hz": 523
+    },
+    {
+      "id": "showtv",
+      "number": 4,
+      "name": "Show TV",
+      "color": "0x5a2a8c",
+      "tone_hz": 587
+    },
+    {
+      "id": "teskilat",
+      "number": 6,
+      "name": "Teşkilat TV",
+      "color": "0xb4b4b4",
+      "tone_hz": 659
+    }
+  ],
+  "fault_channels": [
+    {
+      "id": "offline",
+      "number": 90,
+      "name": "Test Offline",
+      "fault": "http404"
+    },
+    {
+      "id": "stalled",
+      "number": 91,
+      "name": "Test Stillstand",
+      "fault": "stalled"
+    }
+  ],
+  "virtual_channels": [
+    {
+      "id": "dedefilm",
+      "number": 5,
+      "name": "Dede Film",
+      "color": "0xc8508c",
+      "tone_hz": 392,
+      "parts": 3,
+      "part_seconds": 40
+    }
+  ]
+}

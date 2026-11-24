@@ -68,7 +68,7 @@ class JsonRpcResponseTests(unittest.TestCase):
                 return next(self.parts, b"")
 
         with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
-            self.assertEqual(module.rpc("Input.Back"), "OK")
+            self.assertEqual(module.rpc("Addons.SetAddonEnabled"), "OK")
 
     def test_unrelated_reply_id_is_not_accepted(self):
         # A notification or reply for another request must never authorize
@@ -91,7 +91,7 @@ class JsonRpcResponseTests(unittest.TestCase):
                 return next(self.parts, b"")
 
         with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
-            self.assertEqual(module.rpc("Input.Back"), "OK")
+            self.assertEqual(module.rpc("Addons.SetAddonEnabled"), "OK")
 
     def test_noninteger_response_id_cannot_acknowledge_kodi_write(self):
         # JSON booleans and floating-point numbers compare equal to Python
@@ -121,7 +121,7 @@ class JsonRpcResponseTests(unittest.TestCase):
                 with patch.object(module.socket, "create_connection",
                                   return_value=FakeSocket(reply)):
                     with self.assertRaisesRegex(RuntimeError, "No bounded JSON-RPC reply"):
-                        module.rpc("Input.Back")
+                        module.rpc("Addons.SetAddonEnabled")
 
     def test_jsonrpc_error_does_not_authorize_dialog_dismissal(self):
         class FakeSocket:
@@ -138,7 +138,7 @@ class JsonRpcResponseTests(unittest.TestCase):
 
         with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
             with self.assertRaisesRegex(RuntimeError, "error -32601"):
-                module.rpc("Input.Back")
+                module.rpc("Addons.SetAddonEnabled")
 
     def test_malformed_missing_result_is_rejected(self):
         class FakeSocket:
@@ -156,6 +156,48 @@ class JsonRpcResponseTests(unittest.TestCase):
         with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
             with self.assertRaisesRegex(RuntimeError, "missing result"):
                 module.rpc("Settings.SetSettingValue")
+
+
+class KodiWriteResultSchemaTests(unittest.TestCase):
+    """Kodi 21 methods.json: SetAddonEnabled -> "OK", SetSettingValue -> true.
+
+    Expecting "OK" from Settings.SetSettingValue rejected every real reply,
+    kept the activation oneshot retrying for minutes and blocked the
+    services ordered after it (resume, autoplay)."""
+
+    def reply(self, method, raw_result):
+        class FakeSocket:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def settimeout(self, timeout):
+                pass
+            def sendall(self, data):
+                pass
+            sent = False
+
+            def recv(self, count):
+                if self.sent:
+                    return b""
+                self.sent = True
+                return ('{"jsonrpc":"2.0","id":24011,"result":' + raw_result + '}').encode()
+        with patch.object(module.socket, "create_connection", return_value=FakeSocket()):
+            return module.rpc(method)
+
+    def test_schema_results_accepted(self):
+        self.assertIs(self.reply("Settings.SetSettingValue", "true"), True)
+        self.assertEqual(self.reply("Addons.SetAddonEnabled", '"OK"'), "OK")
+
+    def test_wrong_or_failed_write_results_rejected(self):
+        for method, raw in (("Settings.SetSettingValue", "false"),
+                            ("Settings.SetSettingValue", '"OK"'),
+                            ("Settings.SetSettingValue", "1"),
+                            ("Addons.SetAddonEnabled", "true"),
+                            ("Addons.SetAddonEnabled", '"ok"')):
+            with self.subTest(method=method, result=raw):
+                with self.assertRaisesRegex(RuntimeError, "malformed result"):
+                    self.reply(method, raw)
 
 
 class FirstBootRecoveryTests(unittest.TestCase):
@@ -183,7 +225,7 @@ class FirstBootRecoveryTests(unittest.TestCase):
                  patch.object(module, "rpc", side_effect=[
                      {"addon": {"enabled": True}},  # IPTV bootstrap
                      {"addon": {"enabled": True}},  # Dede skin
-                     "OK",
+                     True,  # Settings.SetSettingValue (Kodi 21: boolean)
                      {"value": "skin.dede-tv"},
                  ]) as rpc:
                 self.assertEqual(module.run(), 0)
@@ -201,29 +243,22 @@ class FirstBootPvrTests(unittest.TestCase):
     def test_disabled_iptv_addon_enabled_without_playlist_or_credentials(self):
         with patch.object(module, "rpc", side_effect=[
             {"addon": {"enabled": False}}, "OK",
-            {"addon": {"enabled": True}}, "OK",
+            {"addon": {"enabled": True}},
         ]) as rpc:
             module.enable_first_boot_pvr()
         self.assertEqual([call.args[0] for call in rpc.call_args_list],
                          ["Addons.GetAddonDetails", "Addons.SetAddonEnabled",
-                          "Addons.GetAddonDetails", "Input.Back"])
+                          "Addons.GetAddonDetails"])
         self.assertEqual(
             rpc.call_args_list[1].args[1],
             {"addonid": "pvr.iptvsimple", "enabled": True})
 
-    def test_dialog_dismissal_failure_is_not_silently_accepted(self):
-        # A failed Input.Back must keep first-boot activation in retry mode:
-        # otherwise the TV could start underneath a blocking Kodi dialog.
-        with patch.object(module, "rpc", side_effect=[
-            {"addon": {"enabled": False}}, "OK",
-            {"addon": {"enabled": True}},
-            RuntimeError("Input.Back: malformed result response"),
-        ]) as rpc:
-            with self.assertRaisesRegex(RuntimeError, "Input.Back"):
-                module.enable_first_boot_pvr()
-        self.assertEqual(
-            [call.args[0] for call in rpc.call_args_list][-1], "Input.Back"
-        )
+    def test_activation_never_sends_blind_navigation(self):
+        # Input.Back cannot target a dialog: it closes at most one queued
+        # Kodi prompt, answers it with "No", and may navigate the TV UI.
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("Input.Back", source)
+        self.assertNotIn("Input.Select", source)
 
     def test_unconfirmed_iptv_enable_never_dismisses_dialog(self):
         with patch.object(module, "rpc", side_effect=[

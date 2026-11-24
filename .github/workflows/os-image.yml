@@ -21,7 +21,7 @@ jobs:
     # Privileged build chroots are ONLY allowed from owner-controlled branch.
     # Never run this job with pull_request or pull_request_target events.
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 120
     container:
       image: debian:trixie
       options: --privileged
@@ -35,7 +35,8 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             live-build debootstrap xorriso squashfs-tools \
             grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common \
-            ca-certificates python3 qemu-system-x86 ovmf
+            ca-certificates python3 qemu-system-x86 ovmf \
+            ffmpeg fonts-dejavu-core
       - name: Build pinned Rust TV core for the Debian 13 appliance
         shell: bash
         env:
@@ -74,7 +75,7 @@ jobs:
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: 9b29fbd2187e902cebe715aa389cd95b17dea622
+          DEDE_SKIN_SHA: 1773bc9392580601e40a6368336a0d51ceb8b6d4
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
@@ -232,12 +233,16 @@ jobs:
                                 "method": "Settings.GetSettingValue",
                                 "params": {"setting": "lookandfeel.skin"},
                                 "id": 7331}).encode() + b"\n"
+          import time
           try:
               with socket.create_connection(("127.0.0.1", 9090), timeout=4) as conn:
-                  conn.settimeout(4)
                   conn.sendall(request)
                   response = b""
-                  for _ in range(32):
+                  # Kodi interleaves playback notifications with the reply:
+                  # bound by time, not by chunk count, and drop consumed docs.
+                  deadline = time.monotonic() + 10
+                  while time.monotonic() < deadline:
+                      conn.settimeout(max(0.1, deadline - time.monotonic()))
                       chunk = conn.recv(4096)
                       if not chunk:
                           break
@@ -245,13 +250,14 @@ jobs:
                       if len(response) > 131072:
                           raise ValueError("response too large")
                       decoder = json.JSONDecoder()
-                      remaining = response.decode("utf-8")
+                      remaining = response.decode("utf-8", "replace")
                       while remaining.strip():
                           try:
                               document, size = decoder.raw_decode(remaining.lstrip())
                           except json.JSONDecodeError:
                               break
                           remaining = remaining.lstrip()[size:]
+                          response = remaining.encode("utf-8")
                           if document.get("id") == 7331:
                               active = document.get("result", {}).get("value")
                               print("DEDE_CI_DIAG: ACTIVE_SKIN=" + ("skin.dede-tv" if active == "skin.dede-tv" else "unexpected"))
@@ -290,6 +296,333 @@ jobs:
           UNIT
           ln -sfn ../dede-ci-diagnostics.service \
             config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-diagnostics.service
+          # CI-only TV playback diagnostics, late enough to see channel loading.
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-tv-diagnostics <<'SH'
+          #!/bin/sh
+          sleep 150
+          redact() { sed -E 's#[a-zA-Z]+://[^ "<]+#<url>#g'; }
+          {
+            echo 'DEDE_CI_TV: begin'
+            for unit in dede-tv-autoplay systemd-networkd systemd-resolved dede-kodi-skin; do
+              echo "DEDE_CI_TV: $unit $(systemctl show "$unit" -p ActiveState -p SubState -p Result -p NRestarts --value --no-pager | tr '\n' ' ')"
+            done
+            journalctl -b -u dede-tv-autoplay -o cat --no-pager | tail -20 | redact | sed 's/^/DEDE_CI_TV: autoplay| /'
+            journalctl -b -u dede-kodi-skin -o cat --no-pager | tail -20 | redact | sed 's/^/DEDE_CI_TV: skin| /'
+            journalctl -b -u dede-kodi -o cat --no-pager | grep -E 'DEDE_IPTV|IPTV source' | tail -5 | redact | sed 's/^/DEDE_CI_TV: kiosk| /'
+            ip -4 -o addr show | awk '{print "DEDE_CI_TV: addr " $2 " " $4}'
+            ip -4 route show default | sed 's/^/DEDE_CI_TV: route /'
+            stat -c 'DEDE_CI_TV: iptv.conf %U:%G %a' /etc/dede-tv/iptv.conf 2>&1 | head -1
+            inst=/home/dede/.kodi/userdata/addon_data/pvr.iptvsimple/instance-settings-1.xml
+            if [ -f "$inst" ]; then
+              grep -o 'id="[A-Za-z_]*"' "$inst" | tr '\n' ' ' | sed 's/^/DEDE_CI_TV: instance-settings /'; echo
+            else
+              echo 'DEDE_CI_TV: instance-settings missing'
+            fi
+            ls /home/dede/.kodi/userdata/addon_data/pvr.iptvsimple/ 2>&1 | tr '\n' ' ' | sed 's/^/DEDE_CI_TV: iptv addon_data /'; echo
+            python3 - <<'PY2'
+          import json, socket
+          def rpc(method, params=None, rid=[900]):
+              rid[0] += 1
+              req = {"jsonrpc": "2.0", "id": rid[0], "method": method}
+              if params is not None:
+                  req["params"] = params
+              with socket.create_connection(("127.0.0.1", 9090), timeout=5) as s:
+                  s.sendall(json.dumps(req).encode())
+                  buf = b""
+                  dec = json.JSONDecoder()
+                  while True:
+                      part = s.recv(65536)
+                      if not part:
+                          return None
+                      buf += part
+                      text = buf.decode("utf-8", "replace")
+                      pos = 0
+                      while pos < len(text):
+                          while pos < len(text) and text[pos].isspace():
+                              pos += 1
+                          try:
+                              doc, pos = dec.raw_decode(text, pos)
+                          except ValueError:
+                              break
+                          if doc.get("id") == rid[0]:
+                              return doc
+          for method, params in (
+              ("PVR.GetProperties", {"properties": ["available", "recording", "scanning"]}),
+              ("PVR.GetChannelGroups", {"channeltype": "tv"}),
+              ("PVR.GetChannels", {"channelgroupid": "alltv", "properties": ["channelnumber"]}),
+              ("Player.GetActivePlayers", None),
+              ("GUI.GetProperties", {"properties": ["currentwindow", "currentcontrol"]}),
+              ("Addons.GetAddonDetails", {"addonid": "pvr.iptvsimple", "properties": ["enabled", "version"]}),
+          ):
+              try:
+                  reply = rpc(method, params)
+                  print("DEDE_CI_TV: rpc " + method + " " + json.dumps(reply)[:600])
+              except OSError as exc:
+                  print("DEDE_CI_TV: rpc " + method + " failed " + type(exc).__name__)
+          PY2
+            grep -aiE 'pvr|iptv|playlist|CCurlFile|ERROR' /home/dede/.kodi/temp/kodi.log 2>/dev/null \
+              | grep -viE 'skin|font|texture' | tail -60 | redact | sed 's/^/DEDE_CI_TV: kodi| /'
+            echo 'DEDE_CI_TV: end'
+          } > /run/dede-ci-tv.log 2>&1
+          cat /run/dede-ci-tv.log > /dev/ttyS0 2>/dev/null || cat /run/dede-ci-tv.log
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-tv-diagnostics.service <<'UNIT'
+          [Unit]
+          Description=CI-only live TV playback diagnostics
+          After=dede-kodi.service
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-tv-diagnostics
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-tv-diagnostics.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-tv-diagnostics.service
+          # CI-only Kodi event timeline on the serial console (playback opens,
+          # closes, errors, kiosk exits, crash logs) for diagnosing failures.
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-kodi-events <<'SH'
+          #!/bin/sh
+          redact() { sed -u -E 's#[a-zA-Z]+://[^ "<]+#<url>#g'; }
+          (
+            journalctl -f -n0 -u dede-kodi -o short-monotonic --no-pager \
+              | grep --line-buffered -aE 'exited|Failed|signal|core|Scheduled restart|Started|Stopped' \
+              | redact | sed -u 's/^/DEDE_CI_KODI: unit| /' > /dev/ttyS0
+          ) &
+          (
+            seen=''
+            while true; do
+              for crash in /home/dede/kodi_crashlog-*.log; do
+                [ -f "$crash" ] || continue
+                case " $seen " in *" $crash "*) continue ;; esac
+                # Kodi writes the stack trace after the header: wait for the end.
+                grep -q 'END Kodi CRASH LOG' "$crash" || continue
+                seen="$seen $crash"
+                {
+                  sed -n '/STACK TRACE/,/END STACK TRACE/p' "$crash" | head -120
+                  sed -n '/LOG FILE/,/END LOG FILE/p' "$crash" | tail -40
+                } | redact | sed 's/^/DEDE_CI_KODI: crashlog| /' > /dev/ttyS0
+              done
+              sleep 5
+            done
+          ) &
+          while true; do
+            tail -n0 -F /home/dede/.kodi/temp/kodi.log 2>/dev/null \
+              | grep --line-buffered -aE 'OpenFile|CloseFile|OnPlayBack|CCurlFile|SwitchToChannel|Previous channel|fatal|FATAL|terminate|Exception|error <general>|DEDE_VIRTUAL' \
+              | grep --line-buffered -avE 'DBus|VDPAU|CAESinkALSA|parentheses|custom window|asked to focus' \
+              | redact | sed -u 's/^/DEDE_CI_KODI: log| /' > /dev/ttyS0
+            sleep 2
+          done
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-kodi-events.service <<'UNIT'
+          [Unit]
+          Description=CI-only Kodi event timeline on the serial console
+          After=dede-kodi.service
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-kodi-events
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-kodi-events.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-kodi-events.service
+          # CI-only crash simulation for the E2E restart step: once channel 06
+          # plays (the E2E's last key step), hard-kill Kodi exactly once.
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-crash-kodi <<'SH'
+          #!/bin/sh
+          python3 - <<'PY2'
+          import sys, time
+          sys.path.insert(0, "/usr/local/lib/dede-tv")
+          from dede_kodi_rpc import Connection
+          # One persistent connection (Kodi 21 can crash on client disconnects).
+          connection = None
+          def rpc(method, params=None):
+              global connection
+              if connection is None:
+                  connection = Connection()
+              try:
+                  result = connection.call(method, params, timeout=8)
+                  connection.notifications()
+                  return result
+              except Exception:
+                  connection.close()
+                  connection = None
+                  raise
+          deadline = time.monotonic() + 1500
+          while time.monotonic() < deadline:
+              try:
+                  item = rpc("Player.GetItem", {"playerid": 1, "properties": ["channelnumber"]})
+                  label = ((item or {}).get("item") or {}).get("label")
+                  number = ((item or {}).get("item") or {}).get("channelnumber")
+                  if number == 6:
+                      print("DEDE_CI_CRASH: channel 06 playing (" + str(label) + "), killing Kodi in 10 s", flush=True)
+                      time.sleep(10)
+                      # Kill while still connected: our disconnect happens only
+                      # after Kodi is gone.
+                      import subprocess
+                      if subprocess.run(["pkill", "-KILL", "-x", "kodi.bin"]).returncode == 0:
+                          print("DEDE_CI_CRASH: kodi.bin killed (SIGKILL)", flush=True)
+                      raise SystemExit(0)
+              except (OSError, ValueError):
+                  pass
+              time.sleep(3)
+          raise SystemExit(1)
+          PY2
+          if [ $? -eq 0 ]; then
+            sleep 100
+            redact() { sed -E 's#[a-zA-Z]+://[^ "<]+#<url>#g'; }
+            {
+              echo "DEDE_CI_CRASH: kodi $(systemctl show dede-kodi -p ActiveState -p SubState -p NRestarts -p Result --value | tr '\n' ' ')"
+              for name in Xorg kodi.bin; do
+                pgrep -x "$name" >/dev/null && echo "DEDE_CI_CRASH: $name running" || echo "DEDE_CI_CRASH: $name absent"
+              done
+              journalctl -b -u dede-kodi -o cat --no-pager | tail -25 | redact | sed 's/^/DEDE_CI_CRASH: kiosk| /'
+              journalctl -b -u dede-tv-autoplay -u dede-kodi-skin -o cat --no-pager | tail -25 | redact | sed 's/^/DEDE_CI_CRASH: units| /'
+              grep -a '(EE)' /home/dede/.local/share/xorg/Xorg.0.log 2>/dev/null | tail -10 | sed 's/^/DEDE_CI_CRASH: xorg| /'
+            } > /dev/ttyS0 2>&1
+            # Hang simulation for the watchdog step: once the guard reports a
+            # recovered stream (the E2E outage step), freeze Kodi (SIGSTOP).
+            for _ in $(seq 1 500); do
+              if journalctl -b -u dede-tv-guard -o cat --no-pager | grep -q 'recovered after'; then
+                sleep 10
+                pkill -STOP -x kodi.bin && echo 'DEDE_CI_HANG: kodi.bin frozen (SIGSTOP)' > /dev/ttyS0
+                sleep 240
+                journalctl -b -u dede-kodi-watchdog -o cat --no-pager | grep DEDE_WATCHDOG | tail -6 \
+                  | sed 's/^/DEDE_CI_HANG: /' > /dev/ttyS0
+                break
+              fi
+              sleep 3
+            done
+          fi
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-crash-kodi.service <<'UNIT'
+          [Unit]
+          Description=CI-only Kodi crash simulation for restart acceptance
+          After=dede-kodi.service
+          [Service]
+          Type=simple
+          StandardOutput=journal+console
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-crash-kodi
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-crash-kodi.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-crash-kodi.service
+          # CI-only debugger: Kodi's crash log then contains a stack trace.
+          printf 'gdb\n' > config/package-lists/dede-ci-debug.list.chroot
+          # CI-only local 24/7 channel "Dede Film" (05): three 40 s test films.
+          python3 "$GITHUB_WORKSPACE/tests/iptv/render_test_films.py" \
+            config/includes.chroot/srv/dede-tv/media/film
+          mkdir -p config/includes.chroot/etc/dede-tv
+          printf '[Dede Film]\nnumber = 5\nfolder = film\n' \
+            > config/includes.chroot/etc/dede-tv/virtual-channels.conf
+          # CI-only check: whenever a local channel starts, compare Kodi's
+          # playback position with dede-tv-core's schedule (serial console).
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-virtual-check <<'SH'
+          #!/bin/sh
+          exec python3 - <<'PY2'
+          import json, subprocess, sys, time
+          sys.path.insert(0, "/usr/local/lib/dede-tv")
+          from dede_kodi_rpc import Connection
+          # One persistent connection: short-lived connection churn has
+          # crashed Kodi's JSON-RPC server before.
+          connection = None
+          def rpc(method, params=None):
+              global connection
+              if connection is None:
+                  connection = Connection()
+              try:
+                  result = connection.call(method, params, timeout=8)
+                  connection.notifications()
+                  return result
+              except Exception:
+                  connection.close()
+                  connection = None
+                  raise
+          def seconds(t):
+              return t["hours"] * 3600 + t["minutes"] * 60 + t["seconds"] + t["milliseconds"] / 1000
+          from datetime import datetime
+          def last_resolution():
+              """(file, position_s, wall_time) of the resolver's latest hand-over."""
+              try:
+                  with open("/home/dede/.kodi/temp/kodi.log", encoding="utf-8", errors="replace") as log:
+                      lines = [l for l in log if "DEDE_VIRTUAL: Dede Film -> " in l]
+              except OSError:
+                  return None
+              if not lines:
+                  return None
+              line = lines[-1]
+              stamp = datetime.strptime(line[:23], "%Y-%m-%d %H:%M:%S.%f").timestamp()
+              film, _, rest = line.split("DEDE_VIRTUAL: Dede Film -> ", 1)[1].partition(" @ ")
+              return film.strip(), float(rest.strip().rstrip("s")), stamp
+          checked, last_summary = None, None
+          while True:
+              time.sleep(2)
+              try:
+                  players = rpc("Player.GetActivePlayers") or []
+                  if not any(p.get("type") == "video" for p in players):
+                      continue
+                  item = (rpc("Player.GetItem", {"playerid": 1,
+                                                 "properties": ["title", "channel", "channelnumber", "file"]}) or {}).get("item") or {}
+                  summary = json.dumps({k: item.get(k) for k in ("type", "label", "channel", "channelnumber")},
+                                       ensure_ascii=False)
+                  if summary != last_summary:
+                      last_summary = summary
+                      with open("/dev/ttyS0", "w") as console:
+                          console.write("DEDE_CI_VIRTUAL: playing " + summary[:300] + "\n")
+                  if item.get("channelnumber") != 5:
+                      continue
+                  resolution = last_resolution()
+                  if resolution is None or resolution == checked:
+                      continue
+                  checked = resolution
+                  film, position, stamp = resolution
+                  out = subprocess.run(["runuser", "-u", "dede", "--", "/usr/local/bin/dede-tv-core",
+                                        "--db", "/home/dede/.local/share/dede-tv/channels.db", "now", "Dede Film"],
+                                       capture_output=True, text=True, timeout=10).stdout.strip()
+                  now = time.time()
+                  core_path, _, rest = out.partition(" @ ")
+                  core_s = int(rest.split()[0]) / 1000 if rest else -1
+                  expected = position + (now - stamp)
+                  drift = expected - core_s
+                  kodi = (rpc("Player.GetProperties", {"playerid": 1, "properties": ["time"]}) or {}).get("time")
+                  kodi_s = seconds(kodi) if kodi else -1
+                  try:
+                      cache = json.load(open("/home/dede/.local/share/dede-tv/virtual-durations.json"))
+                      length = next(v / 1000 for k, v in cache.items() if k.split("|")[0].endswith("/" + film))
+                  except Exception:
+                      length = None
+                  if not core_path.endswith("/" + film) and length is not None and expected > length - 3:
+                      # The handed-over film ended before this check: no verdict.
+                      continue
+                  verdict = "ok" if core_path.endswith("/" + film) and abs(drift) <= 5 else "mismatch"
+                  line = (f"DEDE_CI_VIRTUAL: {verdict} file={film} handed={position:.1f}s "
+                          f"age={now - stamp:.1f}s core={core_s:.1f}s drift={drift:+.2f}s "
+                          f"core_file={core_path.rsplit('/', 1)[-1]} kodi_time={kodi_s:.1f}s")
+                  with open("/dev/ttyS0", "w") as console:
+                      console.write(line + "\n")
+              except Exception as exc:
+                  with open("/dev/ttyS0", "w") as console:
+                      console.write(f"DEDE_CI_VIRTUAL: checker error {type(exc).__name__}: {exc}"[:300] + "\n")
+          PY2
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-virtual-check.service <<'UNIT'
+          [Unit]
+          Description=CI-only local channel position check
+          After=dede-kodi.service
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-virtual-check
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-virtual-check.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-virtual-check.service
+          # CI-only IPTV source: the local live test signal served on the
+          # runner (QEMU user networking exposes the host as 10.0.2.2).
+          # Production images ship without any playlist.
+          mkdir -p config/includes.chroot/etc/dede-tv
+          printf 'M3U_URL=http://10.0.2.2:8089/dede-test-faults.m3u\n' \
+            > config/includes.chroot/etc/dede-tv/iptv.conf
           sh build-image.sh
           test -s live-image-amd64.hybrid.iso
           sha256sum live-image-amd64.hybrid.iso > SHA256SUMS
@@ -326,6 +659,22 @@ jobs:
           cd build
           iso="$PWD/live-image-amd64.hybrid.iso"
           mkdir -p boot-logs
+          # Local live IPTV test signal for the guest (tests/iptv). 640x360
+          # keeps software decoding feasible under TCG emulation.
+          python3 "$GITHUB_WORKSPACE/tests/iptv/render_test_streams.py" \
+            /tmp/dede-iptv-media --size 640x360
+          python3 "$GITHUB_WORKSPACE/tests/iptv/serve_test_iptv.py" /tmp/dede-iptv-media \
+            --bind 127.0.0.1 --port 8089 --base-url http://10.0.2.2:8089 \
+            --pause-flag /tmp/dede-iptv-outage \
+            > boot-logs/iptv-test-server.log 2>&1 &
+          iptv_server=$!
+          trap 'kill "$iptv_server" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 25); do
+            python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8089/live/trt1/index.m3u8", timeout=2).read()' \
+              2>/dev/null && break
+            sleep 0.2
+          done
+          python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8089/dede-test.m3u", timeout=2).read().decode())'
           for mode in bios uefi; do
             echo "Testing $mode boot"
             firmware=()
@@ -376,7 +725,7 @@ jobs:
             # logged ActiveAE::InitSink errors. Provide emulated Intel HDA with
             # a silent host backend (no host sound server required).
             set +e
-            timeout --signal=TERM --kill-after=5s 150s \
+            timeout --signal=TERM --kill-after=5s 1500s \
               qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
               -display none -vga std \
               -audiodev none,id=ci_audio \
@@ -481,8 +830,28 @@ jobs:
               sys.exit(1)
           PY
             capture_status=$?
+            # P0 acceptance: live TV, remote keys and channel list, judged
+            # from real screen captures (tests/qemu_tv_e2e.py).
+            rm -f /tmp/dede-iptv-outage
+            DEDE_E2E_PAUSE_FLAG=/tmp/dede-iptv-outage \
+            DEDE_E2E_SERIAL_LOG="$PWD/boot-logs/$mode.log" \
+            python3 "$GITHUB_WORKSPACE/tests/qemu_tv_e2e.py" "$monitor" \
+              "$PWD/boot-logs/e2e" "$mode" | tee "boot-logs/$mode-e2e.log"
+            e2e_status=${PIPESTATUS[0]}
+            python3 - "$monitor" <<'PY'
+          import socket, sys
+          with socket.socket(socket.AF_UNIX) as sock:
+              sock.settimeout(5)
+              sock.connect(sys.argv[1])
+              sock.sendall(b"quit\n")
+          PY
             wait "$qemu_pid"
             status=$?
+            # Always show the guest timeline (any later check may fail first).
+            echo "::group::$mode guest TV timeline"
+            grep -aE 'DEDE_CI_KODI:|DEDE_GUARD:|DEDE_AUTOPLAY:|DEDE_WATCHDOG:|DEDE_CI_HANG:|DEDE_CI_CRASH: (channel|kodi)|DEDE_CI_VIRTUAL:|NRestarts' \
+              "boot-logs/$mode.log" | tail -250 || true
+            echo "::endgroup::"
             set -e
             if [ "$boot_menu_status" -ne 0 ]; then
               echo "$mode: boot-menu VGA capture/control failed (exit $boot_menu_status)" >&2
@@ -556,6 +925,16 @@ jobs:
                 exit 1
               fi
             done
+            if [ "$e2e_status" -ne 0 ]; then
+              echo "$mode: TV end-to-end acceptance failed" >&2
+              grep -aE 'DEDE_E2E(_SUMMARY)?:' "boot-logs/$mode-e2e.log" >&2 || true
+              grep -aF 'DEDE_CI_TV:' "boot-logs/$mode.log" >&2 || true
+              grep -aF 'DEDE_CI_CRASH:' "boot-logs/$mode.log" >&2 || true
+              grep -aE 'DEDE_CI_HANG:|DEDE_GUARD:|DEDE_WATCHDOG:|DEDE_AUTOPLAY:|DEDE_CI_KODI:|DEDE_CI_VIRTUAL:|DEDE_VIRTUAL:' "boot-logs/$mode.log" | tail -150 >&2 || true
+              echo "Test IPTV server requests:" >&2
+              tail -40 boot-logs/iptv-test-server.log >&2 || true
+              exit 1
+            fi
             # A timeout alone is NOT evidence of a successful boot.
             if ! grep -aEqi 'Reached target (Multi-User System|Graphical Interface)|login:' "boot-logs/$mode.log"; then
               echo "No login prompt or systemd boot target observed in $mode" >&2
@@ -570,7 +949,13 @@ jobs:
             echo "| BIOS | Boot target/login observed |"
             echo "| UEFI | Boot target/login observed |"
             echo ""
-            echo "This confirms a boot smoke test, not Kodi playback or hardware readiness."
+            echo ""
+            echo "## TV end-to-end (QEMU, real screen captures)"
+            for mode in bios uefi; do
+              grep -ahE '^DEDE_E2E_SUMMARY:' "boot-logs/$mode-e2e.log" | sed 's/^/- /' || true
+            done
+            echo ""
+            echo "Emulated hardware and a local test signal, not real target hardware."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload QEMU boot logs
         if: always()
@@ -599,7 +984,12 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           for mode in ("bios", "uefi"):
-              path = Path(f"build/boot-logs/{mode}-after-boot.ppm")
+              # Judge the first real TV picture from the E2E autostart step;
+              # a fixed 90 s capture is legitimately black on a quiet boot
+              # before Kodi's first frame. Fall back to it if E2E has none.
+              path = Path(f"build/boot-logs/e2e/{mode}-01-autostart.ppm")
+              if not path.is_file():
+                  path = Path(f"build/boot-logs/{mode}-after-boot.ppm")
               if not path.is_file():
                   raise SystemExit(f"{mode}: no post-boot display captured")
               # Reuse the bounded, descriptor-validated PPM parser. The old
@@ -642,7 +1032,9 @@ jobs:
         run: |
           set -euo pipefail
           for mode in bios uefi; do
-            python3 tests/check_qemu_tv_visual.py "build/boot-logs/$mode-after-boot.ppm"
+            capture="build/boot-logs/e2e/$mode-01-autostart.ppm"
+            [ -f "$capture" ] || capture="build/boot-logs/$mode-after-boot.ppm"
+            python3 tests/check_qemu_tv_visual.py "$capture"
           done
       - name: Audit installed packages and image footprint
         shell: bash
@@ -688,10 +1080,54 @@ jobs:
           python3 - <<'PY'
           from xml.etree import ElementTree as ET
           home = ET.parse("/tmp/dede-tv-home.xml").getroot()
-          assert "DEDE TV" in [n.text for n in home.findall(".//label")]
-          assert "ActivateWindow(TVChannels)" in [n.text for n in home.findall(".//onclick")]
-          assert len(home.findall(".//control")) <= 8
+          # Home is the no-picture screen: its own PVR channel list, no
+          # path into Kodi windows or menus.
+          channels = home.find(".//control[@id='50']")
+          assert channels is not None and channels.findtext("content") == "pvr://channels/tv/*"
+          assert home.findall(".//onclick") == []
+          assert "Fernsehen wird verbunden …" in [n.text for n in home.iter("label")]
           PY
+          # Remote-control whitelist: dede-tv.xml must be the only active keymap.
+          unsquashfs -l "$squashfs" usr/share/kodi/system/keymaps > /tmp/dede-keymaps.txt
+          active_maps=$(grep -E '^squashfs-root/usr/share/kodi/system/keymaps/[^/]+\.xml$' /tmp/dede-keymaps.txt || true)
+          echo "Active Kodi keymaps: $active_maps"
+          test "$active_maps" = 'squashfs-root/usr/share/kodi/system/keymaps/dede-tv.xml'
+          unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml | grep -aFq '<addon>skin.dede-tv</addon>'
+          unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml | grep -aFq '<addon>plugin.video.dede-virtual</addon>'
+          for embedded in \
+            usr/local/libexec/dede-tv-autoplay \
+            usr/local/libexec/dede-iptv-provision \
+            usr/local/libexec/dede-tv-guard \
+            usr/local/lib/dede-tv/dede_kodi_rpc.py \
+            etc/systemd/system/dede-tv-guard.service \
+            usr/local/libexec/dede-kodi-watchdog \
+            usr/local/libexec/dede-virtual-sync \
+            usr/share/kodi/addons/plugin.video.dede-virtual/addon.xml \
+            usr/share/kodi/addons/plugin.video.dede-virtual/default.py \
+            usr/bin/ffprobe \
+            etc/systemd/system/dede-kodi-watchdog.service \
+            etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service \
+            etc/systemd/system/multi-user.target.wants/dede-tv-guard.service \
+            etc/systemd/system/dede-kodi.service.wants/dede-tv-guard.service \
+            etc/systemd/system/dede-tv-autoplay.service \
+            etc/systemd/system/multi-user.target.wants/dede-tv-autoplay.service \
+            etc/systemd/system/dede-kodi.service.wants/dede-tv-autoplay.service \
+            etc/systemd/network/20-dede-wired.network; do
+            unsquashfs -cat "$squashfs" "$embedded" >/dev/null || {
+              echo "Missing TV playback component: $embedded" >&2
+              exit 1
+            }
+          done
+          # Enablement links point to absolute /lib paths that -cat cannot
+          # resolve inside the image; verify the links by listing instead.
+          for link in multi-user.target.wants/systemd-networkd.service \
+                      multi-user.target.wants/systemd-resolved.service; do
+            unsquashfs -lls "$squashfs" "etc/systemd/system/$link" \
+              | grep -Eq "/$link -> .*/systemd/system/${link#*/}\$" || {
+              echo "Service not enabled in image: $link" >&2
+              exit 1
+            }
+          done
           unsquashfs -cat "$squashfs" etc/passwd | grep -q '^dede:'
           unsquashfs -cat "$squashfs" etc/systemd/system/dede-kodi.service | grep -aFq 'ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk'
           unsquashfs -cat "$squashfs" etc/systemd/system/dede-tv-resume.service | grep -aFq 'ConditionFileIsExecutable=/usr/local/bin/dede-tv-core'
@@ -713,7 +1149,8 @@ jobs:
           if not packages:
               raise SystemExit("No installed Debian packages found in SquashFS")
           # An ISO without the playback engine is not a useful TV prototype.
-          required = ("linux-image-amd64", "kodi", "kodi-pvr-iptvsimple")
+          required = ("linux-image-amd64", "kodi", "kodi-pvr-iptvsimple", "systemd-resolved",
+                      "xserver-xorg-input-libinput")
           missing = [name for name in required if name not in packages]
           if missing:
               raise SystemExit("Missing installed TV packages: " + ", ".join(missing))
