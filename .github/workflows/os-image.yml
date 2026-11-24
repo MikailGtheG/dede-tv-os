@@ -40,7 +40,7 @@ jobs:
       - name: Build pinned Rust TV core for the Debian 13 appliance
         shell: bash
         env:
-          DEDE_CORE_SHA: fdeffbf0fda291c939e3271f8c1f0888b648a8e9
+          DEDE_CORE_SHA: b6da607fd45f70447f4706db41773f335128fc74
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
@@ -75,7 +75,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: 6c8ef041b6840826eaeda4fe5b0f872330b3ab77
+          DEDE_WEB_SHA: 7a1c8b309055eb615a67efc8f600eeba47a56355
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
