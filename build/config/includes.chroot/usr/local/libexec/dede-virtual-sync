@@ -15,7 +15,10 @@ For every channel the helper
     redefining restarts the channel's schedule, so a reboot must not do it,
   * writes a local M3U (plugin:// stream per channel) and a second
     IPTV Simple instance, so the channels appear in Kodi's channel list
-    with their own numbers next to the IPTV channels.
+    with their own numbers next to the IPTV channels,
+  * writes an XMLTV guide for the next EPG_HOURS from the core schedule.
+
+`--epg` only rewrites the guide (hourly timer).
 
 Runs as the TV user at every kiosk start. Exit 0 = applied/unchanged,
 1 = configuration rejected (TV still starts).
@@ -30,6 +33,8 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -43,6 +48,9 @@ DB = DATA / "channels.db"
 STATE = DATA / "virtual-state.json"
 DURATIONS = DATA / "virtual-durations.json"
 PLAYLIST = DATA / "virtual.m3u"
+EPG = DATA / "virtual-epg.xml"
+# IPTV Simple rereads the file whenever Kodi asks for a later EPG window.
+EPG_HOURS = 72
 INSTANCE = HOME / ".kodi" / "userdata" / "addon_data" / "pvr.iptvsimple" / "instance-settings-2.xml"
 INSTANCE_NAME = "Dede TV Eigene Sender"
 PLUGIN = "plugin://plugin.video.dede-virtual/"
@@ -219,12 +227,15 @@ def fingerprint(entries):
     return hashlib.sha256(json.dumps(entries, separators=(",", ":")).encode()).hexdigest()
 
 
+def tvg_id(name):
+    return "virtual-" + hashlib.sha1(name.encode()).hexdigest()[:12]
+
+
 def render_playlist(channels):
     lines = ["#EXTM3U"]
     for channel in sorted(channels, key=lambda c: c["number"]):
         query = urllib.parse.urlencode({"channel": channel["name"]}, quote_via=urllib.parse.quote)
-        slug = hashlib.sha1(channel["name"].encode()).hexdigest()[:12]
-        lines.append(f'#EXTINF:-1 tvg-id="virtual-{slug}" tvg-chno="{channel["number"]}" '
+        lines.append(f'#EXTINF:-1 tvg-id="{tvg_id(channel["name"])}" tvg-chno="{channel["number"]}" '
                      f'tvg-name="{channel["name"]}" group-title="Eigene Sender",{channel["name"]}')
         lines.append(f"{PLUGIN}?{query}")
     return "\n".join(lines) + "\n"
@@ -239,10 +250,69 @@ def render_instance():
         ("m3uCache", "false"),
         ("numberByOrder", "false"),
         ("epgPathType", "0"),
-        ("epgPath", ""),
+        ("epgPath", str(EPG)),
+        ("epgCache", "false"),
     ]
     body = "\n".join(f'    <setting id="{k}">{escape(v)}</setting>' for k, v in settings)
     return f'<settings version="2">\n{body}\n</settings>\n'
+
+
+def programme_title(path):
+    title = Path(path).stem.replace("_", " ").replace(".", " ")
+    return " ".join(title.split()) or Path(path).name
+
+
+def xmltv_time(ms):
+    return datetime.fromtimestamp(ms // 1000, timezone.utc).strftime("%Y%m%d%H%M%S +0000")
+
+
+def render_epg(channels, schedules):
+    """XMLTV for the given channels; schedules maps name -> core slots."""
+    root = ET.Element("tv", {"generator-info-name": "dede-tv"})
+    for channel in sorted(channels, key=lambda c: c["number"]):
+        node = ET.SubElement(root, "channel", {"id": tvg_id(channel["name"])})
+        ET.SubElement(node, "display-name").text = channel["name"]
+    for channel in sorted(channels, key=lambda c: c["number"]):
+        for slot in schedules.get(channel["name"], []):
+            node = ET.SubElement(root, "programme", {
+                "start": xmltv_time(slot["start_ms"]),
+                "stop": xmltv_time(slot["end_ms"]),
+                "channel": tvg_id(channel["name"]),
+            })
+            ET.SubElement(node, "title").text = programme_title(slot["path"])
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
+
+
+def schedule_for(name):
+    result = core("schedule", name, str(EPG_HOURS))
+    if result.returncode != 0:
+        log(f"{name}: no programme guide", error=True)
+        return []
+    try:
+        slots = json.loads(result.stdout)
+    except ValueError:
+        log(f"{name}: unreadable programme guide", error=True)
+        return []
+    return [s for s in slots if isinstance(s, dict) and isinstance(s.get("path"), str)
+            and isinstance(s.get("start_ms"), int) and isinstance(s.get("end_ms"), int)]
+
+
+def write_epg(channels):
+    write_atomic(EPG, render_epg(channels, {c["name"]: schedule_for(c["name"]) for c in channels}))
+
+
+def refresh_epg(channels):
+    """Rewrite the guide for configured channels that the core knows."""
+    if DATA.is_symlink() or not DATA.is_dir():
+        return []
+    listed = core("list")
+    if listed.returncode != 0:
+        return []
+    known = set(listed.stdout.splitlines())
+    ready = [c for c in channels if c["name"] in known]
+    if ready:
+        write_epg(ready)
+    return ready
 
 
 def remove_instance():
@@ -300,6 +370,7 @@ def sync(channels):
     write_atomic(STATE, json.dumps(new_state, sort_keys=True))
     if applied:
         write_atomic(PLAYLIST, render_playlist(applied))
+        write_epg(applied)
         write_atomic(INSTANCE, render_instance())
     else:
         remove_instance()
@@ -312,6 +383,14 @@ def main():
     except ConfigError as error:
         log(f"configuration rejected: {error}", error=True)
         return 1
+    if sys.argv[1:] == ["--epg"]:
+        try:
+            ready = refresh_epg(channels)
+        except (ConfigError, OSError, subprocess.SubprocessError) as error:
+            log(f"programme guide not updated: {error}", error=True)
+            return 1
+        log(f"programme guide updated for {len(ready)} local channels")
+        return 0
     if not channels:
         remove_instance()
         return 0

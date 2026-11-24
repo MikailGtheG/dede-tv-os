@@ -230,6 +230,9 @@ jobs:
           python3 -m unittest discover -s tests -p "test_tv_guard.py" -v
           python3 -m unittest discover -s tests -p "test_kodi_watchdog.py" -v
           python3 -m unittest discover -s tests -p "test_virtual_channels.py" -v
+          systemd-analyze verify \
+            build/config/includes.chroot/etc/systemd/system/dede-virtual-epg.service \
+            build/config/includes.chroot/etc/systemd/system/dede-virtual-epg.timer
       - name: Regression - QEMU channel classifier and E2E driver self-test
         run: |
           python3 -m unittest discover -s tests -p "test_qemu_channel.py" -v
@@ -435,7 +438,7 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_CORE_SHA: 516355e46fb566f35ebe7dbeebf49f81e5d69b3a' "$workflow"
+          grep -Fq 'DEDE_CORE_SHA: fdeffbf0fda291c939e3271f8c1f0888b648a8e9' "$workflow"
           grep -Fq 'git fetch --depth 1 origin "$DEDE_CORE_SHA"' "$workflow"
           grep -Fq 'test "$(git rev-parse HEAD)" = "$DEDE_CORE_SHA"' "$workflow"
           grep -Fq 'cargo build --release --locked --bin dede-tv-core' "$workflow"
@@ -447,7 +450,7 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_SKIN_SHA: 1773bc9392580601e40a6368336a0d51ceb8b6d4' "$workflow"
+          grep -Fq 'DEDE_SKIN_SHA: 5f0b4f61a12965b9db3b2c24d459ec980d747d3c' "$workflow"
           grep -Fq 'DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27' "$workflow"
           grep -Fq 'git sparse-checkout set addons/skin.estuary' "$workflow"
           grep -Fq 'usr/share/kodi/addons/skin.dede-tv/addon.xml' "$workflow"

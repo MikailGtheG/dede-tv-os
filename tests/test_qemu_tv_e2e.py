@@ -53,6 +53,8 @@ class FakeTv:
         if playing == "dedefilm" and self.last_playing != "dedefilm":
             verdict = "mismatch" if self.broken == "virtual-wrong-position" else "ok"
             self.serial_line(f"DEDE_CI_VIRTUAL: {verdict} file=film-01.mkv drift=+0.4s")
+            if self.broken != "no-epg":
+                self.serial_line("DEDE_CI_EPG: ok now=film-01 next=film-02")
             self.film_frames = 0
         if playing == "dedefilm":
             self.film_frames += 1
@@ -336,6 +338,11 @@ class E2ESelfTest(unittest.TestCase):
         steps = dict(self.run_against(FakeTv(broken="virtual-wrong-position")))
         self.assertTrue(steps["virtual-05-plays"])
         self.assertFalse(steps["virtual-position-matches-schedule"])
+
+    def test_missing_programme_guide_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="no-epg")))
+        self.assertTrue(steps["virtual-05-plays"])
+        self.assertFalse(steps["virtual-epg-now-next"])
 
     def test_virtual_channel_stopping_after_a_film_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="virtual-stops-after-film")))

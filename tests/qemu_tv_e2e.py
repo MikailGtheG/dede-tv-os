@@ -38,7 +38,7 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 21
+TOTAL_STEPS = 22
 HANG_TIMEOUT = int(os.environ.get("DEDE_E2E_HANG_TIMEOUT", "420"))
 PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
 SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
@@ -244,6 +244,8 @@ def run(guest):
     guest.key("5", settle=0.5)
     if not check("virtual-05-plays", wait_for(guest, "virtual-05", "dedefilm", timeout=90)):
         return steps
+    # Programme guide: Kodi's "now" for 05 is the film the core schedules.
+    check("virtual-epg-now-next", serial_contains("DEDE_CI_EPG: ok", timeout=120))
     # 120 s: a hand-over just before a film ends is skipped by the checker;
     # the next film's hand-over then decides.
     check("virtual-position-matches-schedule", virtual_positions_ok(minimum=1, timeout=120))
