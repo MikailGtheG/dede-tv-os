@@ -27,9 +27,9 @@ def current_playback(name, run=subprocess.run, clock=time.monotonic):
     started = clock()
     result = run([CORE, "--db", DB, "request-virtual", name, MEDIA_ROOT],
                  capture_output=True, text=True, timeout=8, check=False)
-    # The core computed the position somewhere during the call; on slow
-    # hardware starting it takes seconds, so hand Kodi the position for now.
-    latency = max(0.0, clock() - started) / 2
+    # Process start-up dominates the call and the core reads the clock near
+    # its end, so hand Kodi the position for now: add the whole call time.
+    latency = max(0.0, clock() - started)
     if result.returncode != 0:
         raise ValueError("channel not available")
     request = json.loads(result.stdout)
