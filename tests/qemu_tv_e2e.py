@@ -23,12 +23,15 @@ Usage: qemu_tv_e2e.py MONITOR_SOCKET OUTPUT_DIR LABEL
 Prints DEDE_E2E lines; exit status 0 only if every step passed.
 """
 import base64
+import http.client
 import json
 import os
 import socket
 import struct
 import sys
+import re
 import time
+import urllib.parse
 import zlib
 from pathlib import Path
 
@@ -38,10 +41,12 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 22
+TOTAL_STEPS = 26
 HANG_TIMEOUT = int(os.environ.get("DEDE_E2E_HANG_TIMEOUT", "420"))
 PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
 SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
+ADMIN_URL = os.environ.get("DEDE_E2E_ADMIN_URL", "http://127.0.0.1:18080")
+ADMIN_PASSWORD = "Dede-CI-Passwort-1"
 RESTART_TIMEOUT = int(os.environ.get("DEDE_E2E_RESTART_TIMEOUT", "240"))
 SWITCH_TIMEOUT = int(os.environ.get("DEDE_E2E_SWITCH_TIMEOUT", "60"))
 
@@ -182,6 +187,13 @@ def run(guest):
     if not check("autostart-channel-01", wait_for(guest, "autostart", "trt1",
                                                   timeout=FIRST_PICTURE_TIMEOUT, interval=6)):
         return steps  # nothing further can be judged without a picture
+    # P3: first-time administration setup with the code shown on the TV.
+    check("admin-tv-shows-setup-code",
+          serial_contains("DEDE_CI_ADMIN: tv shows code", timeout=180)
+          and setup_card_on_screen(guest, "trt1"))
+    check("admin-setup-via-web", admin_setup())
+    check("admin-tv-hides-code", serial_contains("DEDE_CI_ADMIN: tv code cleared", timeout=60))
+    check("admin-sign-in", admin_sign_in())
     # Let the channel banner fade so it does not cover the sample regions.
     time.sleep(8)
     guest.key("pgup")
@@ -264,6 +276,124 @@ def run(guest):
     check("virtual-time-runs-while-away",
           away and back and virtual_positions_ok(minimum=before + 1, timeout=120))
     return steps
+
+
+# Setup card (skin: dialog 1109, 920,40 560x280 of 1920x1080).
+SETUP_CARD_RECT = (0.49, 0.05, 0.76, 0.28)
+
+
+def setup_card_on_screen(guest, channel, timeout=20):
+    """A dark card covers the top of the picture instead of the channel colour."""
+    reference = channel_check.channel_colours()[channel]
+    deadline = time.monotonic() + timeout
+    while True:
+        ppm = guest.capture("admin-setup-card")
+        width, height, pixels = read_ppm(ppm)
+        card = channel_check.mean_colour(width, height, pixels, SETUP_CARD_RECT)
+        ok = channel_check.distance(card, reference) > 50 and max(card) < 110
+        if ok or time.monotonic() >= deadline:
+            print(f"DEDE_E2E: {guest.label}: {'PASS' if ok else 'FAIL'} setup card "
+                  f"mean={tuple(round(v) for v in card)}", flush=True)
+            log_preview(guest, ppm, "admin-setup-card")
+            return ok
+        os.unlink(ppm)
+        guest.shots -= 1
+        time.sleep(2)
+
+
+def admin_request(method, path, form=None, cookies=None, origin=True):
+    """(status, location, text, new cookies) from the guest's admin console."""
+    url = urllib.parse.urlsplit(ADMIN_URL)
+    connection = http.client.HTTPConnection(url.hostname, url.port, timeout=30)
+    headers = {}
+    if cookies:
+        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    body = None
+    if form is not None:
+        body = urllib.parse.urlencode(form)
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        if origin:
+            headers["Origin"] = origin if isinstance(origin, str) else ADMIN_URL
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        reply = connection.getresponse()
+        text = reply.read().decode("utf-8", "replace")
+    finally:
+        connection.close()
+    new = {}
+    for header in reply.msg.get_all("Set-Cookie") or []:
+        name, _, rest = header.partition("=")
+        new[name] = rest.split(";", 1)[0]
+    return reply.status, reply.getheader("Location"), text, new
+
+
+def setup_code():
+    try:
+        text = Path(SERIAL_LOG).read_bytes().decode("utf-8", "replace")
+    except OSError:
+        return None
+    codes = re.findall(r"DEDE_CI_ADMIN_CODE: ([0-9]{8})", text)
+    return codes[-1] if codes else None
+
+
+def admin_setup():
+    """Wrong code refused, cross-site POST refused, right code sets the password."""
+    code = setup_code()
+    if code is None:
+        print("DEDE_E2E: admin: no setup code on the serial console", flush=True)
+        return False
+    try:
+        status, _, page, cookies = admin_request("GET", "/setup")
+        token = cookies.get("dede_form", "")
+        if status != 200 or "Einrichtungscode vom Fernseher" not in page or not token:
+            print(f"DEDE_E2E: admin: setup page missing (status {status})", flush=True)
+            return False
+        wrong = "00000000" if code != "00000000" else "11111111"
+        form = {"form": token, "code": wrong, "password": ADMIN_PASSWORD, "repeat": ADMIN_PASSWORD}
+        _, _, page, _ = admin_request("POST", "/setup", form, cookies)
+        if "Der Code stimmt nicht." not in page:
+            print("DEDE_E2E: admin: wrong setup code was not refused", flush=True)
+            return False
+        form["code"] = code
+        status, _, _, _ = admin_request("POST", "/setup", form, cookies, origin="http://evil.example")
+        if status != 403:
+            print(f"DEDE_E2E: admin: cross-site setup answered {status}", flush=True)
+            return False
+        _, _, page, new = admin_request("POST", "/setup", form, cookies)
+        ok = "Das Passwort ist gespeichert." in page and bool(new.get("dede_session"))
+        print(f"DEDE_E2E: admin: setup {'PASS' if ok else 'FAIL'}", flush=True)
+        return ok
+    except OSError as exc:
+        print(f"DEDE_E2E: admin: {type(exc).__name__}: {exc}", flush=True)
+        return False
+
+
+def admin_sign_in():
+    """Wrong password refused; the right one opens the administration."""
+    try:
+        status, location, _, _ = admin_request("GET", "/")
+        if status != 303 or location != "/login":
+            print(f"DEDE_E2E: admin: / without session gave {status} {location}", flush=True)
+            return False
+        _, _, _, cookies = admin_request("GET", "/login")
+        token = cookies.get("dede_form", "")
+        _, _, page, new = admin_request("POST", "/login", {"form": token, "password": "falsch"}, cookies)
+        if "Das Passwort stimmt nicht." not in page or new.get("dede_session"):
+            print("DEDE_E2E: admin: wrong password was not refused", flush=True)
+            return False
+        status, location, _, new = admin_request(
+            "POST", "/login", {"form": token, "password": ADMIN_PASSWORD}, cookies)
+        session = new.get("dede_session")
+        if status != 303 or location != "/" or not session:
+            print(f"DEDE_E2E: admin: sign-in gave {status} {location}", flush=True)
+            return False
+        status, _, page, _ = admin_request("GET", "/", cookies={"dede_session": session})
+        ok = status == 200 and "Verwaltung" in page
+        print(f"DEDE_E2E: admin: sign-in {'PASS' if ok else 'FAIL'}", flush=True)
+        return ok
+    except OSError as exc:
+        print(f"DEDE_E2E: admin: {type(exc).__name__}: {exc}", flush=True)
+        return False
 
 
 def serial_count(needle):

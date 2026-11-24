@@ -28,6 +28,7 @@ jobs:
                       Path('build/config/includes.chroot/usr/local/libexec/dede-kodi-watchdog'),
                       Path('build/config/includes.chroot/usr/local/libexec/dede-virtual-sync'),
                       Path('build/config/includes.chroot/usr/share/kodi/addons/plugin.video.dede-virtual/default.py'),
+                      Path('build/config/includes.chroot/usr/share/kodi/addons/service.dede-setup/service.py'),
                       Path('build/config/includes.chroot/usr/local/lib/dede-tv/dede_kodi_rpc.py')]
           for source in sources:
               ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
@@ -230,6 +231,8 @@ jobs:
           python3 -m unittest discover -s tests -p "test_tv_guard.py" -v
           python3 -m unittest discover -s tests -p "test_kodi_watchdog.py" -v
           python3 -m unittest discover -s tests -p "test_virtual_channels.py" -v
+          python3 -m unittest discover -s tests -p "test_setup_service.py" -v
+          sh -n build/config/hooks/live/0540-dede-tv-admin.hook.chroot
           systemd-analyze verify \
             build/config/includes.chroot/etc/systemd/system/dede-virtual-epg.service \
             build/config/includes.chroot/etc/systemd/system/dede-virtual-epg.timer
@@ -438,7 +441,7 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_CORE_SHA: fdeffbf0fda291c939e3271f8c1f0888b648a8e9' "$workflow"
+          grep -Fq 'DEDE_CORE_SHA: b6da607fd45f70447f4706db41773f335128fc74' "$workflow"
           grep -Fq 'git fetch --depth 1 origin "$DEDE_CORE_SHA"' "$workflow"
           grep -Fq 'test "$(git rev-parse HEAD)" = "$DEDE_CORE_SHA"' "$workflow"
           grep -Fq 'cargo build --release --locked --bin dede-tv-core' "$workflow"
@@ -450,7 +453,7 @@ jobs:
         run: |
           set -euo pipefail
           workflow=.github/workflows/os-image.yml
-          grep -Fq 'DEDE_SKIN_SHA: 5f0b4f61a12965b9db3b2c24d459ec980d747d3c' "$workflow"
+          grep -Fq 'DEDE_SKIN_SHA: c11825c7f6e3d42c9a45cbe42137266587ed178d' "$workflow"
           grep -Fq 'DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27' "$workflow"
           grep -Fq 'git sparse-checkout set addons/skin.estuary' "$workflow"
           grep -Fq 'usr/share/kodi/addons/skin.dede-tv/addon.xml' "$workflow"
