@@ -332,6 +332,27 @@ class ResolverTests(Fixture):
             "Dede Film", run=lambda *a, **k: Result(), clock=lambda: next(ticks))
         self.assertAlmostEqual(position, 14.0)
 
+    def test_film_about_to_end_is_skipped_to_its_successor(self):
+        self.film("a.mkv", 40)
+        self.run_sync()
+        path = str(self.media.resolve()) + "/film/a.mkv"
+        answers = iter([(path, 38.5), (path + ".next", 0.4)])
+        waits = []
+        result = self.resolver.resolve("Dede Film", current=lambda name: next(answers),
+                                       sleep=waits.append)
+        self.assertEqual(result, (path + ".next", 0.4))
+        self.assertAlmostEqual(waits[0], 1.8)
+
+    def test_film_with_time_left_or_unknown_length_is_not_delayed(self):
+        self.film("a.mkv", 40)
+        self.run_sync()
+        path = str(self.media.resolve()) + "/film/a.mkv"
+        waits = []
+        for answer in ((path, 20.0), ("/elsewhere/unknown.mkv", 39.9)):
+            self.assertEqual(self.resolver.resolve("Dede Film", current=lambda name: answer,
+                                                   sleep=waits.append), answer)
+        self.assertEqual(waits, [])
+
     def test_unknown_or_invalid_channel_fails_cleanly(self):
         for name in ("Unbekannt", "", "x\nPlayer.Quit", "a" * 200):
             with self.subTest(name=name[:20]):

@@ -20,6 +20,9 @@ DB = os.path.join(HOME, ".local", "share", "dede-tv", "channels.db")
 DURATIONS = os.path.join(HOME, ".local", "share", "dede-tv", "virtual-durations.json")
 
 
+NEAR_END_S = 3.0
+
+
 def current_playback(name, run=subprocess.run, clock=time.monotonic):
     """Return (file, position_seconds) from dede-tv-core, or raise ValueError."""
     if not name or len(name.encode()) > 92 or any(ord(c) < 0x20 for c in name):
@@ -44,8 +47,8 @@ def current_playback(name, run=subprocess.run, clock=time.monotonic):
     return path, position + latency
 
 
-def duration_seconds(path, position):
-    """Kodi honours a resume point only with a total time; use the measured one."""
+def cached_duration(path):
+    """Measured length in seconds from dede-virtual-sync's cache, or None."""
     try:
         with open(DURATIONS, encoding="utf-8") as source:
             cache = json.load(source)
@@ -54,7 +57,28 @@ def duration_seconds(path, position):
                 return value / 1000.0
     except (OSError, ValueError, AttributeError):
         pass
-    return position + 1.0
+    return None
+
+
+def duration_seconds(path, position):
+    """Kodi honours a resume point only with a total time; use the measured one."""
+    length = cached_duration(path)
+    return length if length is not None else position + 1.0
+
+
+def resolve(name, current=current_playback, sleep=time.sleep):
+    """(file, position); a film about to end is skipped to its successor.
+
+    Opening a file within its last seconds fails in Kodi (error dialog), so
+    wait for the transition and ask the core again.
+    """
+    path, position = current(name)
+    length = cached_duration(path)
+    if length is not None and length - position < NEAR_END_S:
+        remaining = max(0.0, length - position)
+        sleep(remaining + 0.3)
+        path, position = current(name)
+    return path, position
 
 
 def channel_from_argv(argv):
@@ -70,7 +94,7 @@ def main(argv):
     handle = int(argv[1])
     name = channel_from_argv(argv)
     try:
-        path, position = current_playback(name)
+        path, position = resolve(name)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         xbmc.log(f"DEDE_VIRTUAL: cannot resolve local channel ({type(error).__name__})", xbmc.LOGWARNING)
         xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
