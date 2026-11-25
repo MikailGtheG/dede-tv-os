@@ -19,12 +19,15 @@ chmod 0644 "$work/m.xml"
 DEDE_KODI_MANIFEST="$work/m.xml" sh "$hook" >/dev/null
 [ "$(count '<addon>skin.dede-tv</addon>' "$work/m.xml")" = 1 ] || fail "skin not required"
 [ "$(count '<addon optional="true">pvr.iptvsimple</addon>' "$work/m.xml")" = 1 ] || fail "pvr not optional"
+for lang in de_de tr_tr; do
+  [ "$(count "<addon optional=\"true\">resource.language.$lang</addon>" "$work/m.xml")" = 1 ] || fail "language $lang not enabled"
+done
 [ "$(count '<addon>plugin.video.dede-virtual</addon>' "$work/m.xml")" = 1 ] || fail "virtual channel plugin not required"
 [ "$(count '<addon>service.dede-setup</addon>' "$work/m.xml")" = 1 ] || fail "setup service not required"
 # Upstream entries (Estuary stays required for Kodi itself) are preserved.
 [ "$(count '<addon>skin.estuary</addon>' "$work/m.xml")" = 1 ] || fail "estuary removed"
 [ "$(count '<addon optional="true">inputstream.adaptive</addon>' "$work/m.xml")" = 1 ] || fail "inputstream.adaptive changed"
-[ "$(grep -c '<addon' "$work/m.xml")" = "$(( $(grep -c '<addon' "$fixture") + 4 ))" ] || fail "unexpected entry count"
+[ "$(grep -c '<addon' "$work/m.xml")" = "$(( $(grep -c '<addon' "$fixture") + 6 ))" ] || fail "unexpected entry count"
 [ "$(stat -c %a "$work/m.xml")" = 644 ] || fail "manifest mode changed"
 python3 -c 'import sys, xml.etree.ElementTree as ET; ET.parse(sys.argv[1])' "$work/m.xml" || fail "invalid XML"
 

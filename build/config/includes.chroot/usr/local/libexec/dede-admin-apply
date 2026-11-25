@@ -11,6 +11,8 @@ Request kinds:
                     The TV restarts (dede-virtual-sync re-reads the folders) when
                     "refresh" is set or the channels that have films changed;
                     a new, still empty channel does not interrupt the picture.
+  language          "de", "tr" or "en" -> /etc/dede-tv/ui.conf (interface language of
+                    TV and console); the TV restarts when it changed.
 """
 import importlib.machinery
 import importlib.util
@@ -24,6 +26,8 @@ from pathlib import Path
 
 STATE = Path(os.environ.get("DEDE_ADMIN_STATE", "/var/lib/dede-tv-admin"))
 CONFIG = Path(os.environ.get("DEDE_VIRTUAL_CONFIG", "/etc/dede-tv/virtual-channels.conf"))
+UI_CONFIG = Path(os.environ.get("DEDE_UI_CONFIG", "/etc/dede-tv/ui.conf"))
+LANGUAGES = ("de", "tr", "en")
 SYNC = Path(os.environ.get("DEDE_VIRTUAL_SYNC", "/usr/local/libexec/dede-virtual-sync"))
 RESTART = os.environ.get("DEDE_APPLY_RESTART", "systemctl restart --no-block dede-kodi.service")
 MAX_REQUEST = 64 * 1024
@@ -104,10 +108,10 @@ def render(channels):
     return "\n".join(lines) + "\n"
 
 
-def write_config(text, expected, sync, path=CONFIG):
+def write_root_file(path, text, check=None):
     """Atomic, root-owned, readable by group dede (Kodi and the console).
 
-    The new file must read back exactly as dede-virtual-sync will read it.
+    `check(temp)` may refuse the new content before it replaces the old.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{os.getpid()}")
@@ -123,15 +127,45 @@ def write_config(text, expected, sync, path=CONFIG):
         except (KeyError, PermissionError):
             pass
         os.chmod(temp, 0o640)
+        if check is not None:
+            check(temp)
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+def write_config(text, expected, sync, path=CONFIG):
+    """The new file must read back exactly as dede-virtual-sync will read it."""
+    def check(temp):
         try:
             if sync.read_config(temp, require_root_owner=os.geteuid() == 0) != expected:
                 raise Refused("bad-request")
         except sync.ConfigError as error:
             raise Refused("bad-request") from error
-        os.replace(temp, path)
-    except BaseException:
-        temp.unlink(missing_ok=True)
-        raise
+    write_root_file(path, text, check)
+
+
+def current_language(path=UI_CONFIG):
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, _, value = line.strip().partition("=")
+            if key == "LANGUAGE" and value.strip() in LANGUAGES:
+                return value.strip()
+    except OSError:
+        pass
+    return "de"
+
+
+def apply_language(request):
+    language = request.get("language")
+    if set(request) != {"id", "kind", "language"} or language not in LANGUAGES:
+        raise Refused("bad-request")
+    changed = language != current_language()
+    write_root_file(UI_CONFIG, f"# Sprache von Fernseher und Verwaltung (de, tr, en).\nLANGUAGE={language}\n")
+    if changed:
+        log(f"language {language}, restarting the TV")
+        subprocess.run(RESTART.split(), check=False, timeout=30)
 
 
 def on_air(channels, sync):
@@ -147,6 +181,8 @@ def on_air(channels, sync):
 
 
 def apply(request, sync):
+    if request.get("kind") == "language":
+        return apply_language(request)
     if request.get("kind") != "virtual-channels":
         raise Refused("unknown-kind")
     refresh = request.get("refresh", False)

@@ -33,7 +33,8 @@ class ApplyTests(unittest.TestCase):
         self.restarted = self.tmp / "restarted"
         env = {"DEDE_ADMIN_STATE": str(self.state), "DEDE_VIRTUAL_CONFIG": str(self.config),
                "DEDE_MEDIA_ROOT": str(self.media), "DEDE_VIRTUAL_SYNC": str(LIBEXEC / "dede-virtual-sync"),
-               "DEDE_APPLY_RESTART": f"touch {self.restarted}"}
+               "DEDE_APPLY_RESTART": f"touch {self.restarted}",
+               "DEDE_UI_CONFIG": str(self.tmp / "etc" / "ui.conf")}
         old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.addCleanup(lambda: [os.environ.pop(k) if v is None else os.environ.__setitem__(k, v)
@@ -104,6 +105,32 @@ class ApplyTests(unittest.TestCase):
         (self.state / "requests" / f"{rid}.json").write_text(json.dumps({"id": "b" * 32, "kind": "virtual-channels", "channels": []}))
         self.apply.main()
         self.assertEqual(json.loads((self.state / "results" / f"{rid}.json").read_text())["error"], "bad-request")
+
+    def language(self, value, **extra):
+        rid = "d" * 32
+        body = {"id": rid, "kind": "language", "language": value, **extra}
+        (self.state / "requests" / f"{rid}.json").write_text(json.dumps(body))
+        self.apply.main()
+        return json.loads((self.state / "results" / f"{rid}.json").read_text())
+
+    def test_language_is_written_and_restarts_only_on_change(self):
+        ui = self.tmp / "etc" / "ui.conf"
+        self.assertTrue(self.language("tr")["ok"])
+        self.assertIn("LANGUAGE=tr\n", ui.read_text())
+        self.assertEqual(ui.stat().st_mode & 0o777, 0o640)
+        self.assertTrue(self.restarted.exists())
+        self.restarted.unlink()
+        self.assertTrue(self.language("tr")["ok"])
+        self.assertFalse(self.restarted.exists(), "same language must not restart")
+        # German is the default: choosing it on a fresh device changes nothing.
+        ui.unlink()
+        self.assertTrue(self.language("de")["ok"])
+        self.assertFalse(self.restarted.exists())
+
+    def test_invalid_language_requests(self):
+        for value, extra in (("fr", {}), ("../x", {}), (None, {}), ("tr", {"extra": 1})):
+            self.assertEqual(self.language(value, **extra)["error"], "bad-request")
+        self.assertFalse((self.tmp / "etc" / "ui.conf").exists())
 
     def test_symlinked_or_badly_named_requests_are_dropped(self):
         target = self.tmp / "elsewhere.json"

@@ -201,6 +201,10 @@ XML
   fi
 fi
 
+# Interface language chosen in the administration console (default German).
+/usr/bin/python3 /usr/local/libexec/dede-ui-language ||
+  echo "Interface language not applied" >&2
+
 # Apply the administrator's IPTV source (/etc/dede-tv/iptv.conf) to Kodi.
 # Non-fatal: without a valid source the TV home screen still starts.
 /usr/bin/python3 /usr/local/libexec/dede-iptv-provision ||
