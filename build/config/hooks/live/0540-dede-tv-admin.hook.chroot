@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+# Administration console: own system user, no login, no root rights.
+if ! id dede-admin >/dev/null 2>&1; then
+  useradd --system --user-group --no-create-home --home-dir /nonexistent \
+    --shell /usr/sbin/nologin dede-admin
+fi
+chmod 0755 /usr/local/bin/dede-tv-admin
+mkdir -p /etc/systemd/system/multi-user.target.wants
+ln -sfn ../dede-tv-admin.service \
+  /etc/systemd/system/multi-user.target.wants/dede-tv-admin.service

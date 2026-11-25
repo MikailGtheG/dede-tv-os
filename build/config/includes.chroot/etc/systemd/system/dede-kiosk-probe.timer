@@ -1,0 +1,10 @@
+[Unit]
+Description=One-shot Dede TV alpha kiosk status probe
+
+[Timer]
+OnBootSec=55s
+AccuracySec=1s
+Unit=dede-kiosk-probe.service
+
+[Install]
+WantedBy=timers.target

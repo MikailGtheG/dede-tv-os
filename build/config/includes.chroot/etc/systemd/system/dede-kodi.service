@@ -1,0 +1,49 @@
+[Unit]
+Description=Dede TV Kodi kiosk (alpha)
+After=systemd-user-sessions.service systemd-logind.service
+Wants=systemd-logind.service dede-tv-resume.service
+Conflicts=getty@tty1.service
+# Never permanently stop TV recovery after repeated Kodi crashes.
+# RestartSec=5 still bounds restart frequency.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=dede
+Group=dede
+# Keep newly created Kodi profile files and sockets private by default.
+UMask=0077
+# Prevent core dumps from retaining IPTV credentials or stream tokens.
+LimitCORE=0
+SupplementaryGroups=video audio render input
+WorkingDirectory=/home/dede
+Environment=HOME=/home/dede
+Environment=XDG_RUNTIME_DIR=/run/dede-tv
+RuntimeDirectory=dede-tv
+RuntimeDirectoryMode=0700
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+ExecStart=/bin/sh /usr/local/bin/dede-kodi-kiosk
+Restart=always
+RestartSec=5
+# If the kernel OOM-kills a Kodi/Xorg child, terminate the entire service
+# cgroup so systemd can restart a clean media-engine process tree.
+# Ensure all Kodi/Xorg children are terminated on restart, not only the main PID.
+KillMode=control-group
+OOMPolicy=kill
+# Bound shutdown of a wedged Kodi/Xorg process tree during service recovery.
+TimeoutStopSec=15s
+NoNewPrivileges=true
+# The media engine must never modify host kernel settings or load modules.
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectSystem=strict
+ReadWritePaths=/home/dede /run/dede-tv
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

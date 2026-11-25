@@ -1,0 +1,148 @@
+#!/usr/bin/python3
+"""Provision Kodi's IPTV Simple client from the system IPTV source config.
+
+Source of truth: /etc/dede-tv/iptv.conf (root-owned, written by the
+administration console), for example:
+
+    M3U_URL=https://provider.example/playlist.m3u
+    EPG_URL=https://provider.example/epg.xml
+
+The helper writes Kodi 21's per-instance settings file for pvr.iptvsimple
+on every kiosk start, so a changed source takes effect after a Kodi restart
+without reinstalling. Without a config file, existing Kodi state is left
+untouched. Exit status 0 = unchanged/written, 1 = rejected config.
+"""
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+from xml.sax.saxutils import escape
+
+CONFIG = Path(os.environ.get("DEDE_IPTV_CONFIG", "/etc/dede-tv/iptv.conf"))
+HOME = Path(os.environ.get("HOME", "/home/dede"))
+TARGET_DIR = HOME / ".kodi" / "userdata" / "addon_data" / "pvr.iptvsimple"
+TARGET = TARGET_DIR / "instance-settings-1.xml"
+MAX_CONFIG = 16 * 1024
+MAX_URL = 2048
+KEYS = {"M3U_URL", "EPG_URL"}
+
+
+class ConfigError(ValueError):
+    pass
+
+
+def read_config(path=CONFIG, require_root_owner=True):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise ConfigError(f"cannot open IPTV config safely ({type(error).__name__})") from error
+    with os.fdopen(fd, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ConfigError("IPTV config is not a regular file")
+        # Only the administrator may define where the TV fetches streams.
+        if require_root_owner and info.st_uid != 0:
+            raise ConfigError("IPTV config must be owned by root")
+        if info.st_mode & 0o002:
+            raise ConfigError("IPTV config must not be world-writable")
+        data = source.read(MAX_CONFIG + 1)
+    if len(data) > MAX_CONFIG:
+        raise ConfigError("IPTV config too large")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ConfigError("IPTV config must be UTF-8") from error
+    values = {}
+    for number, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or key not in KEYS:
+            raise ConfigError(f"line {number}: unknown or malformed entry")
+        if key in values:
+            raise ConfigError(f"line {number}: duplicate {key}")
+        values[key] = validate_url(value, key)
+    if "M3U_URL" not in values:
+        raise ConfigError("M3U_URL is required")
+    return values
+
+
+def validate_url(value, key):
+    if not value or len(value) > MAX_URL:
+        raise ConfigError(f"{key}: empty or longer than {MAX_URL} characters")
+    if not value.startswith(("http://", "https://")):
+        raise ConfigError(f"{key}: only http:// and https:// sources are allowed")
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7f for ch in value):
+        raise ConfigError(f"{key}: whitespace or control characters are not allowed")
+    return value
+
+
+def render(values):
+    settings = [
+        ("kodi_addon_instance_name", "Dede TV"),
+        ("kodi_addon_instance_enabled", "true"),
+        ("m3uPathType", "1"),
+        ("m3uUrl", values["M3U_URL"]),
+        ("m3uCache", "true"),
+        # Channel numbers come from tvg-chno, matching the admin's line-up.
+        ("numberByOrder", "false"),
+    ]
+    if "EPG_URL" in values:
+        settings += [("epgPathType", "1"), ("epgUrl", values["EPG_URL"]), ("epgCache", "true")]
+    else:
+        # Kodi otherwise falls back to the playlist's x-tvg-url header.
+        settings += [("epgPathType", "1"), ("epgUrl", "")]
+    lines = ['<settings version="2">']
+    for key, value in settings:
+        lines.append(f'    <setting id="{key}">{escape(value)}</setting>')
+    lines.append("</settings>")
+    return "\n".join(lines) + "\n"
+
+
+def ensure_private_dir(path):
+    for directory in (path.parent.parent, path.parent, path):
+        if directory.is_symlink():
+            raise ConfigError(f"refusing symlinked Kodi profile path {directory}")
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+
+def write_atomic(content, target=TARGET):
+    ensure_private_dir(target.parent)
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        raise ConfigError("refusing redirected IPTV instance settings file")
+    if target.is_file() and target.read_text(encoding="utf-8", errors="replace") == content:
+        return False
+    fd, temporary = tempfile.mkstemp(prefix=".dede-iptv-", dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            os.fchmod(output.fileno(), 0o600)
+            output.write(content)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return True
+
+
+def main():
+    try:
+        values = read_config()
+        if values is None:
+            print("DEDE_IPTV: no IPTV source configured")
+            return 0
+        changed = write_atomic(render(values))
+    except ConfigError as error:
+        # Never echo URLs: they often carry subscriber credentials.
+        print(f"DEDE_IPTV: IPTV source rejected: {error}", file=sys.stderr)
+        return 1
+    print("DEDE_IPTV: IPTV source " + ("updated" if changed else "unchanged"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

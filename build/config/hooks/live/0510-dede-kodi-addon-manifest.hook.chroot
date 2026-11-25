@@ -1,0 +1,106 @@
+#!/bin/sh
+# Prevent Kodi's modal "Disabled add-ons - Would you like to enable this
+# add-on?" prompt at the source instead of dismissing it after it appears.
+#
+# Kodi 21 (CApplication::ConfigureAndEnableAddons, Linux builds with
+# ADDONS_CONFIGURE_AT_STARTUP) opens one blocking yes/no dialog for every
+# installed, non-dependency add-on whose disabled reason is NONE. Debian's
+# kodi-pvr-iptvsimple and our skin.dede-tv are exactly such add-ons.
+#
+# Add-ons listed in system/addon-manifest.xml are inserted *enabled* when
+# CAddonDatabase::SyncInstalled first discovers them, so no dialog is shown:
+#   - skin.dede-tv:   required system add-on. Kodi re-enables it on every
+#                     start and refuses to let any UI disable the TV skin.
+#   - plugin.video.dede-virtual: required; resolves local 24/7 channels.
+#   - pvr.iptvsimple: optional system add-on. Enabled on first discovery;
+#                     a later administrator decision to disable it is kept.
+#
+# DEDE_KODI_MANIFEST may point at a fixture for tests; images use the
+# Debian kodi-data path. The rootfs is an immutable image, so a later
+# kodi-data upgrade cannot silently revert this outside an image rebuild.
+set -eu
+manifest="${DEDE_KODI_MANIFEST:-/usr/share/kodi/system/addon-manifest.xml}"
+
+if [ -L "$manifest" ] || [ ! -f "$manifest" ]; then
+  echo "Kodi addon manifest missing or redirected: $manifest" >&2
+  exit 1
+fi
+
+python3 - "$manifest" <<'PY'
+import os
+import re
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+REQUIRED = ("skin.dede-tv", "plugin.video.dede-virtual", "service.dede-setup")
+OPTIONAL = ("pvr.iptvsimple",)
+
+with open(path, "rb") as source:
+    data = source.read(1024 * 1024 + 1)
+if len(data) > 1024 * 1024:
+    sys.exit("Kodi addon manifest exceeds 1 MiB")
+if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+    sys.exit("DTD/entity declarations are not allowed in the addon manifest")
+text = data.decode("utf-8")
+
+root = ET.fromstring(text)
+if root.tag != "addons":
+    sys.exit("unexpected Kodi addon manifest root")
+
+
+def entries():
+    found = {}
+    for element in ET.fromstring(text).iter("addon"):
+        addon_id = (element.text or "").strip()
+        found.setdefault(addon_id, []).append(element.get("optional") == "true")
+    return found
+
+
+current = entries()
+additions = []
+for addon_id in REQUIRED:
+    flags = current.get(addon_id)
+    if flags is None:
+        additions.append(f"  <addon>{addon_id}</addon>\n")
+    elif flags != [False]:
+        sys.exit(f"{addon_id} must be listed exactly once as a required add-on")
+for addon_id in OPTIONAL:
+    flags = current.get(addon_id)
+    if flags is None:
+        additions.append(f'  <addon optional="true">{addon_id}</addon>\n')
+    elif len(flags) != 1:
+        sys.exit(f"{addon_id} is listed more than once")
+
+if additions:
+    # Insert textually before the closing tag so Kodi's comments and
+    # formatting are preserved for diffing against the Debian package.
+    closing = list(re.finditer(r"</addons\s*>", text))
+    if len(closing) != 1:
+        sys.exit("expected exactly one closing </addons> tag")
+    position = closing[0].start()
+    text = text[:position] + "".join(additions) + text[position:]
+
+final = entries()
+for addon_id in REQUIRED:
+    if final.get(addon_id) != [False]:
+        sys.exit(f"verification failed: {addon_id} is not a required add-on")
+for addon_id in OPTIONAL:
+    if final.get(addon_id) is None or len(final[addon_id]) != 1:
+        sys.exit(f"verification failed: {addon_id} is not listed once")
+
+if additions:
+    directory = os.path.dirname(path)
+    mode = os.stat(path).st_mode & 0o777
+    fd, temporary = tempfile.mkstemp(prefix=".addon-manifest.", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            output.write(text)
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+print("DEDE_BUILD: Kodi addon manifest enables " + ", ".join(REQUIRED + OPTIONAL))
+PY

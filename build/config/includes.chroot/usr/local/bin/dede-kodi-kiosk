@@ -1,0 +1,58 @@
+#!/bin/sh
+# Dede TV OS alpha: run Kodi as the dedicated unprivileged TV user.
+set -eu
+# Never launch the graphical media engine with root privileges, even if
+# the service is accidentally started outside its dedicated user unit.
+if [ "$(id -u)" -eq 0 ]; then
+  echo "Kodi kiosk refuses to run as root" >&2
+  exit 1
+fi
+export HOME=/home/dede
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/dede-tv}
+case "$XDG_RUNTIME_DIR" in
+  /*) ;;
+  *) echo "Kodi runtime directory must be absolute" >&2; exit 1 ;;
+esac
+if [ -L "$XDG_RUNTIME_DIR" ] || [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
+  echo "Kodi runtime directory is unavailable or not writable" >&2
+  exit 1
+fi
+# A symlink in any parent component can redirect the private socket directory
+# even when the final runtime directory itself is not a symlink.
+resolved_runtime=$(realpath -e -- "$XDG_RUNTIME_DIR" 2>/dev/null) || {
+  echo "Kodi runtime directory cannot be resolved" >&2
+  exit 1
+}
+if [ "$resolved_runtime" != "$XDG_RUNTIME_DIR" ]; then
+  echo "Kodi runtime directory must not traverse symlinks" >&2
+  exit 1
+fi
+# Require a private runtime directory before creating Kodi sockets.
+runtime_mode=$(stat -c %a -- "$XDG_RUNTIME_DIR") || exit 1
+runtime_owner=$(stat -c %u -- "$XDG_RUNTIME_DIR") || exit 1
+if [ "$runtime_owner" != "$(id -u)" ] || [ "$runtime_mode" != 700 ]; then
+  echo "Kodi runtime directory must be owned by the TV user with mode 0700" >&2
+  exit 1
+fi
+# Never expose Kodi's stock navigation if the dedicated TV skin is absent.
+skin_addon=/usr/share/kodi/addons/skin.dede-tv/addon.xml
+# The profile initializer already parses addon.xml and validates the root addon ID.
+# Do not re-validate with a quote-sensitive grep: valid XML may use single quotes.
+if [ -L "$skin_addon" ] || [ -L "$(dirname "$skin_addon")" ] || [ ! -f "$skin_addon" ]; then
+  echo "Dede TV skin is missing; refusing to expose the Kodi interface" >&2
+  exit 1
+fi
+# Reject symlinks in ancestors as well: a redirected addons root could
+# replace the TV-only skin while passing the final-component checks.
+resolved_skin=$(realpath -e -- "$skin_addon" 2>/dev/null) || {
+  echo "Dede TV skin path cannot be resolved" >&2
+  exit 1
+}
+if [ "$resolved_skin" != "$skin_addon" ]; then
+  echo "Dede TV skin path must not traverse symlinks" >&2
+  exit 1
+fi
+# Do not modify the persistent Kodi profile when the required skin is missing.
+export XDG_SESSION_TYPE=x11
+/usr/local/libexec/dede-kodi-profile-init
+exec /usr/bin/xinit /usr/bin/kodi --standalone -- /usr/bin/Xorg :0 -nolisten tcp -noreset vt1

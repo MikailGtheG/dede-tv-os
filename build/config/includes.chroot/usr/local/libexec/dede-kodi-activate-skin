@@ -1,0 +1,227 @@
+#!/usr/bin/python3
+"""One-time, loopback-only Kodi skin activation for the Dede TV appliance.
+
+Kodi discovers addons after process start. Writing lookandfeel.skin before the
+addon manager has enabled a new skin is not enough to render it. Use Kodi's
+own public JSON-RPC API and verify the *loaded* skin, not the desired setting.
+"""
+import json
+import os
+import tempfile
+from pathlib import Path
+import socket
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+HOME = Path(os.environ.get("HOME", "/home/dede"))
+PROFILE = HOME / ".kodi" / "userdata"
+MARKER = PROFILE / ".dede-skin-activated"
+PENDING = PROFILE / ".dede-skin-first-boot-pending"
+SETTINGS = PROFILE / "guisettings.xml"
+HOST, PORT = "127.0.0.1", 9090
+WRITE_RESULTS = {"Addons.SetAddonEnabled": "OK", "Settings.SetSettingValue": True}
+
+
+def rpc(method, params=None, *, timeout=4):
+    request_id = 24011
+    request = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        request["params"] = params
+    raw = json.dumps(request, separators=(",", ":")).encode() + b"\n"
+    deadline = time.monotonic() + timeout
+    with socket.create_connection((HOST, PORT), timeout=max(0.001, deadline - time.monotonic())) as connection:
+        # sendall() also needs the remaining whole-request budget. A peer that
+        # accepts a connection but stops reading must not stall activation.
+        remaining_time = deadline - time.monotonic()
+        if remaining_time <= 0:
+            raise TimeoutError(f"{method}: JSON-RPC deadline exceeded before send")
+        connection.settimeout(remaining_time)
+        connection.sendall(raw)
+        response = b""
+        while len(response) < 131072:
+            remaining_time = deadline - time.monotonic()
+            if remaining_time <= 0:
+                raise TimeoutError(f"{method}: JSON-RPC deadline exceeded")
+            connection.settimeout(remaining_time)
+            part = connection.recv(min(4096, 131072 - len(response)))
+            if not part:
+                break
+            response += part
+            try:
+                # Kodi may send a JSON-RPC notification ahead of the reply.
+                decoder = json.JSONDecoder()
+                remaining = response.decode("utf-8").lstrip()
+                while remaining:
+                    try:
+                        document, consumed = decoder.raw_decode(remaining)
+                    except json.JSONDecodeError:
+                        break
+                    remaining = remaining[consumed:].lstrip()
+                    if (isinstance(document, dict) and type(document.get("id")) is int
+                            and document["id"] == request_id):
+                        if document.get("jsonrpc") != "2.0":
+                            raise RuntimeError(f"{method}: invalid JSON-RPC version")
+                        if "error" in document:
+                            raise RuntimeError(
+                                f"{method}: error {document['error'].get('code') if isinstance(document['error'], dict) else 'malformed error response'}"
+                            )
+                        if "result" not in document:
+                            raise RuntimeError(f"{method}: missing result")
+                        # Read methods require object results. Write methods
+                        # must return exactly their Kodi 21 schema value:
+                        # Addons.SetAddonEnabled -> "OK",
+                        # Settings.SetSettingValue -> true (boolean).
+                        result = document["result"]
+                        if method in WRITE_RESULTS:
+                            expected = WRITE_RESULTS[method]
+                            if type(result) is not type(expected) or result != expected:
+                                raise RuntimeError(f"{method}: malformed result response")
+                        elif not isinstance(result, dict):
+                            raise RuntimeError(f"{method}: malformed result response")
+                        return result
+            except UnicodeDecodeError:
+                continue
+    raise RuntimeError(f"No bounded JSON-RPC reply for {method}")
+
+
+def desired_skin():
+    if not SETTINGS.is_file() or SETTINGS.resolve() != SETTINGS:
+        return None
+    # Match the profile initializer: never parse unbounded or entity-bearing
+    # metadata from a potentially corrupted Kodi profile.
+    with SETTINGS.open("rb") as source:
+        xml = source.read(1024 * 1024 + 1)
+    if len(xml) > 1024 * 1024:
+        raise ValueError("Kodi XML exceeds 1 MiB")
+    # Kodi writes UTF-8. Reject alternate encodings before scanning for DTDs:
+    # UTF-16 can hide declaration keywords behind NUL bytes.
+    if b"\x00" in xml or xml.startswith((b"\xff\xfe", b"\xfe\xff")):
+        raise ValueError("Kodi settings must be UTF-8 XML")
+    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+        raise ValueError("DTD/entity declarations are not allowed")
+    root = ET.fromstring(xml)
+    if root.tag != "settings":
+        raise ValueError("unexpected Kodi settings root")
+    # Kodi may rewrite guisettings.xml with settings nested in sections/categories.
+    # Duplicate preferences are ambiguous even when the first one is Dede TV.
+    # Never allow a second skin entry to bypass the kiosk's fail-closed gate.
+    skins = [item.text for item in root.iter("setting")
+             if item.get("id") == "lookandfeel.skin"]
+    return skins[0] if len(skins) == 1 else None
+
+
+def first_boot_pending():
+    if not PENDING.is_file() or PENDING.resolve() != PENDING:
+        return False
+    try:
+        # This marker is untrusted persistent state. Read only the expected
+        # token length plus one byte, even if a corrupted file is enormous.
+        with PENDING.open("rb") as source:
+            return source.read(len(b"skin.dede-tv\n") + 1) == b"skin.dede-tv\n"
+    except OSError:
+        return False
+
+
+def enable_first_boot_pvr():
+    """Enable packaged IPTV Simple once to avoid Kodi's modal enable prompt.
+
+    Does not add playlists, network addresses, accounts, or credentials.
+    Subsequent administrator decisions to disable the add-on are respected.
+    """
+    details = rpc("Addons.GetAddonDetails", {
+        "addonid": "pvr.iptvsimple", "properties": ["enabled"]
+    })
+    addon = details.get("addon")
+    if not isinstance(addon, dict) or not isinstance(addon.get("enabled"), bool):
+        raise RuntimeError("IPTV Simple: malformed addon metadata")
+    if not addon["enabled"]:
+        rpc("Addons.SetAddonEnabled", {
+            "addonid": "pvr.iptvsimple", "enabled": True
+        })
+        # Never send blind navigation input (a Back key) to dismiss Kodi's
+        # startup prompt: it cannot target a specific dialog, closes at most
+        # one of several queued prompts, and answers "No", which marks the
+        # add-on as user-disabled. The image prevents the prompt instead by
+        # listing pvr.iptvsimple in Kodi's addon manifest (build hook 0510).
+        verified = rpc("Addons.GetAddonDetails", {
+            "addonid": "pvr.iptvsimple", "properties": ["enabled"]
+        }).get("addon")
+        if not isinstance(verified, dict) or verified.get("enabled") is not True:
+            raise RuntimeError("IPTV Simple: enable did not persist")
+
+
+def write_activation_marker():
+    """Atomically publish a private marker without following a stale symlink.
+
+    A marker is diagnostic state only, never proof of a loaded Kodi skin.
+    """
+    fd, temporary = tempfile.mkstemp(prefix=".dede-skin-", dir=MARKER.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as output:
+            os.fchmod(output.fileno(), 0o600)
+            output.write("skin.dede-tv\n")
+        os.replace(temporary, MARKER)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def run():
+    if desired_skin() != "skin.dede-tv" and not first_boot_pending():
+        # A successful oneshot unblocks dede-tv-resume.service. Never report
+        # success when the active Kodi UI may be Estuary or another skin.
+        # Administration belongs to the password-protected console, not Kodi.
+        print("DEDE_SETUP: non-Dede skin preference blocks TV startup", file=sys.stderr)
+        return 1
+    if not Path("/usr/share/kodi/addons/skin.dede-tv/addon.xml").is_file():
+        print("DEDE_SETUP: packaged skin missing", file=sys.stderr)
+        return 1
+    # A persisted marker is not proof that Kodi loaded the skin this boot.
+    # Always verify the live setting and recover after profile/addon changes.
+    # Under software QEMU, the addon manager may need time to initialize.
+    for attempt in range(75):
+        try:
+            if first_boot_pending():
+                # Fallback only: the image manifest already enables IPTV
+                # Simple on first discovery (build hook 0510).
+                enable_first_boot_pvr()
+            details = rpc("Addons.GetAddonDetails", {
+                "addonid": "skin.dede-tv", "properties": ["enabled"]
+            })
+            addon = details.get("addon")
+            if not isinstance(addon, dict) or not isinstance(addon.get("enabled"), bool):
+                raise RuntimeError("Addons.GetAddonDetails: malformed addon response")
+            if not addon["enabled"]:
+                rpc("Addons.SetAddonEnabled", {
+                    "addonid": "skin.dede-tv", "enabled": True
+                })
+            rpc("Settings.SetSettingValue", {
+                "setting": "lookandfeel.skin", "value": "skin.dede-tv"
+            })
+            actual = rpc("Settings.GetSettingValue", {"setting": "lookandfeel.skin"})
+            skin = (actual or {}).get("value")
+            if skin == "skin.dede-tv":
+                write_activation_marker()
+                # Remove the recovery permission after first successful
+                # activation, so later intentional administrator skin choices
+                # are never overridden.
+                if first_boot_pending():
+                    PENDING.unlink()
+                print("DEDE_SETUP: actual loaded skin=skin.dede-tv")
+                return 0
+            print(f"DEDE_SETUP: awaiting active skin ({skin})")
+        except (OSError, TimeoutError, RuntimeError) as error:
+            if attempt in (0, 10, 30, 60, 74):
+                print(f"DEDE_SETUP: startup retry {attempt + 1}: {type(error).__name__}")
+        time.sleep(2)
+    print("DEDE_SETUP: skin activation failed", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(run())
+    except (ET.ParseError, ValueError) as error:
+        print(f"DEDE_SETUP: invalid settings ({type(error).__name__})", file=sys.stderr)
+        raise SystemExit(1)

@@ -1,0 +1,11 @@
+[Unit]
+Description=Dede TV alpha boot diagnostics (serial only)
+After=dede-kodi.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/local/bin/dede-kiosk-probe
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true

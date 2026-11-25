@@ -1,0 +1,11 @@
+[Match]
+Type=ether
+Name=en* eth*
+
+[Network]
+DHCP=yes
+# Do not delay boot for IPv6 router advertisements on IPv4-only networks.
+IPv6AcceptRA=yes
+
+[DHCPv4]
+UseDNS=yes

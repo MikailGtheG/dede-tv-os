@@ -1,0 +1,36 @@
+[Unit]
+Description=Dede TV start last (or first) live channel after Kodi startup
+After=dede-kodi.service dede-kodi-skin.service dede-tv-resume.service network-online.target
+Requires=dede-kodi.service
+# Ordering only: the activation oneshot verifies the skin but may fail
+# transiently under load; autoplay checks the active skin itself before
+# playing (fail closed) instead of never starting TV.
+Wants=dede-kodi-skin.service
+Wants=network-online.target
+# Re-run whenever Kodi restarts, so a crash restart returns to live TV.
+PartOf=dede-kodi.service
+StartLimitIntervalSec=600
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+User=dede
+Group=dede
+UMask=0077
+LimitCORE=0
+WorkingDirectory=/home/dede
+Environment=HOME=/home/dede
+ExecStart=/usr/bin/python3 /usr/local/libexec/dede-tv-autoplay
+TimeoutStartSec=420
+Restart=on-failure
+RestartSec=20s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target dede-kodi.service

@@ -1,0 +1,28 @@
+[Unit]
+Description=Dede TV restore last channel after Kodi startup
+After=dede-kodi.service dede-kodi-skin.service
+Requires=dede-kodi.service dede-kodi-skin.service
+# Never resume playback before the Dede skin has been activated and verified.
+# A failed skin activation blocks channel playback rather than exposing stock Kodi.
+# Propagate Kodi restarts to this oneshot; Wants= alone only starts it initially.
+PartOf=dede-kodi.service
+ConditionFileIsExecutable=/usr/local/bin/dede-tv-core
+ConditionPathExists=/home/dede/.local/share/dede-tv/channels.db
+
+[Service]
+Type=oneshot
+User=dede
+Group=dede
+WorkingDirectory=/home/dede
+Environment=HOME=/home/dede
+ExecStart=/bin/sh /usr/local/libexec/dede-tv-resume
+TimeoutStartSec=1320
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+ReadWritePaths=/home/dede/.local/share/dede-tv
+
+[Install]
+WantedBy=multi-user.target

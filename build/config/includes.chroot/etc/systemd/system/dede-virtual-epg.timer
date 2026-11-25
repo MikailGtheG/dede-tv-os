@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh the Dede TV programme guide for local channels hourly
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target

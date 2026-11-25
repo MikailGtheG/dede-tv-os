@@ -1,0 +1,28 @@
+[Unit]
+Description=Dede TV playback guard (stream errors, retries, no Kodi error dialogs)
+After=dede-kodi.service
+PartOf=dede-kodi.service
+
+[Service]
+Type=simple
+User=dede
+Group=dede
+UMask=0077
+LimitCORE=0
+WorkingDirectory=/home/dede
+Environment=HOME=/home/dede
+ExecStart=/usr/bin/python3 /usr/local/libexec/dede-tv-guard
+Restart=always
+StandardOutput=journal+console
+RestartSec=5s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target dede-kodi.service
