@@ -75,7 +75,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: 7a1c8b309055eb615a67efc8f600eeba47a56355
+          DEDE_WEB_SHA: 905813f162eeab44b88a4dd06af2647d45822c57
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
@@ -780,6 +780,9 @@ jobs:
             sleep 0.2
           done
           python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8089/dede-test.m3u", timeout=2).read().decode())'
+          # Film the E2E uploads through the administration console (channel 07).
+          python3 "$GITHUB_WORKSPACE/tests/iptv/render_test_films.py" --set admin_channels \
+            "$RUNNER_TEMP/admin-film"
           for mode in bios uefi; do
             echo "Testing $mode boot"
             if [ "$mode" = uefi ]; then admin_port=18081; else admin_port=18080; fi
@@ -943,6 +946,7 @@ jobs:
             DEDE_E2E_PAUSE_FLAG=/tmp/dede-iptv-outage \
             DEDE_E2E_SERIAL_LOG="$PWD/boot-logs/$mode.log" \
             DEDE_E2E_ADMIN_URL="http://127.0.0.1:$admin_port" \
+            DEDE_E2E_UPLOAD_FILM="$RUNNER_TEMP/admin-film/film-01.mkv" \
             python3 "$GITHUB_WORKSPACE/tests/qemu_tv_e2e.py" "$monitor" \
               "$PWD/boot-logs/e2e" "$mode" | tee "boot-logs/$mode-e2e.log"
             e2e_status=${PIPESTATUS[0]}
@@ -1220,6 +1224,10 @@ jobs:
             etc/systemd/system/multi-user.target.wants/dede-tv-admin.service \
             usr/share/kodi/addons/service.dede-setup/addon.xml \
             usr/share/kodi/addons/service.dede-setup/service.py \
+            usr/local/libexec/dede-admin-apply \
+            etc/systemd/system/dede-admin-apply.path \
+            etc/systemd/system/dede-admin-apply.service \
+            etc/systemd/system/paths.target.wants/dede-admin-apply.path \
             etc/systemd/system/timers.target.wants/dede-virtual-epg.timer \
             etc/systemd/system/dede-kodi-watchdog.service \
             etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service \

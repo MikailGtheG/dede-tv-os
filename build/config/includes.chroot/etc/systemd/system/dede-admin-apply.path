@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for change requests from the Dede TV administration console
+
+[Path]
+PathExistsGlob=/var/lib/dede-tv-admin/requests/*.json
+Unit=dede-admin-apply.service
+
+[Install]
+WantedBy=paths.target

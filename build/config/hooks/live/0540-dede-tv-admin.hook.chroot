@@ -5,7 +5,13 @@ if ! id dede-admin >/dev/null 2>&1; then
   useradd --system --user-group --no-create-home --home-dir /nonexistent \
     --shell /usr/sbin/nologin dede-admin
 fi
-chmod 0755 /usr/local/bin/dede-tv-admin
+chmod 0755 /usr/local/bin/dede-tv-admin /usr/local/libexec/dede-admin-apply
+# The console creates channel folders and stores films; the TV (group dede)
+# only reads them. setgid keeps new folders in group dede.
+install -d -m 2750 -o dede-admin -g dede /srv/dede-tv/media
 mkdir -p /etc/systemd/system/multi-user.target.wants
 ln -sfn ../dede-tv-admin.service \
   /etc/systemd/system/multi-user.target.wants/dede-tv-admin.service
+mkdir -p /etc/systemd/system/paths.target.wants
+ln -sfn ../dede-admin-apply.path \
+  /etc/systemd/system/paths.target.wants/dede-admin-apply.path

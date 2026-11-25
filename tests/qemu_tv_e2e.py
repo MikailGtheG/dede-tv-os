@@ -41,12 +41,13 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 26
+TOTAL_STEPS = 31
 HANG_TIMEOUT = int(os.environ.get("DEDE_E2E_HANG_TIMEOUT", "420"))
 PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
 SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
 ADMIN_URL = os.environ.get("DEDE_E2E_ADMIN_URL", "http://127.0.0.1:18080")
 ADMIN_PASSWORD = "Dede-CI-Passwort-1"
+UPLOAD_FILM = os.environ.get("DEDE_E2E_UPLOAD_FILM", "")
 RESTART_TIMEOUT = int(os.environ.get("DEDE_E2E_RESTART_TIMEOUT", "240"))
 SWITCH_TIMEOUT = int(os.environ.get("DEDE_E2E_SWITCH_TIMEOUT", "60"))
 
@@ -275,6 +276,18 @@ def run(guest):
     back = wait_for(guest, "virtual-back-05", "dedefilm")
     check("virtual-time-runs-while-away",
           away and back and virtual_positions_ok(minimum=before + 1, timeout=120))
+    # P3: an own channel created and filled from the administration console.
+    session = admin_session()
+    check("admin-create-channel-07", session is not None and admin_create_channel(session))
+    check("admin-upload-film", session is not None and admin_upload(session))
+    check("admin-send-to-tv", session is not None and admin_send_to_tv(session))
+    # The TV restarts with the new channel list and resumes 05.
+    if not check("admin-tv-restarts-on-05", wait_restart(guest, "dedefilm")):
+        return steps
+    time.sleep(8)
+    guest.key("0", settle=0.3)
+    guest.key("7", settle=1)
+    check("admin-channel-07-plays", wait_for(guest, "admin-07", "dedeneu", timeout=90))
     return steps
 
 
@@ -366,6 +379,93 @@ def admin_setup():
     except OSError as exc:
         print(f"DEDE_E2E: admin: {type(exc).__name__}: {exc}", flush=True)
         return False
+
+
+def admin_session():
+    """Signed-in cookies and the session's CSRF token, or None."""
+    try:
+        _, _, _, cookies = admin_request("GET", "/login")
+        token = cookies.get("dede_form", "")
+        status, _, _, new = admin_request(
+            "POST", "/login", {"form": token, "password": ADMIN_PASSWORD}, cookies)
+        session = {"dede_session": new.get("dede_session", "")}
+        _, _, page, _ = admin_request("GET", "/", cookies=session)
+        found = re.search(r'name="csrf" value="([0-9a-f]{64})"', page)
+        if status != 303 or not found:
+            print(f"DEDE_E2E: admin: no session (status {status})", flush=True)
+            return None
+        return session, found.group(1)
+    except OSError as exc:
+        print(f"DEDE_E2E: admin: {type(exc).__name__}: {exc}", flush=True)
+        return None
+
+
+def admin_create_channel(session):
+    cookies, csrf = session
+    status, location, _, _ = admin_request(
+        "POST", "/channels/new", {"csrf": csrf, "name": "Dede Neu", "number": "7"}, cookies)
+    ok = status == 303 and (location or "").startswith("/apply/") and admin_outcome(location, cookies)
+    _, _, page, _ = admin_request("GET", "/channels", cookies=cookies)
+    ok = ok and "Dede Neu" in page
+    print(f"DEDE_E2E: admin: create channel 07 {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
+    return ok
+
+
+def admin_upload(session):
+    """Multipart upload exactly as a browser form sends it."""
+    cookies, csrf = session
+    try:
+        film = Path(UPLOAD_FILM).read_bytes()
+    except OSError:
+        print("DEDE_E2E: admin: no upload film (DEDE_E2E_UPLOAD_FILM)", flush=True)
+        return False
+    boundary = "----dedeE2E" + os.urandom(8).hex()
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"csrf\"\r\n\r\n{csrf}\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"film\"; filename=\"Neuer Film.mkv\"\r\n"
+            f"Content-Type: video/x-matroska\r\n\r\n").encode() + film + f"\r\n--{boundary}--\r\n".encode()
+    url = urllib.parse.urlsplit(ADMIN_URL)
+    connection = http.client.HTTPConnection(url.hostname, url.port, timeout=300)
+    try:
+        connection.request("POST", "/channels/7/upload", body=body, headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}", "Origin": ADMIN_URL,
+            "Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())})
+        reply = connection.getresponse()
+        reply.read()
+        location = reply.getheader("Location") or ""
+    except OSError as exc:
+        print(f"DEDE_E2E: admin: upload {type(exc).__name__}: {exc}", flush=True)
+        return False
+    finally:
+        connection.close()
+    _, _, page, _ = admin_request("GET", "/channels/7", cookies=cookies)
+    ok = reply.status == 303 and location.endswith("?n=uploaded") and "Neuer Film.mkv" in page
+    print(f"DEDE_E2E: admin: upload {len(film)} bytes {'PASS' if ok else 'FAIL'} ({reply.status} {location})",
+          flush=True)
+    return ok
+
+
+def admin_send_to_tv(session):
+    cookies, csrf = session
+    status, location, _, _ = admin_request(
+        "POST", "/apply", {"csrf": csrf, "back": "/channels/7"}, cookies)
+    ok = status == 303 and (location or "").startswith("/apply/") and admin_outcome(location, cookies)
+    print(f"DEDE_E2E: admin: send to TV {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
+    return ok
+
+
+def admin_outcome(location, cookies, timeout=60):
+    """Poll the apply page until the root helper answered."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        _, _, page, _ = admin_request("GET", location, cookies=cookies)
+        if "Fertig." in page:
+            return True
+        if "fehlgeschlagen" in page:
+            print(f"DEDE_E2E: admin: apply failed: {re.sub(r'<[^>]+>', ' ', page)[-200:]}", flush=True)
+            return False
+        time.sleep(2)
+    print("DEDE_E2E: admin: apply timed out", flush=True)
+    return False
 
 
 def admin_sign_in():

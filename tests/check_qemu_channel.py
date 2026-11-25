@@ -38,7 +38,8 @@ MIN_MARGIN = 1.6
 def channel_colours():
     config = json.loads((HERE / "iptv" / "channels.json").read_text(encoding="utf-8"))
     return {c["id"]: tuple(int(c["color"][i:i + 2], 16) for i in (2, 4, 6))
-            for c in config["channels"] + config.get("virtual_channels", [])}
+            for c in config["channels"] + config.get("virtual_channels", [])
+            + config.get("admin_channels", [])}
 
 
 def mean_colour(width, height, pixels, rect, step=3):

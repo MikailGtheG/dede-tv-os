@@ -47,9 +47,11 @@ def main(argv):
     parser.add_argument("output", type=Path)
     parser.add_argument("--font", default=DEFAULT_FONT)
     parser.add_argument("--size", default="640x360")
+    parser.add_argument("--set", default="virtual_channels", choices=("virtual_channels", "admin_channels"),
+                        help="admin_channels: films the E2E uploads through the console")
     args = parser.parse_args(argv)
     config = json.loads((HERE / "channels.json").read_text(encoding="utf-8"))
-    for channel in config.get("virtual_channels", []):
+    for channel in config.get(args.set, []):
         render(channel, args.output, args.font, args.size)
     return 0
 

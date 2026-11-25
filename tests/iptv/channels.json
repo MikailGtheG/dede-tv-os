@@ -63,5 +63,16 @@
       "parts": 3,
       "part_seconds": 40
     }
+  ],
+  "admin_channels": [
+    {
+      "id": "dedeneu",
+      "number": 7,
+      "name": "Dede Neu",
+      "color": "0x10a0a0",
+      "tone_hz": 523,
+      "parts": 1,
+      "part_seconds": 90
+    }
   ]
 }

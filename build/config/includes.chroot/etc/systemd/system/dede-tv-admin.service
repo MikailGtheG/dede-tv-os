@@ -20,6 +20,8 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=true
+# Channel folders and uploaded films; nothing else is writable.
+ReadWritePaths=/srv/dede-tv/media
 PrivateTmp=true
 PrivateDevices=true
 ProtectKernelTunables=true
