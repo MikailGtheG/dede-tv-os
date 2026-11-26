@@ -19,7 +19,8 @@ Drives the guest only through its virtual keyboard (QEMU monitor
      with the next film, and its time runs on while the viewer is away
  13. No capture shows a stock Kodi dialog or splash
 
-Usage: qemu_tv_e2e.py MONITOR_SOCKET OUTPUT_DIR LABEL
+Usage: qemu_tv_e2e.py MONITOR_SOCKET OUTPUT_DIR LABEL [tv|persistence]
+"persistence" runs the disk scenario instead (run_persistence).
 Prints DEDE_E2E lines; exit status 0 only if every step passed.
 """
 import base64
@@ -375,6 +376,62 @@ def run(guest):
     check("admin-restart-tv", session is not None and admin_maintenance(session, "restart-tv")
           and wait_restart(guest, "trt1"))
     return steps
+
+
+PERSISTENCE_STEPS = 9
+IN_USE = "DEDE_DATA: nothing to do: data partition in use"
+
+
+def run_persistence(guest):
+    """The ISO written to a disk: the first start adds the data partition,
+    and settings, sign-in and channel survive a restart from the console."""
+    steps = []
+
+    def check(step, ok):
+        steps.append((step, ok))
+        return ok
+
+    if not check("data-partition-created", serial_contains("DEDE_DATA: data partition /dev/",
+                                                           "created", timeout=900)):
+        return steps
+    if not check("data-partition-in-use", wait_serial_count(IN_USE, 1, timeout=900)):
+        return steps
+    codes = serial_count("DEDE_CI_ADMIN: tv shows code")
+    if not check("disk-autostart-01", wait_for(guest, "disk-autostart", "trt1",
+                                               timeout=FIRST_PICTURE_TIMEOUT, interval=6)):
+        return steps
+    check("disk-admin-setup", wait_serial_count("DEDE_CI_ADMIN: tv shows code", codes + 1, timeout=180)
+          and admin_setup())
+    session = admin_session()
+    turkish = serial_count("DEDE_CI_LANGUAGE: Turkish")
+    check("disk-language-turkish", session is not None and admin_language(session, "tr")
+          and wait_restart(guest, "trt1")
+          and wait_serial_count("DEDE_CI_LANGUAGE: Turkish", turkish + 1, timeout=120))
+    time.sleep(8)
+    guest.key("pgup", settle=2)
+    switched = wait_for(guest, "disk-ch-02", "atv", timeout=SWITCH_TIMEOUT)
+    time.sleep(10)  # the core stores the last channel
+    check("disk-restart-device", switched and session is not None
+          and admin_maintenance(session, "reboot")
+          and wait_serial_count(IN_USE, 2, timeout=900))
+    check("kept-last-channel-02", wait_for(guest, "kept-02", "atv", timeout=FIRST_PICTURE_TIMEOUT,
+                                           interval=6))
+    check("kept-language-turkish", wait_serial_count("DEDE_CI_LANGUAGE: Turkish", turkish + 2,
+                                                     timeout=180))
+    check("kept-admin-password", kept_admin_password())
+    return steps
+
+
+def kept_admin_password():
+    """No new setup: the console asks for the password set before the restart."""
+    try:
+        status, location, _, _ = admin_request("GET", "/")
+    except OSError as exc:
+        print(f"DEDE_E2E: admin: {type(exc).__name__}: {exc}", flush=True)
+        return False
+    ok = status == 303 and location == "/login" and admin_session() is not None
+    print(f"DEDE_E2E: admin: password kept {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
+    return ok
 
 
 # Setup card (skin: dialog 1109, 920,40 560x280 of 1920x1080).
@@ -825,20 +882,22 @@ def wait_restart(guest, expected, timeout=None):
 
 
 def main(argv):
-    if len(argv) != 3:
+    scenario = argv[3] if len(argv) == 4 else "tv"
+    if len(argv) not in (3, 4) or scenario not in ("tv", "persistence"):
         print(__doc__, file=sys.stderr)
         return 2
-    guest = Guest(*argv)
+    guest = Guest(*argv[:3])
     guest.out.mkdir(parents=True, exist_ok=True)
+    total = TOTAL_STEPS if scenario == "tv" else PERSISTENCE_STEPS
     try:
-        steps = run(guest)
+        steps = run(guest) if scenario == "tv" else run_persistence(guest)
     except (OSError, RuntimeError) as exc:
         print(f"DEDE_E2E: {guest.label}: ERROR {type(exc).__name__}: {exc}", flush=True)
         return 1
     passed = sum(ok for _, ok in steps)
     print(f"DEDE_E2E_SUMMARY: {guest.label}: {passed}/{len(steps)} passed: "
           + ", ".join(f"{name}={'ok' if ok else 'FAIL'}" for name, ok in steps), flush=True)
-    return 0 if len(steps) == TOTAL_STEPS and all(ok for _, ok in steps) else 1
+    return 0 if len(steps) == total and all(ok for _, ok in steps) else 1
 
 
 if __name__ == "__main__":
