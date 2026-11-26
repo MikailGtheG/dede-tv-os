@@ -75,7 +75,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: bc8461feb65f75398414738793a1092b030aac92
+          DEDE_WEB_SHA: ae0ae034488eb95393b1c3ae44fb048e8f19c004
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
@@ -709,10 +709,27 @@ jobs:
           cat > config/includes.chroot/usr/local/sbin/dede-ci-language <<'SH'
           #!/bin/sh
           exec python3 - <<'PY2'
-          import sys, time
+          import subprocess, sys, time
           sys.path.insert(0, "/usr/local/lib/dede-tv")
           from dede_kodi_rpc import Connection
-          connection, last = None, None
+          def say(line):
+              with open("/dev/ttyS0", "w") as console:
+                  console.write(line[:300] + "\n")
+          def dump(reason):
+              # Diagnostics when Kodi stops answering after a language change.
+              say(f"DEDE_CI_LANGUAGE: dump ({reason})")
+              for unit in ("dede-tv-autoplay", "dede-tv-guard", "dede-kodi"):
+                  out = subprocess.run(["journalctl", "-b", "-u", unit, "-n", "6", "-o", "cat", "--no-pager"],
+                                       capture_output=True, text=True).stdout
+                  for line in out.splitlines()[-6:]:
+                      say(f"DEDE_CI_LANGUAGE: {unit}| {line}")
+              try:
+                  log = open("/home/dede/.kodi/temp/kodi.log", errors="replace").read().splitlines()
+              except OSError:
+                  log = []
+              for line in [l for l in log if " error " in l or "JSONRPC" in l or "TCP" in l][-12:]:
+                  say(f"DEDE_CI_LANGUAGE: kodi| {line}")
+          connection, last, failing_since, dumped = None, None, None, False
           while True:
               time.sleep(3)
               try:
@@ -720,16 +737,25 @@ jobs:
                       connection = Connection()
                   labels = connection.call("XBMC.GetInfoLabels", {"labels": ["System.Language"]}, timeout=8) or {}
                   connection.notifications()
-              except Exception:
+                  failing_since, dumped = None, False
+              except Exception as error:
                   if connection is not None:
                       connection.close()
                   connection = None
+                  if failing_since is None:
+                      failing_since = time.monotonic()
+                      say(f"DEDE_CI_LANGUAGE: rpc {type(error).__name__}: {str(error)[:120]}")
+                  elif not dumped and time.monotonic() - failing_since > 90:
+                      dumped = True
+                      dump(f"{type(error).__name__}: {str(error)[:80]}")
                   continue
               language = labels.get("System.Language") or ""
               if language and language != last:
                   last = language
-                  with open("/dev/ttyS0", "w") as console:
-                      console.write(f"DEDE_CI_LANGUAGE: {language[:40]}\n")
+                  say(f"DEDE_CI_LANGUAGE: {language[:40]}")
+                  if last != "German":
+                      time.sleep(45)
+                      dump("after language change")
           PY2
           SH
           cat > config/includes.chroot/etc/systemd/system/dede-ci-language.service <<'UNIT'

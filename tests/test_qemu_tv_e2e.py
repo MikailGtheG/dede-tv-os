@@ -54,6 +54,8 @@ class FakeAdmin(BaseHTTPRequestHandler):
             if self.path == "/":
                 title = "Yönetim" if state.get("language") == "tr" else "Verwaltung"
                 return self.reply(200, f'{title} <input type="hidden" name="csrf" value="{"c" * 64}">')
+            if self.path == "/iptv":
+                return self.reply(200, state.get("iptv", ""))
             if self.path == "/channels":
                 return self.reply(200, " ".join(state["channels"]))
             if self.path == "/channels/7":
@@ -108,6 +110,11 @@ def _signed_in_post(self, state, body):
             state["language"] = "tr"
             state["on_apply"]("Turkish")
         return self.reply(303, location="/apply/" + "3" * 32 + "?back=/language")
+    if self.path == "/iptv" and form.get("m3u_url", "").startswith("http://10.0.2.2:8089/"):
+        if state["broken"] != "iptv-ignored":
+            state["iptv"] = "10.0.2.2:8089"
+            state["on_apply"]()
+        return self.reply(303, location="/apply/" + "4" * 32 + "?back=/iptv")
     if self.path == "/apply":
         state["on_apply"]()
         return self.reply(303, location="/apply/" + "2" * 32 + "?back=/channels/7")
@@ -211,7 +218,7 @@ class FakeTv:
         self.frames += 1
 
     def key(self, name):
-        if not name.isdigit():
+        if name in ("pgup", "pgdn") or (self.list_open and name == "ret"):
             self.custom = False
         if self.list_open:
             if name == "down":
@@ -239,8 +246,8 @@ class FakeTv:
                 self.entry, self.custom = "", self.custom_ready
                 return
             numbers = {"1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5}
-            if self.entry in numbers:
-                self.index, self.entry = numbers[self.entry], ""
+            if self.entry.lstrip("0") in numbers:
+                self.index, self.entry, self.custom = numbers[self.entry.lstrip("0")], "", False
             elif self.entry == "90":
                 self.entry, self.home = "", True
                 if self.serial:
@@ -372,6 +379,11 @@ class E2ESelfTest(unittest.TestCase):
         self.assertTrue(steps["admin-send-to-tv"])
         self.assertTrue(steps["admin-tv-restarts-on-05"])
         self.assertFalse(steps["admin-channel-07-plays"])
+
+    def test_ignored_iptv_change_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="iptv-ignored")))
+        self.assertFalse(steps["admin-iptv-source"])
+        self.assertFalse(steps["iptv-after-change-01-plays"])
 
     def test_language_not_reaching_the_tv_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="language-ignored")))

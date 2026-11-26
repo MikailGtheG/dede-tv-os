@@ -34,7 +34,9 @@ class ApplyTests(unittest.TestCase):
         env = {"DEDE_ADMIN_STATE": str(self.state), "DEDE_VIRTUAL_CONFIG": str(self.config),
                "DEDE_MEDIA_ROOT": str(self.media), "DEDE_VIRTUAL_SYNC": str(LIBEXEC / "dede-virtual-sync"),
                "DEDE_APPLY_RESTART": f"touch {self.restarted}",
-               "DEDE_UI_CONFIG": str(self.tmp / "etc" / "ui.conf")}
+               "DEDE_UI_CONFIG": str(self.tmp / "etc" / "ui.conf"),
+               "DEDE_IPTV_CONFIG": str(self.tmp / "etc" / "iptv.conf"),
+               "DEDE_IPTV_PROVISION": str(LIBEXEC / "dede-iptv-provision")}
         old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.addCleanup(lambda: [os.environ.pop(k) if v is None else os.environ.__setitem__(k, v)
@@ -131,6 +133,44 @@ class ApplyTests(unittest.TestCase):
         for value, extra in (("fr", {}), ("../x", {}), (None, {}), ("tr", {"extra": 1})):
             self.assertEqual(self.language(value, **extra)["error"], "bad-request")
         self.assertFalse((self.tmp / "etc" / "ui.conf").exists())
+
+    def iptv(self, m3u, epg="", **extra):
+        rid = "e" * 32
+        body = {"id": rid, "kind": "iptv", "m3u_url": m3u, "epg_url": epg, **extra}
+        (self.state / "requests" / f"{rid}.json").write_text(json.dumps(body))
+        self.apply.main()
+        return json.loads((self.state / "results" / f"{rid}.json").read_text())
+
+    def test_iptv_source_is_written_and_restarts_only_on_change(self):
+        conf = self.tmp / "etc" / "iptv.conf"
+        url = "https://tv.example/get.php?user=a&token=x%20y"
+        self.assertTrue(self.iptv(url, "http://10.0.2.2:8089/epg.xml")["ok"])
+        self.assertEqual(conf.read_text(), f"M3U_URL={url}\nEPG_URL=http://10.0.2.2:8089/epg.xml\n")
+        self.assertEqual(conf.stat().st_mode & 0o777, 0o640)
+        self.assertTrue(self.restarted.exists())
+        self.restarted.unlink()
+        self.assertTrue(self.iptv(url, "http://10.0.2.2:8089/epg.xml")["ok"])
+        self.assertFalse(self.restarted.exists())
+        self.assertTrue(self.iptv(url)["ok"])
+        self.assertEqual(conf.read_text(), f"M3U_URL={url}\n")
+
+    def test_invalid_iptv_sources_are_refused(self):
+        for m3u, epg, code in (
+            ("", "", "invalid-address"),
+            ("ftp://tv.example/x.m3u", "", "invalid-address"),
+            ("file:///etc/shadow", "", "invalid-address"),
+            ("https://tv.example/a b.m3u", "", "invalid-address"),
+            ("http://localhost:9090/", "", "local-address"),
+            ("http://127.0.0.1/x.m3u", "", "local-address"),
+            ("http://[::1]/x.m3u", "", "local-address"),
+            ("http://169.254.169.254/latest", "", "local-address"),
+            ("https://tv.example/x.m3u", "http://127.0.0.1/epg", "local-address"),
+        ):
+            with self.subTest(m3u=m3u, epg=epg):
+                self.assertEqual(self.iptv(m3u, epg)["error"], code)
+        self.assertEqual(self.iptv("https://tv.example/x.m3u", extra=1)["error"], "bad-request")
+        self.assertFalse((self.tmp / "etc" / "iptv.conf").exists())
+        self.assertFalse(self.restarted.exists())
 
     def test_symlinked_or_badly_named_requests_are_dropped(self):
         target = self.tmp / "elsewhere.json"
