@@ -29,6 +29,7 @@ jobs:
                       Path('build/config/includes.chroot/usr/local/libexec/dede-virtual-sync'),
                       Path('build/config/includes.chroot/usr/share/kodi/addons/plugin.video.dede-virtual/default.py'),
                       Path('build/config/includes.chroot/usr/share/kodi/addons/service.dede-setup/service.py'),
+                      Path('build/config/includes.chroot/usr/local/libexec/dede-admin-apply'),
                       Path('build/config/includes.chroot/usr/local/lib/dede-tv/dede_kodi_rpc.py')]
           for source in sources:
               ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
@@ -232,10 +233,13 @@ jobs:
           python3 -m unittest discover -s tests -p "test_kodi_watchdog.py" -v
           python3 -m unittest discover -s tests -p "test_virtual_channels.py" -v
           python3 -m unittest discover -s tests -p "test_setup_service.py" -v
+          python3 -m unittest discover -s tests -p "test_admin_apply.py" -v
           sh -n build/config/hooks/live/0540-dede-tv-admin.hook.chroot
           systemd-analyze verify \
             build/config/includes.chroot/etc/systemd/system/dede-virtual-epg.service \
-            build/config/includes.chroot/etc/systemd/system/dede-virtual-epg.timer
+            build/config/includes.chroot/etc/systemd/system/dede-virtual-epg.timer \
+            build/config/includes.chroot/etc/systemd/system/dede-admin-apply.path \
+            build/config/includes.chroot/etc/systemd/system/dede-admin-apply.service
       - name: Regression - QEMU channel classifier and E2E driver self-test
         run: |
           python3 -m unittest discover -s tests -p "test_qemu_channel.py" -v

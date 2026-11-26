@@ -263,6 +263,13 @@ class EpgTests(Fixture):
         self.assertGreater(programmes[0].get("stop")[:14], now)
         self.assertTrue(programmes[0].get("start").endswith(" +0000"))
 
+    def test_guide_is_bounded_per_channel(self):
+        self.film("a.mkv", 40)
+        self.run_sync()
+        _, programmes = self.guide()
+        # 72 h of a 40 s film would be 6480 entries.
+        self.assertEqual(len(programmes), self.sync.EPG_MAX_PROGRAMMES)
+
     def test_titles_are_escaped(self):
         self.film("<b>Tom & Jerry<i>.mp4", 40)
         self.run_sync()
@@ -343,12 +350,22 @@ class ResolverTests(Fixture):
         self.assertEqual(result, (path + ".next", 0.4))
         self.assertAlmostEqual(waits[0], 1.8)
 
+    def test_film_ten_seconds_before_its_end_is_skipped(self):
+        self.film("a.mkv", 40)
+        self.run_sync()
+        path = str(self.media.resolve()) + "/film/a.mkv"
+        answers = iter([(path, 31.5), (path + ".next", 0.2)])
+        waits = []
+        self.assertEqual(self.resolver.resolve("Dede Film", current=lambda name: next(answers),
+                                               sleep=waits.append), (path + ".next", 0.2))
+        self.assertAlmostEqual(waits[0], 8.8)
+
     def test_film_with_time_left_or_unknown_length_is_not_delayed(self):
         self.film("a.mkv", 40)
         self.run_sync()
         path = str(self.media.resolve()) + "/film/a.mkv"
         waits = []
-        for answer in ((path, 20.0), ("/elsewhere/unknown.mkv", 39.9)):
+        for answer in ((path, 29.0), ("/elsewhere/unknown.mkv", 39.9)):
             self.assertEqual(self.resolver.resolve("Dede Film", current=lambda name: answer,
                                                    sleep=waits.append), answer)
         self.assertEqual(waits, [])

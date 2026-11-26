@@ -1,0 +1,22 @@
+[Unit]
+Description=Apply validated changes from the Dede TV administration console
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/dede-admin-apply
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/dede-tv /var/lib/dede-tv-admin
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+MemoryMax=128M
+TimeoutStartSec=60

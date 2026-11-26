@@ -50,16 +50,26 @@ class FakeAdmin(BaseHTTPRequestHandler):
             return self.reply(200, "Einrichtungscode vom Fernseher", cookies=[("dede_form", "f" * 64)])
         if self.path == "/login":
             return self.reply(200, "Anmelden", cookies=[("dede_form", "f" * 64)])
-        if self.path == "/" and session in state["sessions"]:
-            return self.reply(200, "Verwaltung")
+        if session in state["sessions"]:
+            if self.path == "/":
+                return self.reply(200, f'Verwaltung <input type="hidden" name="csrf" value="{"c" * 64}">')
+            if self.path == "/channels":
+                return self.reply(200, " ".join(state["channels"]))
+            if self.path == "/channels/7":
+                return self.reply(200, " ".join(state["films"]))
+            if self.path.startswith("/apply/"):
+                return self.reply(200, "Fertig.")
         return self.reply(303, location="/login" if state["password"] else "/setup")
 
     def do_POST(self):
         state = self.server.state
         if self.headers.get("Origin") != f"http://127.0.0.1:{self.server.server_port}":
             return self.reply(403)
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
-        form = dict(urllib.parse.parse_qsl(body))
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        form = dict(urllib.parse.parse_qsl(raw.decode("utf-8", "replace")))
+        session = self.cookies().get("dede_session")
+        if session in state["sessions"] and self.path not in ("/setup", "/login"):
+            return self.signed_in_post(state, raw)
         if form.get("form") != self.cookies().get("dede_form"):
             return self.reply(403)
         if self.path == "/setup":
@@ -77,6 +87,28 @@ class FakeAdmin(BaseHTTPRequestHandler):
             state["sessions"].add(session)
             return self.reply(303, location="/", cookies=[("dede_session", session)])
         return self.reply(404)
+
+
+def _signed_in_post(self, state, body):
+    if self.path == "/channels/7/upload":
+        ok = f'name="csrf"\r\n\r\n{"c" * 64}'.encode() in body and b'filename="Neuer Film.mkv"' in body
+        if not ok or state["broken"] == "admin-upload-fails":
+            return self.reply(303, location="/channels/7?n=failed")
+        state["films"].append("Neuer Film.mkv")
+        return self.reply(303, location="/channels/7?n=uploaded")
+    form = dict(urllib.parse.parse_qsl(body.decode()))
+    if form.get("csrf") != "c" * 64:
+        return self.reply(403)
+    if self.path == "/channels/new" and form.get("number") == "7":
+        state["channels"].append(form["name"])
+        return self.reply(303, location="/apply/" + "1" * 32 + "?back=/channels/7")
+    if self.path == "/apply":
+        state["on_apply"]()
+        return self.reply(303, location="/apply/" + "2" * 32 + "?back=/channels/7")
+    return self.reply(404)
+
+
+FakeAdmin.signed_in_post = _signed_in_post
 
 
 class FakeTv:
@@ -102,6 +134,9 @@ class FakeTv:
         self.film_frames = 0
         self.admin = None
         self.admin_announced = False
+        self.custom_ready = False
+        self.custom = False
+        self.apply_restart_at = None
 
     def serial_line(self, line):
         if self.serial:
@@ -116,6 +151,11 @@ class FakeTv:
                 self.serial_line(f"DEDE_CI_ADMIN_CODE: {FakeAdmin.code}")
                 if self.broken != "admin-code-not-shown":
                     self.serial_line("DEDE_CI_ADMIN: tv shows code url=http://10.0.2.15:8080")
+        if self.apply_restart_at is not None and self.frames == self.apply_restart_at:
+            self.down = True
+        if self.apply_restart_at is not None and self.frames == self.apply_restart_at + 2:
+            self.down, self.apply_restart_at = False, None
+            self.custom_ready = self.broken != "admin-channel-missing"
         playing = ORDER[self.index] if not (self.home or self.down or self.outage) else None
         if playing == "dedefilm" and self.last_playing != "dedefilm":
             verdict = "mismatch" if self.broken == "virtual-wrong-position" else "ok"
@@ -127,9 +167,12 @@ class FakeTv:
             self.film_frames += 1
             # The E2E's waits are patched out, so the guard's "next film"
             # event is emitted at once; the broken variant drops to Home.
-            if self.film_frames == 1 and self.broken != "virtual-stops-after-film":
+            if self.film_frames == 2 and self.broken != "virtual-stops-after-film":
                 self.serial_line("DEDE_GUARD: channel id 9: programme item ended, continuing")
-            if self.film_frames == 2 and self.broken == "virtual-stops-after-film":
+                self.serial_line("DEDE_CI_KODI: log| DEDE_VIRTUAL: Dede Film -> film-02.mkv @ 0.4s")
+                verdict = "mismatch" if self.broken == "virtual-wrong-position" else "ok"
+                self.serial_line(f"DEDE_CI_VIRTUAL: {verdict} file=film-02.mkv drift=-0.2s")
+            if self.film_frames == 3 and self.broken == "virtual-stops-after-film":
                 self.home = True
         self.last_playing = playing
         if self.crash_at is None and ORDER[self.index] == "teskilat" and not self.list_open \
@@ -157,6 +200,8 @@ class FakeTv:
         self.frames += 1
 
     def key(self, name):
+        if not name.isdigit():
+            self.custom = False
         if self.list_open:
             if name == "down":
                 self.highlight = min(self.highlight + 1, len(ORDER) - 1)
@@ -179,6 +224,9 @@ class FakeTv:
             self.home = True
         elif name.isdigit() and self.broken != "no-number-entry":
             self.entry += name
+            if self.entry == "07":
+                self.entry, self.custom = "", self.custom_ready
+                return
             numbers = {"1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5}
             if self.entry in numbers:
                 self.index, self.entry = numbers[self.entry], ""
@@ -199,7 +247,8 @@ class FakeTv:
         panel = bytes((30, 31, 34))
         white = bytes((240, 240, 240))
         on_home = self.home or self.down or self.outage
-        video = bg if on_home else bytes(self.colours[ORDER[self.index]])
+        shown = "dedeneu" if self.custom else ORDER[self.index]
+        video = bg if on_home else bytes(self.colours[shown])
         panel_w = int(W * 0.43)
         cap_x0, cap_x1 = int(W * 0.55), int(W * 0.75)
         rows = []
@@ -268,7 +317,9 @@ class E2ESelfTest(unittest.TestCase):
             self.assertTrue(ready.wait(5))
             admin = ThreadingHTTPServer(("127.0.0.1", 0), FakeAdmin)
             admin.state = tv.admin = {"password": None, "sessions": set(), "broken": tv.broken,
-                                      "on_password": lambda: tv.serial_line("DEDE_CI_ADMIN: tv code cleared")}
+                                      "on_password": lambda: tv.serial_line("DEDE_CI_ADMIN: tv code cleared"),
+                                      "channels": [], "films": [],
+                                      "on_apply": lambda: setattr(tv, "apply_restart_at", tv.frames + 1)}
             threading.Thread(target=admin.serve_forever, daemon=True).start()
             try:
                 with patch.object(e2e.time, "sleep"), \
@@ -278,6 +329,7 @@ class E2ESelfTest(unittest.TestCase):
                      patch.object(e2e, "HANG_TIMEOUT", 3000), \
                      patch.object(e2e, "SERIAL_LOG", tv.serial), \
                      patch.object(e2e, "ADMIN_URL", f"http://127.0.0.1:{admin.server_port}"), \
+                     patch.object(e2e, "UPLOAD_FILM", __file__), \
                      patch.object(e2e, "PAUSE_FLAG", tv.pause_flag), \
                      patch.object(e2e.time, "monotonic", side_effect=_fast_clock()), \
                      patch("builtins.print"):
@@ -294,6 +346,17 @@ class E2ESelfTest(unittest.TestCase):
         steps = self.run_against(FakeTv())
         self.assertEqual(len(steps), e2e.TOTAL_STEPS)
         self.assertTrue(all(ok for _, ok in steps), steps)
+
+    def test_failed_film_upload_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="admin-upload-fails")))
+        self.assertTrue(steps["admin-create-channel-07"])
+        self.assertFalse(steps["admin-upload-film"])
+
+    def test_new_channel_missing_on_tv_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="admin-channel-missing")))
+        self.assertTrue(steps["admin-send-to-tv"])
+        self.assertTrue(steps["admin-tv-restarts-on-05"])
+        self.assertFalse(steps["admin-channel-07-plays"])
 
     def test_setup_code_missing_on_tv_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="admin-code-not-shown")))

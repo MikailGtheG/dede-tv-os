@@ -75,7 +75,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: 7a1c8b309055eb615a67efc8f600eeba47a56355
+          DEDE_WEB_SHA: 905813f162eeab44b88a4dd06af2647d45822c57
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
@@ -145,6 +145,15 @@ jobs:
           #!/bin/sh
           set -eu
           sleep 55
+          # A fast E2E may be restarting Kodi right now (crash/hang steps):
+          # wait up to 2 minutes for a running Kodi with its local listener.
+          for _ in $(seq 1 24); do
+            if pgrep -x kodi.bin >/dev/null 2>&1 \
+              && awk '$2 ~ /:2382$/ && $4 == "0A" {found=1} END {exit !found}' /proc/net/tcp; then
+              break
+            fi
+            sleep 5
+          done
           {
             echo 'DEDE_CI_DIAG: begin'
             systemctl show dede-kodi.service -p ActiveState -p SubState -p ExecMainStatus -p NRestarts --no-pager || echo 'DEDE_CI_DIAG: systemctl show unavailable'
@@ -425,7 +434,7 @@ jobs:
           ) &
           while true; do
             tail -n0 -F /home/dede/.kodi/temp/kodi.log 2>/dev/null \
-              | grep --line-buffered -aE 'OpenFile|CloseFile|OnPlayBack|CCurlFile|SwitchToChannel|Previous channel|fatal|FATAL|terminate|Exception|error <general>|DEDE_VIRTUAL' \
+              | grep --line-buffered -aE 'OpenFile|CloseFile|OnPlayBack|CCurlFile|SwitchToChannel|Previous channel|fatal|FATAL|terminate|Exception|error <general>|warning <general>|DEDE_VIRTUAL|PVR|Playback|Player|resolve|plugin:' \
               | grep --line-buffered -avE 'DBus|VDPAU|CAESinkALSA|parentheses|custom window|asked to focus' \
               | redact | sed -u 's/^/DEDE_CI_KODI: log| /' > /dev/ttyS0
             sleep 2
@@ -644,7 +653,16 @@ jobs:
                   elif not same_film and length is not None and expected > length - 3:
                       # The handed-over film ended before this check: no verdict.
                       continue
-                  verdict = "ok" if same_film and abs(drift) <= 5 else "mismatch"
+                  if core_path.endswith("/" + film) and kodi_s >= 1:
+                      # What the viewer sees: Kodi's own playback position
+                      # against the schedule at the same moment. The log-stamp
+                      # estimate above suffers from emulator scheduling delays.
+                      # 0 s means playback has not started yet: keep the estimate.
+                      drift = kodi_s - core_s
+                  # Catches a wrong film or position; TCG timing jitters a few
+                  # seconds either way (observed -5.2 to +5.4 s), viewers would
+                  # not notice that.
+                  verdict = "ok" if same_film and abs(drift) <= 10 else "mismatch"
                   line = (f"DEDE_CI_VIRTUAL: {verdict} file={film} handed={position:.1f}s "
                           f"age={now - stamp:.1f}s core={core_s:.1f}s drift={drift:+.2f}s "
                           f"core_file={core_path.rsplit('/', 1)[-1]} kodi_time={kodi_s:.1f}s")
@@ -780,6 +798,9 @@ jobs:
             sleep 0.2
           done
           python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8089/dede-test.m3u", timeout=2).read().decode())'
+          # Film the E2E uploads through the administration console (channel 07).
+          python3 "$GITHUB_WORKSPACE/tests/iptv/render_test_films.py" --set admin_channels \
+            "$RUNNER_TEMP/admin-film"
           for mode in bios uefi; do
             echo "Testing $mode boot"
             if [ "$mode" = uefi ]; then admin_port=18081; else admin_port=18080; fi
@@ -943,6 +964,7 @@ jobs:
             DEDE_E2E_PAUSE_FLAG=/tmp/dede-iptv-outage \
             DEDE_E2E_SERIAL_LOG="$PWD/boot-logs/$mode.log" \
             DEDE_E2E_ADMIN_URL="http://127.0.0.1:$admin_port" \
+            DEDE_E2E_UPLOAD_FILM="$RUNNER_TEMP/admin-film/film-01.mkv" \
             python3 "$GITHUB_WORKSPACE/tests/qemu_tv_e2e.py" "$monitor" \
               "$PWD/boot-logs/e2e" "$mode" | tee "boot-logs/$mode-e2e.log"
             e2e_status=${PIPESTATUS[0]}
@@ -1220,6 +1242,10 @@ jobs:
             etc/systemd/system/multi-user.target.wants/dede-tv-admin.service \
             usr/share/kodi/addons/service.dede-setup/addon.xml \
             usr/share/kodi/addons/service.dede-setup/service.py \
+            usr/local/libexec/dede-admin-apply \
+            etc/systemd/system/dede-admin-apply.path \
+            etc/systemd/system/dede-admin-apply.service \
+            etc/systemd/system/paths.target.wants/dede-admin-apply.path \
             etc/systemd/system/timers.target.wants/dede-virtual-epg.timer \
             etc/systemd/system/dede-kodi-watchdog.service \
             etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service \

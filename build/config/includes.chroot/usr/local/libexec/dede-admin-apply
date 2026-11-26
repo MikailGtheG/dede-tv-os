@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Apply change requests from the Dede TV administration console (root).
+
+dede-tv-admin runs without root rights and drops JSON requests into
+/var/lib/dede-tv-admin/requests/. A systemd path unit starts this helper,
+which validates every request again (it trusts nothing the web service
+wrote), applies it and answers in results/<id>.json.
+
+Request kinds:
+  virtual-channels  full list of own channels -> /etc/dede-tv/virtual-channels.conf.
+                    The TV restarts (dede-virtual-sync re-reads the folders) when
+                    "refresh" is set or the channels that have films changed;
+                    a new, still empty channel does not interrupt the picture.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+STATE = Path(os.environ.get("DEDE_ADMIN_STATE", "/var/lib/dede-tv-admin"))
+CONFIG = Path(os.environ.get("DEDE_VIRTUAL_CONFIG", "/etc/dede-tv/virtual-channels.conf"))
+SYNC = Path(os.environ.get("DEDE_VIRTUAL_SYNC", "/usr/local/libexec/dede-virtual-sync"))
+RESTART = os.environ.get("DEDE_APPLY_RESTART", "systemctl restart --no-block dede-kodi.service")
+MAX_REQUEST = 64 * 1024
+KEEP_RESULTS = 50
+ID = re.compile(r"[0-9a-f]{32}")
+FOLDER = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+
+
+class Refused(Exception):
+    """Request rejected; the message is the error code shown to the user."""
+
+
+def log(message):
+    print(f"DEDE_ADMIN_APPLY: {message}", flush=True)
+
+
+def load_sync():
+    loader = importlib.machinery.SourceFileLoader("dede_virtual_sync", str(SYNC))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def read_request(path):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise Refused("bad-request") from error
+    with os.fdopen(fd, "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise Refused("bad-request")
+        data = source.read(MAX_REQUEST + 1)
+    if len(data) > MAX_REQUEST:
+        raise Refused("bad-request")
+    try:
+        request = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as error:
+        raise Refused("bad-request") from error
+    if not isinstance(request, dict) or request.get("id") != path.stem:
+        raise Refused("bad-request")
+    return request
+
+
+def validate_channels(raw, sync):
+    if not isinstance(raw, list) or len(raw) > sync.MAX_CHANNELS:
+        raise Refused("bad-request")
+    channels, numbers, names = [], set(), set()
+    for entry in raw:
+        if not isinstance(entry, dict) or set(entry) != {"name", "number", "folder"}:
+            raise Refused("bad-request")
+        name, number, folder = entry["name"], entry["number"], entry["folder"]
+        if not isinstance(name, str) or not sync.valid_name(name) or name != name.strip() \
+                or "[" in name or "]" in name or name in names:
+            raise Refused("invalid-name")
+        if not isinstance(number, int) or isinstance(number, bool) or not 1 <= number <= 9999:
+            raise Refused("invalid-number")
+        if number in numbers:
+            raise Refused("duplicate-number")
+        # Folders the console creates are one ASCII path component.
+        if not isinstance(folder, str) or not FOLDER.fullmatch(folder):
+            raise Refused("invalid-folder")
+        try:
+            sync.media_folder(folder)
+        except sync.ConfigError as error:
+            raise Refused("invalid-folder") from error
+        names.add(name)
+        numbers.add(number)
+        channels.append({"name": name, "number": number, "folder": folder})
+    return channels
+
+
+def render(channels):
+    lines = ["# Eigene Sender, verwaltet von der Dede TV Verwaltung."]
+    for channel in sorted(channels, key=lambda c: c["number"]):
+        lines += ["", f"[{channel['name']}]", f"number = {channel['number']}",
+                  f"folder = {channel['folder']}"]
+    return "\n".join(lines) + "\n"
+
+
+def write_config(text, expected, sync, path=CONFIG):
+    """Atomic, root-owned, readable by group dede (Kodi and the console).
+
+    The new file must read back exactly as dede-virtual-sync will read it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as target:
+            target.write(text)
+            target.flush()
+            os.fsync(target.fileno())
+        try:
+            import grp
+            os.chown(temp, 0, grp.getgrnam("dede").gr_gid)
+        except (KeyError, PermissionError):
+            pass
+        os.chmod(temp, 0o640)
+        try:
+            if sync.read_config(temp, require_root_owner=os.geteuid() == 0) != expected:
+                raise Refused("bad-request")
+        except sync.ConfigError as error:
+            raise Refused("bad-request") from error
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+def on_air(channels, sync):
+    """Channels the TV would show: those whose folder holds films."""
+    shown = set()
+    for channel in channels or []:
+        try:
+            if sync.discover(sync.media_folder(channel["folder"])):
+                shown.add((channel["name"], channel["number"], channel["folder"]))
+        except (sync.ConfigError, OSError):
+            pass
+    return shown
+
+
+def apply(request, sync):
+    if request.get("kind") != "virtual-channels":
+        raise Refused("unknown-kind")
+    refresh = request.get("refresh", False)
+    if not isinstance(refresh, bool):
+        raise Refused("bad-request")
+    channels = validate_channels(request.get("channels"), sync)
+    try:
+        before = on_air(sync.read_config(CONFIG), sync)
+    except sync.ConfigError:
+        before = None
+    write_config(render(channels), sorted(channels, key=lambda c: c["number"]), sync)
+    if refresh or before != on_air(channels, sync):
+        log(f"{len(channels)} own channels written, restarting the TV")
+        subprocess.run(RESTART.split(), check=False, timeout=30)
+    else:
+        log(f"{len(channels)} own channels written, nothing new on air")
+
+
+def answer(results, request_id, ok, error=None, owner=None):
+    results.mkdir(mode=0o700, exist_ok=True)
+    target = results / f"{request_id}.json"
+    temp = results / f".{request_id}.tmp"
+    temp.write_text(json.dumps({"id": request_id, "ok": ok, **({"error": error} if error else {})}),
+                    encoding="utf-8")
+    if owner is not None:
+        os.chown(temp, owner.st_uid, owner.st_gid)
+        os.chown(results, owner.st_uid, owner.st_gid)
+    os.chmod(temp, 0o600)
+    os.replace(temp, target)
+    old = sorted(results.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    for stale in old[:-KEEP_RESULTS]:
+        stale.unlink(missing_ok=True)
+
+
+def main():
+    requests = STATE / "requests"
+    if not requests.is_dir() or requests.is_symlink():
+        return 0
+    owner = STATE.stat()
+    sync = None
+    for path in sorted(requests.glob("*.json")):
+        request_id = path.stem
+        try:
+            if not ID.fullmatch(request_id):
+                raise Refused("bad-request")
+            request = read_request(path)
+            if sync is None:
+                sync = load_sync()
+            apply(request, sync)
+            ok, error = True, None
+        except Refused as refusal:
+            ok, error = False, str(refusal)
+        except (OSError, subprocess.SubprocessError) as failure:
+            log(f"request failed: {type(failure).__name__}")
+            ok, error = False, "write-failed"
+        finally:
+            path.unlink(missing_ok=True)
+        log(f"request {request_id[:8]}: {'ok' if ok else error}")
+        if ID.fullmatch(request_id):
+            answer(STATE / "results", request_id, ok, error, owner)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
