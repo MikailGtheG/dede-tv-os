@@ -46,3 +46,9 @@ Sendungen.
 | **Senderliste (IPTV)**: Adresse der Senderliste und des Programmführers ändern. | **Sprache** des Fernsehers: Deutsch, Türkisch oder Englisch. |
 | ![Startseite türkisch](verwaltung/home-tr.png) | ![Filme türkisch](verwaltung/channel-films-tr.png) |
 | Startseite auf **Türkisch**. | Filmliste auf **Türkisch**. |
+| ![Fernzugriff](verwaltung/remote.png) | ![Tailscale-Anmeldung](verwaltung/tailscale-login.png) |
+| **Fernzugriff**: Adresse im Heimnetz, Tailscale (verbunden, mit Adresse) und WireGuard-Geräte. | **Tailscale verbinden**: Anmeldelink als Knopf und QR-Code fürs Handy. |
+| ![WireGuard-Zugang](verwaltung/remote-device.png) | ![Fernseher und Diagnose](verwaltung/system.png) |
+| **Neues WireGuard-Gerät**: Der Zugang wird einmal als QR-Code für die WireGuard-App gezeigt. | **Fernseher und Diagnose**: Diagnose, Fernseher neu starten, Gerät neu starten. |
+| ![Diagnose](verwaltung/diagnostics.png) | |
+| **Diagnosebericht**: Welche Teile laufen, Laufzeit, freier Speicher, Fehler. | |

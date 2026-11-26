@@ -60,6 +60,11 @@ class FakeAdmin(BaseHTTPRequestHandler):
                 devices = state["devices"]
                 return self.reply(200, "".join(f'{n} <input type="hidden" name="address" value="{a}">'
                                                for a, n in devices.items()))
+            if self.path == "/apply/" + "7" * 32 + "?back=/system":
+                rows = "".join(f'<div class="row film"><span>{k}</span><span class="size">läuft</span></div>'
+                               for k in ("Fernsehbild", "Senderwächter", "Verwaltung", "Tailscale",
+                                         "WireGuard", "Läuft seit", "Dienste mit Fehlern"))
+                return self.reply(200, '<p role="status">Stand</p>' + rows)
             if self.path == "/apply/" + "5" * 32 + "?back=/remote" and state.get("peer"):
                 return self.reply(200, '<p role="status">Fertig</p><svg class="qr"></svg>'
                                        f'<pre class="config">{state["peer"]}</pre>')
@@ -135,6 +140,12 @@ def _signed_in_post(self, state, body):
         if state["broken"] != "wg-not-removed":
             del state["devices"][form["address"]]
         return self.reply(303, location="/apply/" + "6" * 32 + "?back=/remote")
+    if self.path == "/system/diagnostics" and state["broken"] != "no-diagnostics":
+        return self.reply(303, location="/apply/" + "7" * 32 + "?back=/system")
+    if self.path == "/system/restart-tv":
+        if state["broken"] != "restart-ignored":
+            state["on_apply"]()
+        return self.reply(303, location="/apply/" + "8" * 32 + "?back=/system")
     if self.path == "/apply":
         state["on_apply"]()
         return self.reply(303, location="/apply/" + "2" * 32 + "?back=/channels/7")
@@ -403,6 +414,14 @@ class E2ESelfTest(unittest.TestCase):
         steps = dict(self.run_against(FakeTv(broken="wg-not-removed")))
         self.assertTrue(steps["remote-wireguard-tunnel"])
         self.assertFalse(steps["remote-wireguard-removed"])
+
+    def test_missing_diagnostics_and_ignored_restart_are_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="no-diagnostics")))
+        self.assertFalse(steps["admin-diagnostics"])
+        self.assertTrue(steps["admin-restart-tv"])
+        steps = dict(self.run_against(FakeTv(broken="restart-ignored")))
+        self.assertTrue(steps["admin-diagnostics"])
+        self.assertFalse(steps["admin-restart-tv"])
 
     def test_failed_film_upload_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="admin-upload-fails")))

@@ -44,7 +44,10 @@ class ApplyTests(unittest.TestCase):
                "DEDE_TAILSCALE": str(self.fake_tailscale()),
                "DEDE_TS_CONFIG": str(self.tmp / "etc" / "tailscale.conf"),
                "DEDE_TS_FLAG": str(self.tmp / "etc" / "tailscale.enabled"),
-               "DEDE_TS_WAIT": "0"}
+               "DEDE_TS_WAIT": "0",
+               "DEDE_APPLY_REBOOT": f"touch {self.tmp / 'rebooted'}",
+               "DEDE_PROC_UPTIME": str(self.tmp / "uptime"),
+               "DEDE_OS_RELEASE": str(self.tmp / "os-release")}
         old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.addCleanup(lambda: [os.environ.pop(k) if v is None else os.environ.__setitem__(k, v)
@@ -82,7 +85,13 @@ class ApplyTests(unittest.TestCase):
     def fake_systemctl(self):
         self.units = self.tmp / "systemctl.log"
         path = self.tmp / "systemctl"
-        path.write_text(f"#!/bin/sh\necho \"$*\" >> '{self.units}'\n")
+        path.write_text(f"#!/bin/sh\necho \"$*\" >> '{self.units}'\n"
+                        "case \"$1\" in\n"
+                        "  is-active) case \"$2\" in dede-kodi.service) echo active;;"
+                        " wg-quick@dede0.service) echo '<b>';; *) echo inactive;; esac;;\n"
+                        "  --failed) printf 'dede-tv-guard.service loaded failed failed Guard\\n"
+                        "bad;unit loaded failed failed x\\n';;\n"
+                        "esac\n")
         path.chmod(0o755)
         return path
 
@@ -326,6 +335,25 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual((self.tmp / "etc" / "tailscale.conf").read_text().splitlines()[1:],
                          ["TS_STATE=Running"])
         self.assertEqual(self.remote("tailscale-login", "f" * 32, x=1)["error"], "bad-request")
+
+    def test_diagnostics_report(self):
+        (self.tmp / "uptime").write_text("7384.21 1234.00\n")
+        (self.tmp / "os-release").write_text('PRETTY_NAME="Debian GNU/Linux 13 (trixie)"\n')
+        report = self.remote("diagnostics", "9" * 32)["report"]
+        self.assertEqual(report["uptime_s"], 7384)
+        self.assertEqual(report["system"], "Debian GNU/Linux 13 (trixie)")
+        self.assertEqual(report["units"], {"tv": "active", "guard": "inactive", "console": "inactive",
+                                           "tailscale": "inactive", "wireguard": "unknown"})
+        self.assertEqual(report["failed"], ["dede-tv-guard.service"])
+        self.assertGreater(report["media_total_mb"], 0)
+        self.assertEqual(self.remote("diagnostics", "9" * 32, x=1)["error"], "bad-request")
+
+    def test_restart_tv_and_device(self):
+        self.assertTrue(self.remote("restart-tv", "a" * 32)["ok"])
+        self.assertTrue(self.restarted.exists())
+        self.assertFalse((self.tmp / "rebooted").exists())
+        self.assertTrue(self.remote("reboot", "b" * 32)["ok"])
+        self.assertTrue((self.tmp / "rebooted").exists())
 
     def test_symlinked_or_badly_named_requests_are_dropped(self):
         target = self.tmp / "elsewhere.json"
