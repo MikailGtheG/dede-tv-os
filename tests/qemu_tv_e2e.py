@@ -411,8 +411,7 @@ def run_persistence(guest):
     guest.key("pgup", settle=2)
     switched = wait_for(guest, "disk-ch-02", "atv", timeout=SWITCH_TIMEOUT)
     time.sleep(10)  # the core stores the last channel
-    check("disk-restart-device", switched and session is not None
-          and admin_maintenance(session, "reboot")
+    check("disk-restart-device", switched and session is not None and request_reboot(session)
           and wait_serial_count(IN_USE, 2, timeout=900))
     check("kept-last-channel-02", wait_for(guest, "kept-02", "atv", timeout=FIRST_PICTURE_TIMEOUT,
                                            interval=6))
@@ -420,6 +419,19 @@ def run_persistence(guest):
                                                      timeout=180))
     check("kept-admin-password", kept_admin_password())
     return steps
+
+
+def request_reboot(session):
+    """Only the request is checked: the device goes down while it answers."""
+    cookies, csrf = session
+    try:
+        status, location, _, _ = admin_request("POST", "/system/reboot", {"csrf": csrf}, cookies)
+    except OSError as exc:
+        print(f"DEDE_E2E: admin: reboot {type(exc).__name__}: {exc}", flush=True)
+        return False
+    ok = status == 303 and (location or "").startswith("/apply/")
+    print(f"DEDE_E2E: admin: reboot requested {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
+    return ok
 
 
 def kept_admin_password():
