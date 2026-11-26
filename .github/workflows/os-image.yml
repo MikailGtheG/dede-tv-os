@@ -664,6 +664,11 @@ jobs:
                   elif not same_film and length is not None and expected > length - 3:
                       # The handed-over film ended before this check: no verdict.
                       continue
+                  if core_path.endswith("/" + film) and kodi_s >= 0:
+                      # What the viewer sees: Kodi's own playback position
+                      # against the schedule at the same moment. The log-stamp
+                      # estimate above suffers from emulator scheduling delays.
+                      drift = kodi_s - core_s
                   verdict = "ok" if same_film and abs(drift) <= 5 else "mismatch"
                   line = (f"DEDE_CI_VIRTUAL: {verdict} file={film} handed={position:.1f}s "
                           f"age={now - stamp:.1f}s core={core_s:.1f}s drift={drift:+.2f}s "
