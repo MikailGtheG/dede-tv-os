@@ -13,20 +13,27 @@ Request kinds:
                     a new, still empty channel does not interrupt the picture.
   language          "de", "tr" or "en" -> /etc/dede-tv/ui.conf (interface language of
                     TV and console); the TV restarts when it changed.
+  iptv              M3U (and optional EPG) address -> /etc/dede-tv/iptv.conf, checked
+                    like dede-iptv-provision plus: no loopback or link-local hosts.
+                    Addresses are never logged.
 """
 import importlib.machinery
 import importlib.util
+import ipaddress
 import json
 import os
 import re
 import stat
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 STATE = Path(os.environ.get("DEDE_ADMIN_STATE", "/var/lib/dede-tv-admin"))
 CONFIG = Path(os.environ.get("DEDE_VIRTUAL_CONFIG", "/etc/dede-tv/virtual-channels.conf"))
 UI_CONFIG = Path(os.environ.get("DEDE_UI_CONFIG", "/etc/dede-tv/ui.conf"))
+IPTV_CONFIG = Path(os.environ.get("DEDE_IPTV_CONFIG", "/etc/dede-tv/iptv.conf"))
+PROVISION = Path(os.environ.get("DEDE_IPTV_PROVISION", "/usr/local/libexec/dede-iptv-provision"))
 LANGUAGES = ("de", "tr", "en")
 SYNC = Path(os.environ.get("DEDE_VIRTUAL_SYNC", "/usr/local/libexec/dede-virtual-sync"))
 RESTART = os.environ.get("DEDE_APPLY_RESTART", "systemctl restart --no-block dede-kodi.service")
@@ -42,6 +49,14 @@ class Refused(Exception):
 
 def log(message):
     print(f"DEDE_ADMIN_APPLY: {message}", flush=True)
+
+
+def load_module(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
 
 
 def load_sync():
@@ -180,7 +195,61 @@ def on_air(channels, sync):
     return shown
 
 
+def public_host(url):
+    """Refuse addresses that point back at this device or its link."""
+    try:
+        host = urllib.parse.urlsplit(url).hostname
+    except ValueError:
+        return False
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return not (address.is_loopback or address.is_link_local or address.is_unspecified
+                or address.is_multicast)
+
+
+def apply_iptv(request):
+    if set(request) != {"id", "kind", "m3u_url", "epg_url"}:
+        raise Refused("bad-request")
+    provision = load_module("dede_iptv_provision", PROVISION)
+    values = {}
+    for key, field in (("M3U_URL", "m3u_url"), ("EPG_URL", "epg_url")):
+        value = request[field]
+        if not isinstance(value, str):
+            raise Refused("bad-request")
+        if not value and key == "EPG_URL":
+            continue
+        try:
+            provision.validate_url(value, key)
+        except provision.ConfigError as error:
+            raise Refused("invalid-address") from error
+        if not public_host(value):
+            raise Refused("local-address")
+        values[key] = value
+    text = "".join(f"{key}={value}\n" for key, value in values.items())
+    try:
+        changed = provision.read_config(IPTV_CONFIG, require_root_owner=False) != values
+    except provision.ConfigError:
+        changed = True
+
+    def check(temp):
+        try:
+            if provision.read_config(temp, require_root_owner=os.geteuid() == 0) != values:
+                raise Refused("bad-request")
+        except provision.ConfigError as error:
+            raise Refused("invalid-address") from error
+    write_root_file(IPTV_CONFIG, text, check)
+    if changed:
+        log("IPTV source changed, restarting the TV")
+        subprocess.run(RESTART.split(), check=False, timeout=30)
+
+
 def apply(request, sync):
+    if request.get("kind") == "iptv":
+        return apply_iptv(request)
     if request.get("kind") == "language":
         return apply_language(request)
     if request.get("kind") != "virtual-channels":

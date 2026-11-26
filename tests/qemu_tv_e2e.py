@@ -41,13 +41,15 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 34
+TOTAL_STEPS = 36
 HANG_TIMEOUT = int(os.environ.get("DEDE_E2E_HANG_TIMEOUT", "420"))
 PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
 SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
 ADMIN_URL = os.environ.get("DEDE_E2E_ADMIN_URL", "http://127.0.0.1:18080")
 ADMIN_PASSWORD = "Dede-CI-Passwort-1"
 UPLOAD_FILM = os.environ.get("DEDE_E2E_UPLOAD_FILM", "")
+# The guest reaches the runner's test IPTV server as 10.0.2.2 (QEMU user net).
+IPTV_SWITCH_URL = "http://10.0.2.2:8089/dede-test.m3u"
 RESTART_TIMEOUT = int(os.environ.get("DEDE_E2E_RESTART_TIMEOUT", "240"))
 SWITCH_TIMEOUT = int(os.environ.get("DEDE_E2E_SWITCH_TIMEOUT", "60"))
 
@@ -299,6 +301,16 @@ def run(guest):
         log_preview(guest, guest.capture("channel-list-turkish"), "channel-list-turkish")
         guest.key("esc", settle=1)
     check("tv-language-turkish", turkish)
+    # IPTV source changed in the console: the playlist without fault channels.
+    session = admin_session()
+    check("admin-iptv-source", session is not None and admin_iptv(session, IPTV_SWITCH_URL))
+    switched = wait_restart(guest, "dedeneu")
+    if switched:
+        time.sleep(8)
+        guest.key("0", settle=0.3)
+        guest.key("1", settle=1)
+        switched = wait_for(guest, "iptv-switched-01", "trt1", timeout=90)
+    check("iptv-after-change-01-plays", switched)
     return steps
 
 
@@ -472,6 +484,16 @@ def admin_language(session, code):
     _, _, page, _ = admin_request("GET", "/", cookies=cookies)
     ok = ok and ("Yönetim" in page if code == "tr" else True)
     print(f"DEDE_E2E: admin: language {code} {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
+    return ok
+
+
+def admin_iptv(session, url):
+    cookies, csrf = session
+    status, location, _, _ = admin_request("POST", "/iptv", {"csrf": csrf, "m3u_url": url, "epg_url": ""}, cookies)
+    ok = status == 303 and (location or "").startswith("/apply/") and admin_outcome(location, cookies)
+    _, _, page, _ = admin_request("GET", "/iptv", cookies=cookies)
+    ok = ok and "10.0.2.2:8089" in page and "dede-test.m3u" not in page
+    print(f"DEDE_E2E: admin: IPTV source {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
     return ok
 
 

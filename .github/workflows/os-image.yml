@@ -75,7 +75,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: bc8461feb65f75398414738793a1092b030aac92
+          DEDE_WEB_SHA: ae866c60fe5d6ce2a653cfa5dba60b866809497c
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
