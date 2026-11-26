@@ -263,13 +263,15 @@ def run(guest):
     # the next film's hand-over then decides.
     check("virtual-position-matches-schedule", virtual_positions_ok(minimum=1, timeout=120))
     # The running film ends within 40 s; the next one must follow by itself.
-    started = serial_count("DEDE_CI_VIRTUAL: ok")
+    started = serial_count("DEDE_VIRTUAL: Dede Film ->")
     time.sleep(45)
     os.unlink(guest.capture("virtual-film-end"))
     continued = serial_contains("DEDE_GUARD:", "programme item ended, continuing", timeout=60)
-    # The last frame keeps the channel colour: wait until the next film has
-    # really started (checked position) before pressing the next key.
-    continued = continued and virtual_positions_ok(minimum=started + 1, timeout=90)
+    # The last frame keeps the channel colour: wait until Kodi has resolved
+    # the next film and opened it before pressing the next key.
+    continued = continued and wait_serial_count("DEDE_VIRTUAL: Dede Film ->", started + 1, timeout=90)
+    if continued:
+        time.sleep(8)
     check("virtual-continues-next-film",
           continued and wait_for(guest, "virtual-next-film", "dedefilm", timeout=60))
     # Leave the channel and come back: its time must have kept running.
@@ -530,6 +532,16 @@ def serial_count(needle):
     except OSError:
         return 0
     return sum(1 for line in text.splitlines() if needle in line)
+
+
+def wait_serial_count(needle, minimum, timeout=60):
+    deadline = time.monotonic() + timeout
+    while serial_count(needle) < minimum:
+        if time.monotonic() >= deadline:
+            print(f"DEDE_E2E: serial: fewer than {minimum} lines with {needle!r}", flush=True)
+            return False
+        time.sleep(2)
+    return True
 
 
 def virtual_positions_ok(minimum, timeout=60):
