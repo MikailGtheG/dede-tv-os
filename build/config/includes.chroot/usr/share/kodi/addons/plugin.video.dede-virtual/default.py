@@ -20,7 +20,10 @@ DB = os.path.join(HOME, ".local", "share", "dede-tv", "channels.db")
 DURATIONS = os.path.join(HOME, ".local", "share", "dede-tv", "virtual-durations.json")
 
 
-NEAR_END_S = 3.0
+# Opening a film in its last seconds ends in Kodi's "Playback failed" (it
+# reaches the end before the picture starts), e.g. when playback lagged the
+# schedule; skipping up to 10 s of an ending is the better trade.
+NEAR_END_S = 10.0
 
 
 def current_playback(name, run=subprocess.run, clock=time.monotonic):
@@ -69,8 +72,7 @@ def duration_seconds(path, position):
 def resolve(name, current=current_playback, sleep=time.sleep):
     """(file, position); a film about to end is skipped to its successor.
 
-    Opening a file within its last seconds fails in Kodi (error dialog), so
-    wait for the transition and ask the core again.
+    Wait for the transition instead and ask the core again.
     """
     path, position = current(name)
     length = cached_duration(path)
