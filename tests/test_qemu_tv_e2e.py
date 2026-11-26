@@ -187,6 +187,7 @@ class FakeTv:
             # event is emitted at once; the broken variant drops to Home.
             if self.film_frames == 2 and self.broken != "virtual-stops-after-film":
                 self.serial_line("DEDE_GUARD: channel id 9: programme item ended, continuing")
+                self.serial_line("DEDE_CI_KODI: log| DEDE_VIRTUAL: Dede Film -> film-02.mkv @ 0.4s")
                 verdict = "mismatch" if self.broken == "virtual-wrong-position" else "ok"
                 self.serial_line(f"DEDE_CI_VIRTUAL: {verdict} file=film-02.mkv drift=-0.2s")
             if self.film_frames == 3 and self.broken == "virtual-stops-after-film":
