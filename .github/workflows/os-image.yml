@@ -1283,8 +1283,16 @@ jobs:
           channels = home.find(".//control[@id='50']")
           assert channels is not None and channels.findtext("content") == "pvr://channels/tv/*"
           assert home.findall(".//onclick") == []
-          assert "Fernsehen wird verbunden …" in [n.text for n in home.iter("label")]
+          assert "$LOCALIZE[32112]" in [n.text for n in home.iter("label")]
           PY
+          # TV texts in the three interface languages.
+          for lang in de_de tr_tr en_gb; do
+            unsquashfs -cat "$squashfs" "usr/share/kodi/addons/skin.dede-tv/language/resource.language.$lang/strings.po" \
+              > "/tmp/dede-strings-$lang.po"
+          done
+          grep -Fq 'msgstr "Fernsehen wird verbunden …"' /tmp/dede-strings-de_de.po
+          grep -Fq 'msgstr "Televizyon bağlanıyor …"' /tmp/dede-strings-tr_tr.po
+          grep -Fq 'msgid "Connecting TV …"' /tmp/dede-strings-en_gb.po
           # Remote-control whitelist: dede-tv.xml must be the only active keymap.
           unsquashfs -l "$squashfs" usr/share/kodi/system/keymaps > /tmp/dede-keymaps.txt
           active_maps=$(grep -E '^squashfs-root/usr/share/kodi/system/keymaps/[^/]+\.xml$' /tmp/dede-keymaps.txt || true)
