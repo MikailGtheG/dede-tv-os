@@ -425,7 +425,7 @@ jobs:
           ) &
           while true; do
             tail -n0 -F /home/dede/.kodi/temp/kodi.log 2>/dev/null \
-              | grep --line-buffered -aE 'OpenFile|CloseFile|OnPlayBack|CCurlFile|SwitchToChannel|Previous channel|fatal|FATAL|terminate|Exception|error <general>|DEDE_VIRTUAL' \
+              | grep --line-buffered -aE 'OpenFile|CloseFile|OnPlayBack|CCurlFile|SwitchToChannel|Previous channel|fatal|FATAL|terminate|Exception|error <general>|warning <general>|DEDE_VIRTUAL|PVR|Playback|Player|resolve|plugin:' \
               | grep --line-buffered -avE 'DBus|VDPAU|CAESinkALSA|parentheses|custom window|asked to focus' \
               | redact | sed -u 's/^/DEDE_CI_KODI: log| /' > /dev/ttyS0
             sleep 2
