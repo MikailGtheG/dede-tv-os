@@ -9,7 +9,7 @@ fi
 # No debug login consoles are enabled by the production-oriented builder.
 # GitHub CI injects any required serial-getty into its temporary workspace.
 # GitHub Contents API creates hook files without executable mode.
-chmod 0755 config/hooks/live/*.hook.chroot
+chmod 0755 config/hooks/live/*.hook.chroot config/hooks/live/*.hook.binary
 sh auto/config
 # Preserve lb build's exit code while capturing diagnostics for CI.
 # Bash pipefail is required because POSIX sh pipelines return tee's status.
