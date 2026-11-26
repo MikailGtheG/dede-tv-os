@@ -75,7 +75,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: 905813f162eeab44b88a4dd06af2647d45822c57
+          DEDE_WEB_SHA: bc8461feb65f75398414738793a1092b030aac92
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
@@ -90,10 +90,30 @@ jobs:
           cargo build --release --locked
           install -D -m 0755 target/release/dede-tv-admin \
             "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/local/bin/dede-tv-admin"
+      - name: Add pinned Kodi language packs (German, Turkish)
+        shell: bash
+        env:
+          # xbmc/repo-resources, branch omega (Kodi 21); Debian ships en_gb only.
+          KODI_RESOURCES_SHA: f4c64b39362ac6153b56acc5a6e13921f59760ab
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kodi-resources
+          cd /tmp/kodi-resources
+          git init -q
+          git remote add origin https://github.com/xbmc/repo-resources.git
+          git fetch -q --depth 1 --filter=blob:none origin "$KODI_RESOURCES_SHA"
+          git sparse-checkout set --no-cone resource.language.de_de resource.language.tr_tr
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$KODI_RESOURCES_SHA"
+          for lang in de_de tr_tr; do
+            test -s "resource.language.$lang/addon.xml"
+            cp -a "resource.language.$lang" \
+              "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/"
+          done
       - name: Package pinned experimental Dede TV skin
         shell: bash
         env:
-          DEDE_SKIN_SHA: c11825c7f6e3d42c9a45cbe42137266587ed178d
+          DEDE_SKIN_SHA: 889f6c295b7739bbd2bac78785292456a7718aed
           DEDE_ESTUARY_SHA: d1a1d48c3cb3722d39264ffdd8132f755ffecd27
         run: |
           set -euo pipefail
@@ -685,6 +705,46 @@ jobs:
           UNIT
           ln -sfn ../dede-ci-virtual-check.service \
             config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-virtual-check.service
+          # CI-only: report Kodi's interface language whenever it changes.
+          cat > config/includes.chroot/usr/local/sbin/dede-ci-language <<'SH'
+          #!/bin/sh
+          exec python3 - <<'PY2'
+          import sys, time
+          sys.path.insert(0, "/usr/local/lib/dede-tv")
+          from dede_kodi_rpc import Connection
+          connection, last = None, None
+          while True:
+              time.sleep(3)
+              try:
+                  if connection is None:
+                      connection = Connection()
+                  labels = connection.call("XBMC.GetInfoLabels", {"labels": ["System.Language"]}, timeout=8) or {}
+                  connection.notifications()
+              except Exception:
+                  if connection is not None:
+                      connection.close()
+                  connection = None
+                  continue
+              language = labels.get("System.Language") or ""
+              if language and language != last:
+                  last = language
+                  with open("/dev/ttyS0", "w") as console:
+                      console.write(f"DEDE_CI_LANGUAGE: {language[:40]}\n")
+          PY2
+          SH
+          cat > config/includes.chroot/etc/systemd/system/dede-ci-language.service <<'UNIT'
+          [Unit]
+          Description=CI-only Kodi interface language report
+          After=dede-kodi.service
+          [Service]
+          Type=simple
+          Restart=always
+          ExecStart=/bin/sh /usr/local/sbin/dede-ci-language
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          ln -sfn ../dede-ci-language.service \
+            config/includes.chroot/etc/systemd/system/multi-user.target.wants/dede-ci-language.service
           # CI-only: tell the E2E driver the setup code (it has no OCR) and
           # whether the TV shows it until the administration is set up.
           cat > config/includes.chroot/usr/local/sbin/dede-ci-admin-check <<'SH'
@@ -1215,8 +1275,16 @@ jobs:
           channels = home.find(".//control[@id='50']")
           assert channels is not None and channels.findtext("content") == "pvr://channels/tv/*"
           assert home.findall(".//onclick") == []
-          assert "Fernsehen wird verbunden …" in [n.text for n in home.iter("label")]
+          assert "$LOCALIZE[32112]" in [n.text for n in home.iter("label")]
           PY
+          # TV texts in the three interface languages.
+          for lang in de_de tr_tr en_gb; do
+            unsquashfs -cat "$squashfs" "usr/share/kodi/addons/skin.dede-tv/language/resource.language.$lang/strings.po" \
+              > "/tmp/dede-strings-$lang.po"
+          done
+          grep -Fq 'msgstr "Fernsehen wird verbunden …"' /tmp/dede-strings-de_de.po
+          grep -Fq 'msgstr "Televizyon bağlanıyor …"' /tmp/dede-strings-tr_tr.po
+          grep -Fq 'msgid "Connecting TV …"' /tmp/dede-strings-en_gb.po
           # Remote-control whitelist: dede-tv.xml must be the only active keymap.
           unsquashfs -l "$squashfs" usr/share/kodi/system/keymaps > /tmp/dede-keymaps.txt
           active_maps=$(grep -E '^squashfs-root/usr/share/kodi/system/keymaps/[^/]+\.xml$' /tmp/dede-keymaps.txt || true)
@@ -1225,6 +1293,10 @@ jobs:
           unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml | grep -aFq '<addon>skin.dede-tv</addon>'
           unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml | grep -aFq '<addon>plugin.video.dede-virtual</addon>'
           unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml | grep -aFq '<addon>service.dede-setup</addon>'
+          for lang in de_de tr_tr; do
+            unsquashfs -cat "$squashfs" usr/share/kodi/system/addon-manifest.xml \
+              | grep -aFq "<addon optional=\"true\">resource.language.$lang</addon>"
+          done
           for embedded in \
             usr/local/libexec/dede-tv-autoplay \
             usr/local/libexec/dede-iptv-provision \
@@ -1243,6 +1315,9 @@ jobs:
             usr/share/kodi/addons/service.dede-setup/addon.xml \
             usr/share/kodi/addons/service.dede-setup/service.py \
             usr/local/libexec/dede-admin-apply \
+            usr/local/libexec/dede-ui-language \
+            usr/share/kodi/addons/resource.language.de_de/addon.xml \
+            usr/share/kodi/addons/resource.language.tr_tr/addon.xml \
             etc/systemd/system/dede-admin-apply.path \
             etc/systemd/system/dede-admin-apply.service \
             etc/systemd/system/paths.target.wants/dede-admin-apply.path \

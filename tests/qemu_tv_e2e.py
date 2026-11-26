@@ -41,7 +41,7 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 31
+TOTAL_STEPS = 34
 HANG_TIMEOUT = int(os.environ.get("DEDE_E2E_HANG_TIMEOUT", "420"))
 PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
 SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
@@ -295,6 +295,17 @@ def run(guest):
     guest.key("0", settle=0.3)
     guest.key("7", settle=1)
     check("admin-channel-07-plays", wait_for(guest, "admin-07", "dedeneu", timeout=90))
+    # Languages: German by default; Turkish chosen in the console reaches the TV.
+    check("tv-language-german-by-default", serial_contains("DEDE_CI_LANGUAGE: German", timeout=30))
+    session = admin_session()
+    check("admin-language-turkish", session is not None and admin_language(session, "tr"))
+    turkish = wait_restart(guest, "dedeneu") and serial_contains("DEDE_CI_LANGUAGE: Turkish", timeout=120)
+    if turkish:
+        time.sleep(6)
+        guest.key("ret", settle=3)
+        log_preview(guest, guest.capture("channel-list-turkish"), "channel-list-turkish")
+        guest.key("esc", settle=1)
+    check("tv-language-turkish", turkish)
     return steps
 
 
@@ -460,14 +471,26 @@ def admin_send_to_tv(session):
     return ok
 
 
+def admin_language(session, code):
+    """Choose a language; afterwards the console itself answers in it."""
+    cookies, csrf = session
+    status, location, _, _ = admin_request("POST", "/language", {"csrf": csrf, "language": code}, cookies)
+    ok = status == 303 and (location or "").startswith("/apply/") and admin_outcome(location, cookies)
+    _, _, page, _ = admin_request("GET", "/", cookies=cookies)
+    ok = ok and ("Yönetim" in page if code == "tr" else True)
+    print(f"DEDE_E2E: admin: language {code} {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
+    return ok
+
+
 def admin_outcome(location, cookies, timeout=60):
     """Poll the apply page until the root helper answered."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         _, _, page, _ = admin_request("GET", location, cookies=cookies)
-        if "Fertig." in page:
+        # Language-independent: the console marks the outcome by role.
+        if 'role="status"' in page:
             return True
-        if "fehlgeschlagen" in page:
+        if 'role="alert"' in page:
             print(f"DEDE_E2E: admin: apply failed: {re.sub(r'<[^>]+>', ' ', page)[-200:]}", flush=True)
             return False
         time.sleep(2)

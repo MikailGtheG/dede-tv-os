@@ -52,13 +52,14 @@ class FakeAdmin(BaseHTTPRequestHandler):
             return self.reply(200, "Anmelden", cookies=[("dede_form", "f" * 64)])
         if session in state["sessions"]:
             if self.path == "/":
-                return self.reply(200, f'Verwaltung <input type="hidden" name="csrf" value="{"c" * 64}">')
+                title = "Yönetim" if state.get("language") == "tr" else "Verwaltung"
+                return self.reply(200, f'{title} <input type="hidden" name="csrf" value="{"c" * 64}">')
             if self.path == "/channels":
                 return self.reply(200, " ".join(state["channels"]))
             if self.path == "/channels/7":
                 return self.reply(200, " ".join(state["films"]))
             if self.path.startswith("/apply/"):
-                return self.reply(200, "Fertig.")
+                return self.reply(200, '<p class="msg ok" role="status">Fertig.</p>')
         return self.reply(303, location="/login" if state["password"] else "/setup")
 
     def do_POST(self):
@@ -102,6 +103,11 @@ def _signed_in_post(self, state, body):
     if self.path == "/channels/new" and form.get("number") == "7":
         state["channels"].append(form["name"])
         return self.reply(303, location="/apply/" + "1" * 32 + "?back=/channels/7")
+    if self.path == "/language" and form.get("language") == "tr":
+        if state["broken"] != "language-ignored":
+            state["language"] = "tr"
+            state["on_apply"]("Turkish")
+        return self.reply(303, location="/apply/" + "3" * 32 + "?back=/language")
     if self.path == "/apply":
         state["on_apply"]()
         return self.reply(303, location="/apply/" + "2" * 32 + "?back=/channels/7")
@@ -137,6 +143,7 @@ class FakeTv:
         self.custom_ready = False
         self.custom = False
         self.apply_restart_at = None
+        self.pending_language = None
 
     def serial_line(self, line):
         if self.serial:
@@ -148,6 +155,7 @@ class FakeTv:
         if self.admin is not None:
             if not self.admin_announced:
                 self.admin_announced = True
+                self.serial_line("DEDE_CI_LANGUAGE: German")
                 self.serial_line(f"DEDE_CI_ADMIN_CODE: {FakeAdmin.code}")
                 if self.broken != "admin-code-not-shown":
                     self.serial_line("DEDE_CI_ADMIN: tv shows code url=http://10.0.2.15:8080")
@@ -156,6 +164,9 @@ class FakeTv:
         if self.apply_restart_at is not None and self.frames == self.apply_restart_at + 2:
             self.down, self.apply_restart_at = False, None
             self.custom_ready = self.broken != "admin-channel-missing"
+            if self.pending_language:
+                self.serial_line(f"DEDE_CI_LANGUAGE: {self.pending_language}")
+                self.pending_language = None
         playing = ORDER[self.index] if not (self.home or self.down or self.outage) else None
         if playing == "dedefilm" and self.last_playing != "dedefilm":
             verdict = "mismatch" if self.broken == "virtual-wrong-position" else "ok"
@@ -235,6 +246,10 @@ class FakeTv:
                 if self.serial:
                     with open(self.serial, "a") as log:
                         log.write("DEDE_GUARD: channel id 7 not playing (external stream unavailable)\n")
+
+    def restart_after_apply(self, language=None):
+        self.apply_restart_at = self.frames + 1
+        self.pending_language = language
 
     def admin_card(self):
         """The setup card shows until the password is set."""
@@ -319,7 +334,7 @@ class E2ESelfTest(unittest.TestCase):
             admin.state = tv.admin = {"password": None, "sessions": set(), "broken": tv.broken,
                                       "on_password": lambda: tv.serial_line("DEDE_CI_ADMIN: tv code cleared"),
                                       "channels": [], "films": [],
-                                      "on_apply": lambda: setattr(tv, "apply_restart_at", tv.frames + 1)}
+                                      "on_apply": tv.restart_after_apply}
             threading.Thread(target=admin.serve_forever, daemon=True).start()
             try:
                 with patch.object(e2e.time, "sleep"), \
@@ -357,6 +372,12 @@ class E2ESelfTest(unittest.TestCase):
         self.assertTrue(steps["admin-send-to-tv"])
         self.assertTrue(steps["admin-tv-restarts-on-05"])
         self.assertFalse(steps["admin-channel-07-plays"])
+
+    def test_language_not_reaching_the_tv_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="language-ignored")))
+        self.assertTrue(steps["tv-language-german-by-default"])
+        self.assertFalse(steps["admin-language-turkish"])
+        self.assertFalse(steps["tv-language-turkish"])
 
     def test_setup_code_missing_on_tv_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="admin-code-not-shown")))

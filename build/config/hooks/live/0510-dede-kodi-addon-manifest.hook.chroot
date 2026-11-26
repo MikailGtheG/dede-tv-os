@@ -35,7 +35,7 @@ import xml.etree.ElementTree as ET
 
 path = sys.argv[1]
 REQUIRED = ("skin.dede-tv", "plugin.video.dede-virtual", "service.dede-setup")
-OPTIONAL = ("pvr.iptvsimple",)
+OPTIONAL = ("pvr.iptvsimple", "resource.language.de_de", "resource.language.tr_tr")
 
 with open(path, "rb") as source:
     data = source.read(1024 * 1024 + 1)
