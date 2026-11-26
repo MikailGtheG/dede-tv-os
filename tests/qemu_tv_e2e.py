@@ -112,9 +112,39 @@ def preview_png(ppm, width_out=480):
             + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
 
 
+def half_size_png(ppm):
+    """PNG at half resolution (2x2 average) for the documentation screenshots."""
+    width, height, pixels = read_ppm(ppm)
+    w2, h2 = width // 2, height // 2
+    raw = bytearray()
+    row = width * 3
+    for y in range(h2):
+        raw.append(0)
+        top, bottom = 2 * y * row, (2 * y + 1) * row
+        for x in range(w2):
+            a = top + 6 * x
+            b = bottom + 6 * x
+            raw += bytes((pixels[a + c] + pixels[a + 3 + c] + pixels[b + c] + pixels[b + 3 + c]) // 4
+                         for c in range(3))
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w2, h2, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
+
+
+# Documentation screenshots (one boot mode is enough).
+SHOT_LABEL = os.environ.get("DEDE_E2E_SHOT_LABEL", "uefi")
+
+
 def log_preview(guest, ppm, step):
     data = base64.b64encode(preview_png(ppm)).decode()
     print(f"DEDE_E2E_PNG: {guest.label}/{step} {data}", flush=True)
+    if guest.label == SHOT_LABEL:
+        shot = base64.b64encode(half_size_png(ppm)).decode()
+        print(f"DEDE_E2E_SHOT: {step} {shot}", flush=True)
 
 
 def no_stock_kodi(ppm):
