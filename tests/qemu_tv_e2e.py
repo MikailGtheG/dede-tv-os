@@ -367,6 +367,8 @@ def run(guest):
         check("remote-wireguard-removed", removed)
     finally:
         tunnel_down()
+    if session:
+        tailscale_probe(session)
     return steps
 
 
@@ -588,6 +590,21 @@ def admin_wireguard_remove(session):
     ok = ok and WG_DEVICE not in listed
     print(f"DEDE_E2E: admin: WireGuard removal {'PASS' if ok else 'FAIL'}", flush=True)
     return ok
+
+
+def tailscale_probe(session):
+    """Diagnostic only: finishing the sign-in needs a Tailscale account."""
+    cookies, csrf = session
+    try:
+        status, location, _, _ = admin_request("POST", "/remote/tailscale/login", {"csrf": csrf}, cookies)
+        if status == 303 and (location or "").startswith("/apply/"):
+            admin_outcome(location, cookies, timeout=90)
+            _, _, page, _ = admin_request("GET", location, cookies=cookies)
+            found = re.search(r'href="(https://[^/"]+)/', page)
+            print(f"DEDE_E2E: tailscale: sign-in link {'from ' + found.group(1) if found else 'missing'}",
+                  flush=True)
+    except OSError as exc:
+        print(f"DEDE_E2E: tailscale: {type(exc).__name__}: {exc}", flush=True)
 
 
 TUNNEL = "dedewg"
