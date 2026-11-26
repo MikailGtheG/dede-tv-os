@@ -185,9 +185,11 @@ class FakeTv:
             self.film_frames += 1
             # The E2E's waits are patched out, so the guard's "next film"
             # event is emitted at once; the broken variant drops to Home.
-            if self.film_frames == 1 and self.broken != "virtual-stops-after-film":
+            if self.film_frames == 2 and self.broken != "virtual-stops-after-film":
                 self.serial_line("DEDE_GUARD: channel id 9: programme item ended, continuing")
-            if self.film_frames == 2 and self.broken == "virtual-stops-after-film":
+                verdict = "mismatch" if self.broken == "virtual-wrong-position" else "ok"
+                self.serial_line(f"DEDE_CI_VIRTUAL: {verdict} file=film-02.mkv drift=-0.2s")
+            if self.film_frames == 3 and self.broken == "virtual-stops-after-film":
                 self.home = True
         self.last_playing = playing
         if self.crash_at is None and ORDER[self.index] == "teskilat" and not self.list_open \
