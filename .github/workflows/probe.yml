@@ -4,17 +4,26 @@ on:
     branches: [dev/claude/probe-live-build]
 permissions:
   contents: read
+  actions: read
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    container: debian:trixie
     steps:
-      - run: |
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends live-build >/dev/null
-          dpkg -l live-build | tail -1
-          cd /usr/share/live/build/bootloaders
-          find . -type f | sort
-          for f in $(find . -type f -name '*.cfg' | sort); do echo "===== $f"; cat "$f"; done
-          echo "===== binary_grub-efi timeout"; grep -n -i 'timeout' /usr/lib/live/build/binary_* | head -40
-          grep -n 'LB_BOOTLOADER' /usr/lib/live/build/../../../share/live/build/functions/defaults.sh 2>/dev/null | head; grep -rn 'LB_BOOTLOADER_BIOS=\|LB_BOOTLOADER_EFI=\|bootloaders' /usr/share/live/build/functions/defaults.sh | head
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -x
+          gh run download 45832207528 -R "$GITHUB_REPOSITORY" -n dede-tv-debian13-prototype-iso -D iso
+          ls -la iso
+          img=$(ls iso/*.iso | head -1)
+          sudo apt-get install -y -qq xorriso fdisk >/dev/null
+          xorriso -indev "$img" -report_system_area plain -report_el_torito plain 2>&1 | tail -40
+          sfdisk -d "$img" || true
+          sfdisk -l "$img" || true
+          cp "$img" disk.img && truncate -s 4G disk.img
+          sfdisk -d disk.img || true
+          echo ',,L' | sfdisk --append --no-reread --no-tell-kernel disk.img; echo "append=$?"
+          sfdisk -d disk.img || true
+          xorriso -osirrox on -indev "$img" -extract /boot/grub/grub.cfg grub.cfg -extract /boot/grub/config.cfg config.cfg -extract /isolinux/isolinux.cfg isolinux.cfg -extract /isolinux/live.cfg live.cfg 2>&1 | tail -2
+          for f in grub.cfg config.cfg isolinux.cfg live.cfg; do echo "== $f"; cat $f; done
+          xorriso -indev "$img" -find /boot/grub -type f 2>/dev/null | head -40
