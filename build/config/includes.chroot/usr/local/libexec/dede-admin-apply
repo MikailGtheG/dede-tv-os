@@ -25,6 +25,9 @@ Request kinds:
                     the state and the TV's Tailscale address.
   tailscale-status  refresh /etc/dede-tv/tailscale.conf.
   tailscale-logout  sign out and stop Tailscale.
+  diagnostics       answer a short status report ("report") for the console.
+  restart-tv        restart the TV picture (Kodi).
+  reboot            restart the whole device.
 """
 import importlib.machinery
 import importlib.util
@@ -32,6 +35,7 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -65,6 +69,15 @@ TS_FLAG = Path(os.environ.get("DEDE_TS_FLAG", "/etc/dede-tv/tailscale.enabled"))
 TS_UNIT = "tailscaled.service"
 TS_WAIT = float(os.environ.get("DEDE_TS_WAIT", "20"))
 TS_STATES = ("NeedsLogin", "Running", "Starting", "Stopped", "NeedsMachineAuth")
+MEDIA_ROOT = Path(os.environ.get("DEDE_MEDIA_ROOT", "/srv/dede-tv/media"))
+PROC_UPTIME = Path(os.environ.get("DEDE_PROC_UPTIME", "/proc/uptime"))
+OS_RELEASE = Path(os.environ.get("DEDE_OS_RELEASE", "/etc/os-release"))
+REBOOT = os.environ.get("DEDE_APPLY_REBOOT", "systemctl --no-block reboot")
+# Units shown in the report: (key for the console, unit).
+REPORT_UNITS = (("tv", "dede-kodi.service"), ("guard", "dede-tv-guard.service"),
+                ("console", "dede-tv-admin.service"), ("tailscale", "tailscaled.service"),
+                ("wireguard", "wg-quick@dede0.service"))
+UNIT_STATES = ("active", "inactive", "failed", "activating", "deactivating", "reloading")
 MAX_REQUEST = 64 * 1024
 KEEP_RESULTS = 50
 ID = re.compile(r"[0-9a-f]{32}")
@@ -492,6 +505,63 @@ def apply_tailscale(request):
     return {"login": link}
 
 
+def unit_state(unit):
+    try:
+        result = subprocess.run([SYSTEMCTL, "is-active", unit], capture_output=True, text=True,
+                                check=False, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    state = result.stdout.strip()
+    return state if state in UNIT_STATES else "unknown"
+
+
+def failed_units():
+    try:
+        result = subprocess.run([SYSTEMCTL, "--failed", "--plain", "--no-legend", "--no-pager"],
+                                capture_output=True, text=True, check=False, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    units = [line.split()[0] for line in result.stdout.splitlines() if line.split()]
+    return [u for u in units if re.fullmatch(r"[A-Za-z0-9@._:-]{1,128}", u)][:20]
+
+
+def diagnostics():
+    report = {"units": {key: unit_state(unit) for key, unit in REPORT_UNITS},
+              "failed": failed_units()}
+    try:
+        report["uptime_s"] = int(float(PROC_UPTIME.read_text().split()[0]))
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        usage = shutil.disk_usage(MEDIA_ROOT)
+        report["media_free_mb"], report["media_total_mb"] = usage.free >> 20, usage.total >> 20
+    except OSError:
+        pass
+    try:
+        for line in OS_RELEASE.read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                name = line.partition("=")[2].strip().strip('"')
+                if name.isprintable():
+                    report["system"] = name[:80]
+    except OSError:
+        pass
+    return {"report": report}
+
+
+def apply_maintenance(request):
+    if set(request) != {"id", "kind"}:
+        raise Refused("bad-request")
+    if request["kind"] == "diagnostics":
+        return diagnostics()
+    if request["kind"] == "restart-tv":
+        log("TV restart requested")
+        subprocess.run(RESTART.split(), check=False, timeout=30)
+        return None
+    log("device restart requested")
+    subprocess.run(REBOOT.split(), check=False, timeout=30)
+    return None
+
+
 def apply(request, sync):
     """Apply one request; returns a new device's configuration, if any."""
     if request.get("kind") == "wireguard-add":
@@ -500,6 +570,8 @@ def apply(request, sync):
         return apply_wireguard_remove(request)
     if request.get("kind") in ("tailscale-login", "tailscale-status", "tailscale-logout"):
         return apply_tailscale(request)
+    if request.get("kind") in ("diagnostics", "restart-tv", "reboot"):
+        return apply_maintenance(request)
     if request.get("kind") == "iptv":
         return apply_iptv(request)
     if request.get("kind") == "language":

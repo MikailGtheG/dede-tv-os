@@ -44,7 +44,7 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 39
+TOTAL_STEPS = 41
 HANG_TIMEOUT = int(os.environ.get("DEDE_E2E_HANG_TIMEOUT", "420"))
 PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
 SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
@@ -369,6 +369,11 @@ def run(guest):
         tunnel_down()
     if session:
         tailscale_probe(session)
+    # Diagnostics and "restart the TV" from the console.
+    session = admin_session()
+    check("admin-diagnostics", session is not None and admin_diagnostics(session))
+    check("admin-restart-tv", session is not None and admin_maintenance(session, "restart-tv")
+          and wait_restart(guest, "trt1"))
     return steps
 
 
@@ -589,6 +594,26 @@ def admin_wireguard_remove(session):
     _, _, listed, _ = admin_request("GET", "/remote", cookies=cookies)
     ok = ok and WG_DEVICE not in listed
     print(f"DEDE_E2E: admin: WireGuard removal {'PASS' if ok else 'FAIL'}", flush=True)
+    return ok
+
+
+def admin_diagnostics(session):
+    """The report lists every part (rows are language-independent)."""
+    cookies, csrf = session
+    status, location, _, _ = admin_request("POST", "/system/diagnostics", {"csrf": csrf}, cookies)
+    ok = status == 303 and (location or "").startswith("/apply/") and admin_outcome(location, cookies)
+    page = admin_request("GET", location, cookies=cookies)[2] if ok else ""
+    rows = re.findall(r'<div class="row film"><span>([^<]*)</span><span class="size">([^<]*)</span>', page)
+    ok = ok and len(rows) >= 7 and {"Tailscale", "WireGuard"} <= {label for label, _ in rows}
+    print(f"DEDE_E2E: admin: diagnostics {'PASS' if ok else 'FAIL'} {rows}", flush=True)
+    return ok
+
+
+def admin_maintenance(session, action):
+    cookies, csrf = session
+    status, location, _, _ = admin_request("POST", f"/system/{action}", {"csrf": csrf}, cookies)
+    ok = status == 303 and (location or "").startswith("/apply/") and admin_outcome(location, cookies)
+    print(f"DEDE_E2E: admin: {action} {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
     return ok
 
 
