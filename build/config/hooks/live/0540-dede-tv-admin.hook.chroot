@@ -20,3 +20,7 @@ ln -sfn ../dede-admin-apply.path \
 install -d -m 0700 /etc/wireguard
 ln -sfn /lib/systemd/system/wg-quick@.service \
   /etc/systemd/system/multi-user.target.wants/wg-quick@dede0.service
+# Tailscale: enabled, but the drop-in keeps it off until the owner signs in.
+test -f /lib/systemd/system/tailscaled.service
+ln -sfn /lib/systemd/system/tailscaled.service \
+  /etc/systemd/system/multi-user.target.wants/tailscaled.service

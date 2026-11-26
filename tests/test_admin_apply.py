@@ -40,7 +40,11 @@ class ApplyTests(unittest.TestCase):
                "DEDE_REMOTE_CONFIG": str(self.tmp / "etc" / "remote.conf"),
                "DEDE_WG_DIR": str(self.tmp / "wireguard"),
                "DEDE_WG": str(self.fake_wg()),
-               "DEDE_SYSTEMCTL": str(self.fake_systemctl())}
+               "DEDE_SYSTEMCTL": str(self.fake_systemctl()),
+               "DEDE_TAILSCALE": str(self.fake_tailscale()),
+               "DEDE_TS_CONFIG": str(self.tmp / "etc" / "tailscale.conf"),
+               "DEDE_TS_FLAG": str(self.tmp / "etc" / "tailscale.enabled"),
+               "DEDE_TS_WAIT": "0"}
         old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.addCleanup(lambda: [os.environ.pop(k) if v is None else os.environ.__setitem__(k, v)
@@ -55,6 +59,23 @@ class ApplyTests(unittest.TestCase):
                         "data = os.urandom(32) if sys.argv[1] == 'genkey' else "
                         "hashlib.sha256(sys.stdin.read().strip().encode()).digest()\n"
                         "print(base64.b64encode(data).decode())\n")
+        path.chmod(0o755)
+        return path
+
+    def fake_tailscale(self):
+        """status prints self.ts_status; up/logout are logged and may change it."""
+        self.ts_status = self.tmp / "ts-status.json"
+        self.ts_status.write_text(json.dumps({"BackendState": "NoState"}))
+        self.ts_log = self.tmp / "ts.log"
+        path = self.tmp / "tailscale"
+        path.write_text(
+            "#!/usr/bin/env python3\nimport json, sys\n"
+            f"status, log = {str(self.ts_status)!r}, {str(self.ts_log)!r}\n"
+            "open(log, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+            "data = json.load(open(status))\n"
+            "if sys.argv[1] == 'status':\n    print(json.dumps(data.get('_status', data)))\n"
+            "elif sys.argv[1] == 'up' and '_after_up' in data:\n"
+            "    json.dump(data['_after_up'], open(status, 'w'))\n")
         path.chmod(0o755)
         return path
 
@@ -262,6 +283,49 @@ class ApplyTests(unittest.TestCase):
         self.assertFalse((self.tmp / "wireguard").exists())
         self.assertFalse((self.tmp / "etc" / "remote.conf").exists())
         self.assertFalse(self.units.exists())
+
+    def test_tailscale_sign_in_link_status_and_sign_out(self):
+        conf = self.tmp / "etc" / "tailscale.conf"
+        link = "https://login.tailscale.com/a/1a2b3c4d"
+        self.ts_status.write_text(json.dumps({"BackendState": "NeedsLogin", "_after_up": {
+            "BackendState": "NeedsLogin", "AuthURL": link}}))
+        result = self.remote("tailscale-login", "a" * 32)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["login"], link)
+        self.assertTrue((self.tmp / "etc" / "tailscale.enabled").exists())
+        self.assertIn("start tailscaled.service", self.units.read_text())
+        self.assertIn("up --hostname=dede-tv --accept-dns=false --timeout=5s", self.ts_log.read_text())
+        self.assertEqual(conf.read_text().splitlines()[1:], ["TS_STATE=NeedsLogin"])
+        # The owner signed in on the phone.
+        self.ts_status.write_text(json.dumps({"BackendState": "Running", "Self": {
+            "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"]}}))
+        self.assertTrue(self.remote("tailscale-status", "b" * 32)["ok"])
+        self.assertEqual(conf.read_text().splitlines()[1:],
+                         ["TS_STATE=Running", "TS_ADDRESS=100.101.102.103"])
+        again = self.remote("tailscale-login", "c" * 32)
+        self.assertTrue(again["ok"])
+        self.assertNotIn("login", again)
+        self.assertTrue(self.remote("tailscale-logout", "d" * 32)["ok"])
+        self.assertFalse((self.tmp / "etc" / "tailscale.enabled").exists())
+        self.assertTrue(self.units.read_text().endswith("stop tailscaled.service\n"))
+        self.assertEqual(conf.read_text().splitlines()[1:], ["TS_STATE=Stopped"])
+        self.assertTrue(self.remote("tailscale-status", "e" * 32)["ok"])
+        self.assertEqual(conf.read_text().splitlines()[1:], ["TS_STATE=Stopped"])
+
+    def test_tailscale_without_link_or_with_bad_data_is_refused(self):
+        for status in ({"BackendState": "NeedsLogin"},
+                       {"BackendState": "NeedsLogin", "AuthURL": "http://login.example/x"},
+                       {"BackendState": "NeedsLogin", "AuthURL": "https://x.example/a b"},
+                       {"BackendState": "<b>", "AuthURL": "javascript:alert(1)"}):
+            with self.subTest(status=status):
+                self.ts_status.write_text(json.dumps(status))
+                self.assertEqual(self.remote("tailscale-login", "f" * 32)["error"], "tailscale-unreachable")
+        self.ts_status.write_text(json.dumps({"BackendState": "Running", "Self": {
+            "TailscaleIPs": ["8.8.8.8", "not an ip"]}}))
+        self.assertTrue(self.remote("tailscale-status", "f" * 32)["ok"])
+        self.assertEqual((self.tmp / "etc" / "tailscale.conf").read_text().splitlines()[1:],
+                         ["TS_STATE=Running"])
+        self.assertEqual(self.remote("tailscale-login", "f" * 32, x=1)["error"], "bad-request")
 
     def test_symlinked_or_badly_named_requests_are_dropped(self):
         target = self.tmp / "elsewhere.json"

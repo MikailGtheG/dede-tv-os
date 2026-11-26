@@ -20,6 +20,11 @@ Request kinds:
                     device's configuration is answered once ("peer") and only its
                     public key is kept. /etc/dede-tv/remote.conf lists the devices.
   wireguard-remove  device {address}; the tunnel stops with the last device.
+  tailscale-login   start Tailscale and answer the sign-in link ("login"); the
+                    owner signs in on a phone. /etc/dede-tv/tailscale.conf holds
+                    the state and the TV's Tailscale address.
+  tailscale-status  refresh /etc/dede-tv/tailscale.conf.
+  tailscale-logout  sign out and stop Tailscale.
 """
 import importlib.machinery
 import importlib.util
@@ -30,6 +35,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -52,6 +58,13 @@ WG_DEVICES = [ipaddress.ip_address(f"10.77.0.{n}") for n in range(2, 255)]
 WG_KEY = re.compile(r"[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=")
 WG_NAME_MAX = 32
 HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+TAILSCALE = os.environ.get("DEDE_TAILSCALE", "tailscale")
+TS_CONFIG = Path(os.environ.get("DEDE_TS_CONFIG", "/etc/dede-tv/tailscale.conf"))
+# tailscaled only starts while this file exists (drop-in condition).
+TS_FLAG = Path(os.environ.get("DEDE_TS_FLAG", "/etc/dede-tv/tailscale.enabled"))
+TS_UNIT = "tailscaled.service"
+TS_WAIT = float(os.environ.get("DEDE_TS_WAIT", "20"))
+TS_STATES = ("NeedsLogin", "Running", "Starting", "Stopped", "NeedsMachineAuth")
 MAX_REQUEST = 64 * 1024
 KEEP_RESULTS = 50
 ID = re.compile(r"[0-9a-f]{32}")
@@ -380,10 +393,10 @@ def apply_wireguard_add(request):
     write_tunnel(devices)
     write_root_file(REMOTE_CONFIG, render_remote(endpoint, devices))
     log(f"WireGuard device {free[0]} added")
-    return "\n".join([
+    return {"peer": "\n".join([
         "[Interface]", f"PrivateKey = {private}", f"Address = {free[0]}/32", "",
         "[Peer]", f"PublicKey = {server}", f"Endpoint = {endpoint}",
-        f"AllowedIPs = {WG_SERVER}/32", "PersistentKeepalive = 25", ""])
+        f"AllowedIPs = {WG_SERVER}/32", "PersistentKeepalive = 25", ""])}
 
 
 def apply_wireguard_remove(request):
@@ -398,12 +411,95 @@ def apply_wireguard_remove(request):
     log(f"WireGuard device {request['address']} removed")
 
 
+def tailscale_status():
+    """(state, login link, Tailscale IPv4) from the running daemon."""
+    try:
+        result = subprocess.run([TAILSCALE, "status", "--json"], capture_output=True, text=True,
+                                check=False, timeout=10)
+        status = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None, None, None
+    if not isinstance(status, dict):
+        return None, None, None
+    state = status.get("BackendState")
+    state = state if state in TS_STATES else None
+    link = status.get("AuthURL")
+    if not (isinstance(link, str) and link.startswith("https://") and len(link) <= 512
+            and not any(c.isspace() or not c.isprintable() for c in link)):
+        link = None
+    address = None
+    own = status.get("Self")
+    for candidate in (own.get("TailscaleIPs") if isinstance(own, dict) else None) or []:
+        try:
+            ip = ipaddress.ip_address(candidate)
+        except (TypeError, ValueError):
+            continue
+        if ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10"):
+            address = str(ip)
+            break
+    return state, link, address
+
+
+def write_tailscale_state(state, address):
+    lines = ["# Tailscale, geschrieben von dede-admin-apply.", f"TS_STATE={state or 'Stopped'}"]
+    if address and state == "Running":
+        lines.append(f"TS_ADDRESS={address}")
+    write_root_file(TS_CONFIG, "\n".join(lines) + "\n")
+
+
+def wait_for_tailscale(done):
+    deadline = time.monotonic() + TS_WAIT
+    while True:
+        status = tailscale_status()
+        if done(*status) or time.monotonic() >= deadline:
+            return status
+        time.sleep(1)
+
+
+def apply_tailscale(request):
+    kind = request["kind"]
+    if set(request) != {"id", "kind"}:
+        raise Refused("bad-request")
+    if kind == "tailscale-logout":
+        subprocess.run([TAILSCALE, "logout"], capture_output=True, check=False, timeout=30)
+        subprocess.run([SYSTEMCTL, "stop", TS_UNIT], check=False, timeout=30)
+        TS_FLAG.unlink(missing_ok=True)
+        write_tailscale_state("Stopped", None)
+        log("Tailscale signed out")
+        return None
+    if kind == "tailscale-status":
+        state, _, address = tailscale_status() if TS_FLAG.exists() else ("Stopped", None, None)
+        write_tailscale_state(state, address)
+        return None
+    write_root_file(TS_FLAG, "")
+    subprocess.run([SYSTEMCTL, "start", TS_UNIT], check=False, timeout=30)
+    wait_for_tailscale(lambda state, link, address: state is not None)
+    # "up" waits for the sign-in; the link shows up in the status meanwhile.
+    try:
+        subprocess.run([TAILSCALE, "up", "--hostname=dede-tv", "--accept-dns=false",
+                        "--timeout=5s"], capture_output=True, check=False, timeout=30)
+    except subprocess.TimeoutExpired:
+        pass
+    state, link, address = wait_for_tailscale(
+        lambda state, link, address: state == "Running" or link is not None)
+    write_tailscale_state(state, address)
+    if state == "Running":
+        log("Tailscale already signed in")
+        return None
+    if link is None:
+        raise Refused("tailscale-unreachable")
+    log("Tailscale sign-in link created")
+    return {"login": link}
+
+
 def apply(request, sync):
     """Apply one request; returns a new device's configuration, if any."""
     if request.get("kind") == "wireguard-add":
         return apply_wireguard_add(request)
     if request.get("kind") == "wireguard-remove":
         return apply_wireguard_remove(request)
+    if request.get("kind") in ("tailscale-login", "tailscale-status", "tailscale-logout"):
+        return apply_tailscale(request)
     if request.get("kind") == "iptv":
         return apply_iptv(request)
     if request.get("kind") == "language":
@@ -426,14 +522,14 @@ def apply(request, sync):
         log(f"{len(channels)} own channels written, nothing new on air")
 
 
-def answer(results, request_id, ok, error=None, owner=None, peer=None):
+def answer(results, request_id, ok, error=None, owner=None, extra=None):
     results.mkdir(mode=0o700, exist_ok=True)
     target = results / f"{request_id}.json"
     temp = results / f".{request_id}.tmp"
     fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as out:
         json.dump({"id": request_id, "ok": ok, **({"error": error} if error else {}),
-                   **({"peer": peer} if peer else {})}, out)
+                   **(extra or {})}, out)
     if owner is not None:
         os.chown(temp, owner.st_uid, owner.st_gid)
         os.chown(results, owner.st_uid, owner.st_gid)
@@ -452,14 +548,14 @@ def main():
     sync = None
     for path in sorted(requests.glob("*.json")):
         request_id = path.stem
-        peer = None
+        extra = None
         try:
             if not ID.fullmatch(request_id):
                 raise Refused("bad-request")
             request = read_request(path)
             if sync is None:
                 sync = load_sync()
-            peer = apply(request, sync)
+            extra = apply(request, sync)
             ok, error = True, None
         except Refused as refusal:
             ok, error = False, str(refusal)
@@ -470,7 +566,7 @@ def main():
             path.unlink(missing_ok=True)
         log(f"request {request_id[:8]}: {'ok' if ok else error}")
         if ID.fullmatch(request_id):
-            answer(STATE / "results", request_id, ok, error, owner, peer)
+            answer(STATE / "results", request_id, ok, error, owner, extra if ok else None)
     return 0
 
 

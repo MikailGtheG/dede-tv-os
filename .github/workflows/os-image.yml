@@ -37,6 +37,25 @@ jobs:
             grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common \
             ca-certificates python3 qemu-system-x86 ovmf \
             ffmpeg fonts-dejavu-core wireguard-tools iproute2
+      - name: Fetch Tailscale from its signed package repository
+        shell: bash
+        env:
+          # Tailscale Inc. package repository signing key.
+          TAILSCALE_KEY_FPR: 2596A99EAAB33821893C0A79458CA832957F5868
+        run: |
+          set -euo pipefail
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl gpg
+          key=/usr/share/keyrings/tailscale-archive-keyring.gpg
+          curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg -o "$key"
+          fpr=$(gpg --show-keys --with-colons "$key" | awk -F: '/^fpr:/ {print $10; exit}')
+          test "$fpr" = "$TAILSCALE_KEY_FPR"
+          echo "deb [signed-by=$key] https://pkgs.tailscale.com/stable/debian trixie main" \
+            > /etc/apt/sources.list.d/tailscale.list
+          apt-get update
+          # apt checks the repository signature and the package hash.
+          mkdir -p build/config/packages.chroot
+          (cd build/config/packages.chroot && apt-get download tailscale)
+          ls -l build/config/packages.chroot
       - name: Build pinned Rust TV core for the Debian 13 appliance
         shell: bash
         env:
@@ -75,7 +94,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: 865e6499aa2b5a5def339e61c895069ec3ac6909
+          DEDE_WEB_SHA: fc66dce27bfdc2a69850d8544f66b1d0f44def0a
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
@@ -1352,6 +1371,9 @@ jobs:
             usr/bin/wg \
             usr/bin/wg-quick \
             etc/systemd/system/wg-quick@dede0.service.d/dede.conf \
+            usr/bin/tailscale \
+            usr/sbin/tailscaled \
+            etc/systemd/system/tailscaled.service.d/dede.conf \
             etc/systemd/system/timers.target.wants/dede-virtual-epg.timer \
             etc/systemd/system/dede-kodi-watchdog.service \
             etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service \
