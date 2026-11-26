@@ -9,8 +9,9 @@ Wants=dede-kodi-skin.service
 Wants=network-online.target
 # Re-run whenever Kodi restarts, so a crash restart returns to live TV.
 PartOf=dede-kodi.service
-StartLimitIntervalSec=600
-StartLimitBurst=4
+# Every Kodi restart starts this unit again (settings changes, crashes);
+# a start limit would leave the TV on the home screen for good.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
