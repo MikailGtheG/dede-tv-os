@@ -1,0 +1,20 @@
+name: probe live-build bootloaders
+on:
+  push:
+    branches: [dev/claude/probe-live-build]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    steps:
+      - run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends live-build >/dev/null
+          dpkg -l live-build | tail -1
+          cd /usr/share/live/build/bootloaders
+          find . -type f | sort
+          for f in $(find . -type f -name '*.cfg' | sort); do echo "===== $f"; cat "$f"; done
+          echo "===== binary_grub-efi timeout"; grep -n -i 'timeout' /usr/lib/live/build/binary_* | head -40
+          grep -n 'LB_BOOTLOADER' /usr/lib/live/build/../../../share/live/build/functions/defaults.sh 2>/dev/null | head; grep -rn 'LB_BOOTLOADER_BIOS=\|LB_BOOTLOADER_EFI=\|bootloaders' /usr/share/live/build/functions/defaults.sh | head
