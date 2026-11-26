@@ -36,13 +36,34 @@ class ApplyTests(unittest.TestCase):
                "DEDE_APPLY_RESTART": f"touch {self.restarted}",
                "DEDE_UI_CONFIG": str(self.tmp / "etc" / "ui.conf"),
                "DEDE_IPTV_CONFIG": str(self.tmp / "etc" / "iptv.conf"),
-               "DEDE_IPTV_PROVISION": str(LIBEXEC / "dede-iptv-provision")}
+               "DEDE_IPTV_PROVISION": str(LIBEXEC / "dede-iptv-provision"),
+               "DEDE_REMOTE_CONFIG": str(self.tmp / "etc" / "remote.conf"),
+               "DEDE_WG_DIR": str(self.tmp / "wireguard"),
+               "DEDE_WG": str(self.fake_wg()),
+               "DEDE_SYSTEMCTL": str(self.fake_systemctl())}
         old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.addCleanup(lambda: [os.environ.pop(k) if v is None else os.environ.__setitem__(k, v)
                                  for k, v in old.items()])
         self.apply = load("dede_admin_apply", LIBEXEC / "dede-admin-apply")
         self.sync = load("dede_virtual_sync_for_apply", LIBEXEC / "dede-virtual-sync")
+
+    def fake_wg(self):
+        """genkey: random key; pubkey: a key derived from stdin, like wg(8)."""
+        path = self.tmp / "wg"
+        path.write_text("#!/usr/bin/env python3\nimport base64, hashlib, os, sys\n"
+                        "data = os.urandom(32) if sys.argv[1] == 'genkey' else "
+                        "hashlib.sha256(sys.stdin.read().strip().encode()).digest()\n"
+                        "print(base64.b64encode(data).decode())\n")
+        path.chmod(0o755)
+        return path
+
+    def fake_systemctl(self):
+        self.units = self.tmp / "systemctl.log"
+        path = self.tmp / "systemctl"
+        path.write_text(f"#!/bin/sh\necho \"$*\" >> '{self.units}'\n")
+        path.chmod(0o755)
+        return path
 
     def request(self, channels, request_id="0" * 31 + "1", **extra):
         body = {"id": request_id, "kind": "virtual-channels", "channels": channels, **extra}
@@ -171,6 +192,76 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(self.iptv("https://tv.example/x.m3u", extra=1)["error"], "bad-request")
         self.assertFalse((self.tmp / "etc" / "iptv.conf").exists())
         self.assertFalse(self.restarted.exists())
+
+    def remote(self, kind, request_id, **fields):
+        body = {"id": request_id, "kind": kind, **fields}
+        (self.state / "requests" / f"{request_id}.json").write_text(json.dumps(body))
+        self.apply.main()
+        return json.loads((self.state / "results" / f"{request_id}.json").read_text())
+
+    def test_wireguard_devices_are_added_once_and_removed(self):
+        tunnel = self.tmp / "wireguard" / "dede0.conf"
+        remote = self.tmp / "etc" / "remote.conf"
+        first = self.remote("wireguard-add", "1" * 32, name="Handy Mikail", endpoint="haus.example.org")
+        self.assertTrue(first["ok"], first)
+        peer = first["peer"]
+        self.assertIn("Address = 10.77.0.2/32", peer)
+        self.assertIn("Endpoint = haus.example.org:51820", peer)
+        self.assertIn("AllowedIPs = 10.77.0.1/32", peer)
+        private = peer.split("PrivateKey = ")[1].split("\n")[0]
+        # Only the device's public key stays on the TV.
+        for kept in (tunnel, remote, self.tmp / "wireguard" / "dede0.key"):
+            self.assertNotIn(private, kept.read_text())
+        self.assertEqual(tunnel.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.tmp / "wireguard" / "dede0.key").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(remote.stat().st_mode & 0o777, 0o640)
+        self.assertIn("ListenPort = 51820", tunnel.read_text())
+        self.assertIn("AllowedIPs = 10.77.0.2/32", tunnel.read_text())
+        self.assertIn("WG_ENDPOINT=haus.example.org:51820\n", remote.read_text())
+        server_key = (self.tmp / "wireguard" / "dede0.key").read_text()
+
+        second = self.remote("wireguard-add", "2" * 32, name="Tablet Ayşe", endpoint="[2001:db8::1]:4500")
+        self.assertIn("Address = 10.77.0.3/32", second["peer"])
+        self.assertIn("Endpoint = [2001:db8::1]:4500", second["peer"])
+        self.assertEqual((self.tmp / "wireguard" / "dede0.key").read_text(), server_key)
+        server_public = first["peer"].split("[Peer]\nPublicKey = ")[1].split("\n")[0]
+        self.assertIn(f"PublicKey = {server_public}", second["peer"])
+        self.assertEqual(self.units.read_text(), f"restart {self.apply.WG_UNIT}\n" * 2)
+
+        self.assertEqual(self.remote("wireguard-remove", "3" * 32, address="10.77.0.9")["error"],
+                         "unknown-device")
+        self.assertTrue(self.remote("wireguard-remove", "4" * 32, address="10.77.0.2")["ok"])
+        self.assertNotIn("10.77.0.2", tunnel.read_text() + remote.read_text())
+        self.assertIn("Tablet Ayşe", remote.read_text())
+        self.assertTrue(self.remote("wireguard-remove", "5" * 32, address="10.77.0.3")["ok"])
+        self.assertFalse(tunnel.exists())
+        self.assertTrue(self.units.read_text().endswith(f"stop {self.apply.WG_UNIT}\n"))
+        self.assertNotIn("WG_DEVICE", remote.read_text())
+        # The next device gets the lowest free address again.
+        again = self.remote("wireguard-add", "6" * 32, name="Laptop", endpoint="203.0.113.7")
+        self.assertIn("Address = 10.77.0.2/32", again["peer"])
+
+    def test_invalid_wireguard_requests_change_nothing(self):
+        for fields in (
+            {"name": "", "endpoint": "haus.example.org"},
+            {"name": "a\nb", "endpoint": "haus.example.org"},
+            {"name": "x" * 33, "endpoint": "haus.example.org"},
+            {"name": "<b>", "endpoint": "haus.example.org"},
+            {"name": "Handy", "endpoint": "haus.example.org:0"},
+            {"name": "Handy", "endpoint": "haus.example.org:"},
+            {"name": "Handy", "endpoint": "http://haus.example.org"},
+            {"name": "Handy", "endpoint": "2001:db8::1"},
+            {"name": "Handy", "endpoint": "1234"},
+            {"name": "Handy", "endpoint": "haus.example.org", "extra": 1},
+            {"name": 7, "endpoint": "haus.example.org"},
+        ):
+            with self.subTest(fields=fields):
+                self.assertEqual(self.remote("wireguard-add", "7" * 32, **fields)["error"], "bad-request")
+        self.assertEqual(self.remote("wireguard-remove", "8" * 32, address="10.77.0.2", x=1)["error"],
+                         "bad-request")
+        self.assertFalse((self.tmp / "wireguard").exists())
+        self.assertFalse((self.tmp / "etc" / "remote.conf").exists())
+        self.assertFalse(self.units.exists())
 
     def test_symlinked_or_badly_named_requests_are_dropped(self):
         target = self.tmp / "elsewhere.json"

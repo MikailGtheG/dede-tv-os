@@ -24,3 +24,6 @@ xinit
 systemd-resolved
 # ffprobe measures local 24/7 channel video durations.
 ffmpeg
+# Remote access over WireGuard (wg-quick needs ip from iproute2).
+wireguard-tools
+iproute2

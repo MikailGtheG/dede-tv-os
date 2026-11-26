@@ -15,3 +15,8 @@ ln -sfn ../dede-tv-admin.service \
 mkdir -p /etc/systemd/system/paths.target.wants
 ln -sfn ../dede-admin-apply.path \
   /etc/systemd/system/paths.target.wants/dede-admin-apply.path
+# Remote access: keys and tunnel configuration stay root-only; the tunnel
+# starts once dede-admin-apply has written a device (see the drop-in).
+install -d -m 0700 /etc/wireguard
+ln -sfn /lib/systemd/system/wg-quick@.service \
+  /etc/systemd/system/multi-user.target.wants/wg-quick@dede0.service

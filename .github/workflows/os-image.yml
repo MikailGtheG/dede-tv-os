@@ -36,7 +36,7 @@ jobs:
             live-build debootstrap xorriso squashfs-tools \
             grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common \
             ca-certificates python3 qemu-system-x86 ovmf \
-            ffmpeg fonts-dejavu-core
+            ffmpeg fonts-dejavu-core wireguard-tools iproute2
       - name: Build pinned Rust TV core for the Debian 13 appliance
         shell: bash
         env:
@@ -75,7 +75,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: ae0ae034488eb95393b1c3ae44fb048e8f19c004
+          DEDE_WEB_SHA: 865e6499aa2b5a5def339e61c895069ec3ac6909
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
@@ -890,6 +890,7 @@ jobs:
           for mode in bios uefi; do
             echo "Testing $mode boot"
             if [ "$mode" = uefi ]; then admin_port=18081; else admin_port=18080; fi
+            if [ "$mode" = uefi ]; then wg_port=51822; else wg_port=51821; fi
             firmware=()
             if [ "$mode" = uefi ]; then
               # Prefer the standard, non-secure-boot OVMF code image.
@@ -944,7 +945,7 @@ jobs:
               -audiodev none,id=ci_audio \
               -device ich9-intel-hda \
               -device hda-duplex,audiodev=ci_audio \
-              -nic "user,model=e1000e,hostfwd=tcp:127.0.0.1:$admin_port-:8080" \
+              -nic "user,model=e1000e,hostfwd=tcp:127.0.0.1:$admin_port-:8080,hostfwd=udp:127.0.0.1:$wg_port-:51820" \
               -monitor "unix:$monitor,server=on,wait=off" -serial stdio \
               -no-reboot -boot d \
               -device ich9-ahci,id=ahci \
@@ -1050,6 +1051,7 @@ jobs:
             DEDE_E2E_PAUSE_FLAG=/tmp/dede-iptv-outage \
             DEDE_E2E_SERIAL_LOG="$PWD/boot-logs/$mode.log" \
             DEDE_E2E_ADMIN_URL="http://127.0.0.1:$admin_port" \
+            DEDE_E2E_WG_ENDPOINT="127.0.0.1:$wg_port" \
             DEDE_E2E_UPLOAD_FILM="$RUNNER_TEMP/admin-film/film-01.mkv" \
             python3 "$GITHUB_WORKSPACE/tests/qemu_tv_e2e.py" "$monitor" \
               "$PWD/boot-logs/e2e" "$mode" | tee "boot-logs/$mode-e2e.log"
@@ -1347,6 +1349,9 @@ jobs:
             etc/systemd/system/dede-admin-apply.path \
             etc/systemd/system/dede-admin-apply.service \
             etc/systemd/system/paths.target.wants/dede-admin-apply.path \
+            usr/bin/wg \
+            usr/bin/wg-quick \
+            etc/systemd/system/wg-quick@dede0.service.d/dede.conf \
             etc/systemd/system/timers.target.wants/dede-virtual-epg.timer \
             etc/systemd/system/dede-kodi-watchdog.service \
             etc/systemd/system/multi-user.target.wants/dede-kodi-watchdog.service \
