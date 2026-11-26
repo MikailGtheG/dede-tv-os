@@ -27,9 +27,6 @@ WINDOW_OK_DIALOG = 12002
 WINDOW_FULLSCREEN = 12005
 WINDOW_CHANNEL_LIST = 10608
 BACKOFF_S = (5, 10, 20, 40, 60)
-# Kodi refuses a new Player.Open right after a stream ended ("Playback
-# failed" dialog, seen in the image runs); give it a moment first.
-CONTINUE_DELAY_S = 3.0
 STALL_S = 30
 TICK_S = 2.0
 
@@ -49,7 +46,7 @@ class Guard:
         self.last_time = None
         self.last_progress = 0.0
         self.caching_since = None
-        self.reopen_at = None
+        self.reopen_now = False
 
     # -- notifications -------------------------------------------------
     def on_notification(self, document):
@@ -57,7 +54,7 @@ class Guard:
             data = (document.get("params") or {}).get("data") or {}
             if data.get("end") is True and self.target is not None:
                 # A local 24/7 channel's film ended: the next one is due now.
-                self.reopen_at = self.clock() + CONTINUE_DELAY_S
+                self.reopen_now = True
             return
         if document.get("method") != "Player.OnPlay":
             return
@@ -68,7 +65,7 @@ class Guard:
                 self.target = None
                 self.failing = False
             return
-        self.reopen_at = None
+        self.reopen_now = False
         if item["id"] != self.target:
             # A new request by the viewer: forget the old channel's failures.
             self.target = item["id"]
@@ -159,10 +156,8 @@ class Guard:
         self.caching_since = None
         if self.target is None or window == WINDOW_CHANNEL_LIST:
             return
-        if self.reopen_at is not None:
-            if now < self.reopen_at:
-                return
-            self.reopen_at = None
+        if self.reopen_now:
+            self.reopen_now = False
             log(f"channel id {self.target}: programme item ended, continuing")
             self.call("Player.Open", {"item": {"channelid": self.target}}, timeout=15)
             return
