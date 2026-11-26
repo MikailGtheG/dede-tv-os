@@ -178,14 +178,17 @@ class GuardTests(unittest.TestCase):
         self.run_for(120, step=1)
         self.assertEqual(self.kodi.opened(), [])
 
-    def test_natural_end_continues_at_once_without_failure(self):
-        # A local 24/7 channel's film ended: open the channel again right
-        # away (next film), no 5 s backoff, no "unavailable" message.
+    def test_natural_end_continues_shortly_without_failure(self):
+        # A local 24/7 channel's film ended: open the channel again after a
+        # short pause (Kodi refuses an immediate re-open), no backoff, no
+        # "unavailable" message.
         self.guard.on_notification(on_play({"type": "channel", "id": 5}))
         self.guard.on_notification({"jsonrpc": "2.0", "method": "Player.OnStop",
                                     "params": {"data": {"end": True, "item": {"type": "channel", "id": 5}}}})
         self.kodi.window = guard_module.WINDOW_HOME
         self.guard.tick()
+        self.assertEqual(self.kodi.opened(), [])
+        self.run_for(guard_module.CONTINUE_DELAY_S + 1, step=1)
         self.assertEqual(self.kodi.opened(), [5])
         self.assertFalse(any("unavailable" in line for line in self.logs))
         self.assertTrue(any("programme item ended, continuing" in line for line in self.logs))
