@@ -23,11 +23,14 @@ Usage: qemu_tv_e2e.py MONITOR_SOCKET OUTPUT_DIR LABEL
 Prints DEDE_E2E lines; exit status 0 only if every step passed.
 """
 import base64
+import html
 import http.client
 import json
 import os
 import socket
 import struct
+import subprocess
+import tempfile
 import sys
 import re
 import time
@@ -41,7 +44,7 @@ import check_qemu_channel as channel_check  # noqa: E402
 from check_qemu_tv_visual import classify as stock_kodi_check, read_ppm  # noqa: E402
 
 FIRST_PICTURE_TIMEOUT = int(os.environ.get("DEDE_E2E_FIRST_PICTURE_TIMEOUT", "240"))
-TOTAL_STEPS = 36
+TOTAL_STEPS = 39
 HANG_TIMEOUT = int(os.environ.get("DEDE_E2E_HANG_TIMEOUT", "420"))
 PAUSE_FLAG = os.environ.get("DEDE_E2E_PAUSE_FLAG", "/tmp/dede-iptv-outage")
 SERIAL_LOG = os.environ.get("DEDE_E2E_SERIAL_LOG", "/dev/null")
@@ -50,6 +53,9 @@ ADMIN_PASSWORD = "Dede-CI-Passwort-1"
 UPLOAD_FILM = os.environ.get("DEDE_E2E_UPLOAD_FILM", "")
 # The guest reaches the runner's test IPTV server as 10.0.2.2 (QEMU user net).
 IPTV_SWITCH_URL = "http://10.0.2.2:8089/dede-test.m3u"
+# The runner reaches the guest's WireGuard port through a QEMU UDP forward.
+WG_ENDPOINT = os.environ.get("DEDE_E2E_WG_ENDPOINT", "127.0.0.1:51821")
+WG_DEVICE = "CI Laptop"
 RESTART_TIMEOUT = int(os.environ.get("DEDE_E2E_RESTART_TIMEOUT", "240"))
 SWITCH_TIMEOUT = int(os.environ.get("DEDE_E2E_SWITCH_TIMEOUT", "60"))
 
@@ -348,6 +354,19 @@ def run(guest):
         guest.key("1", settle=1)
         switched = wait_for(guest, "iptv-switched-01", "trt1", timeout=90)
     check("iptv-after-change-01-plays", switched)
+    # Remote access: a WireGuard device made in the console reaches it
+    # through a real tunnel from the runner, and no longer after removal.
+    session = admin_session()
+    peer = admin_wireguard_add(session) if session else None
+    check("remote-wireguard-device", peer is not None)
+    try:
+        reached = peer is not None and tunnel_up(peer) and tunnel_reaches_console(timeout=90)
+        check("remote-wireguard-tunnel", reached)
+        removed = (reached and admin_wireguard_remove(session)
+                   and not tunnel_reaches_console(timeout=20))
+        check("remote-wireguard-removed", removed)
+    finally:
+        tunnel_down()
     return steps
 
 
@@ -532,6 +551,92 @@ def admin_iptv(session, url):
     ok = ok and "10.0.2.2:8089" in page and "dede-test.m3u" not in page
     print(f"DEDE_E2E: admin: IPTV source {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
     return ok
+
+
+def admin_wireguard_add(session):
+    """The new device's configuration as shown once by the console, or None."""
+    cookies, csrf = session
+    status, location, _, _ = admin_request(
+        "POST", "/remote/add", {"csrf": csrf, "name": WG_DEVICE, "endpoint": WG_ENDPOINT}, cookies)
+    if status != 303 or not (location or "").startswith("/apply/") or not admin_outcome(location, cookies):
+        print(f"DEDE_E2E: admin: WireGuard device FAIL ({status} {location})", flush=True)
+        return None
+    _, _, page, _ = admin_request("GET", location, cookies=cookies)
+    found = re.search(r'<pre class="config">(.*?)</pre>', page, re.S)
+    peer = html.unescape(found.group(1)) if found else ""
+    request_id = location.split("/")[2].split("?")[0]
+    admin_request("POST", f"/apply/{request_id}/forget", {"csrf": csrf}, cookies)
+    _, _, again, _ = admin_request("GET", location, cookies=cookies)
+    _, _, listed, _ = admin_request("GET", "/remote", cookies=cookies)
+    ok = (f"Endpoint = {WG_ENDPOINT}" in peer and "<svg" in page and "PrivateKey" not in again
+          and WG_DEVICE in listed)
+    print(f"DEDE_E2E: admin: WireGuard device {'PASS' if ok else 'FAIL'} ({location})", flush=True)
+    return peer if ok else None
+
+
+def admin_wireguard_remove(session):
+    cookies, csrf = session
+    _, _, page, _ = admin_request("GET", "/remote", cookies=cookies)
+    found = re.search(r'value="(10\.77\.0\.\d+)"', page)
+    if not found:
+        print("DEDE_E2E: admin: WireGuard device not listed", flush=True)
+        return False
+    status, location, _, _ = admin_request(
+        "POST", "/remote/remove", {"csrf": csrf, "address": found.group(1)}, cookies)
+    ok = status == 303 and (location or "").startswith("/apply/") and admin_outcome(location, cookies)
+    _, _, listed, _ = admin_request("GET", "/remote", cookies=cookies)
+    ok = ok and WG_DEVICE not in listed
+    print(f"DEDE_E2E: admin: WireGuard removal {'PASS' if ok else 'FAIL'}", flush=True)
+    return ok
+
+
+TUNNEL = "dedewg"
+
+
+def tunnel_up(peer):
+    """Bring the device's configuration up on the runner (needs root, ip, wg)."""
+    fields = dict(re.findall(r"^(\w+) = (.+)$", peer, re.M))
+    try:
+        with tempfile.NamedTemporaryFile("w", delete=False) as key:
+            key.write(fields["PrivateKey"] + "\n")
+        os.chmod(key.name, 0o600)
+        for command in (["ip", "link", "add", TUNNEL, "type", "wireguard"],
+                        ["wg", "set", TUNNEL, "private-key", key.name, "peer", fields["PublicKey"],
+                         "endpoint", fields["Endpoint"], "allowed-ips", fields["AllowedIPs"],
+                         "persistent-keepalive", "5"],
+                        ["ip", "address", "add", fields["Address"], "dev", TUNNEL],
+                        ["ip", "link", "set", TUNNEL, "up"],
+                        ["ip", "route", "replace", fields["AllowedIPs"], "dev", TUNNEL]):
+            subprocess.run(command, check=True, capture_output=True, timeout=10)
+        os.unlink(key.name)
+        return True
+    except (KeyError, OSError, subprocess.SubprocessError) as exc:
+        print(f"DEDE_E2E: tunnel: cannot start: {type(exc).__name__}: {exc}", flush=True)
+        return False
+
+
+def tunnel_reaches_console(timeout):
+    """True once the console answers at 10.77.0.1 through the tunnel."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        connection = http.client.HTTPConnection("10.77.0.1", 8080, timeout=4)
+        try:
+            connection.request("GET", "/login")
+            reply = connection.getresponse()
+            if reply.status == 200 and "Dede" in reply.read().decode("utf-8", "replace"):
+                print("DEDE_E2E: tunnel: console reached at 10.77.0.1", flush=True)
+                return True
+        except OSError:
+            pass
+        finally:
+            connection.close()
+        time.sleep(2)
+    print(f"DEDE_E2E: tunnel: console not reached within {timeout}s", flush=True)
+    return False
+
+
+def tunnel_down():
+    subprocess.run(["ip", "link", "delete", TUNNEL], check=False, capture_output=True, timeout=10)
 
 
 def admin_outcome(location, cookies, timeout=60):

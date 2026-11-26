@@ -56,6 +56,13 @@ class FakeAdmin(BaseHTTPRequestHandler):
                 return self.reply(200, f'{title} <input type="hidden" name="csrf" value="{"c" * 64}">')
             if self.path == "/iptv":
                 return self.reply(200, state.get("iptv", ""))
+            if self.path == "/remote":
+                devices = state["devices"]
+                return self.reply(200, "".join(f'{n} <input type="hidden" name="address" value="{a}">'
+                                               for a, n in devices.items()))
+            if self.path == "/apply/" + "5" * 32 + "?back=/remote" and state.get("peer"):
+                return self.reply(200, '<p role="status">Fertig</p><svg class="qr"></svg>'
+                                       f'<pre class="config">{state["peer"]}</pre>')
             if self.path == "/channels":
                 return self.reply(200, " ".join(state["channels"]))
             if self.path == "/channels/7":
@@ -115,6 +122,19 @@ def _signed_in_post(self, state, body):
             state["iptv"] = "10.0.2.2:8089"
             state["on_apply"]()
         return self.reply(303, location="/apply/" + "4" * 32 + "?back=/iptv")
+    if self.path == "/remote/add":
+        state["devices"]["10.77.0.2"] = form["name"]
+        state["peer"] = ("[Interface]\nPrivateKey = cHJpdmF0ZQ==\nAddress = 10.77.0.2/32\n\n[Peer]\n"
+                         f"PublicKey = c2VydmVy\nEndpoint = {form['endpoint']}\nAllowedIPs = 10.77.0.1/32\n"
+                         )
+        return self.reply(303, location="/apply/" + "5" * 32 + "?back=/remote")
+    if self.path == "/apply/" + "5" * 32 + "/forget":
+        state["peer"] = None
+        return self.reply(303, location="/remote")
+    if self.path == "/remote/remove" and form.get("address") in state["devices"]:
+        if state["broken"] != "wg-not-removed":
+            del state["devices"][form["address"]]
+        return self.reply(303, location="/apply/" + "6" * 32 + "?back=/remote")
     if self.path == "/apply":
         state["on_apply"]()
         return self.reply(303, location="/apply/" + "2" * 32 + "?back=/channels/7")
@@ -340,7 +360,7 @@ class E2ESelfTest(unittest.TestCase):
             admin = ThreadingHTTPServer(("127.0.0.1", 0), FakeAdmin)
             admin.state = tv.admin = {"password": None, "sessions": set(), "broken": tv.broken,
                                       "on_password": lambda: tv.serial_line("DEDE_CI_ADMIN: tv code cleared"),
-                                      "channels": [], "films": [],
+                                      "channels": [], "films": [], "devices": {}, "peer": None,
                                       "on_apply": tv.restart_after_apply}
             threading.Thread(target=admin.serve_forever, daemon=True).start()
             try:
@@ -354,6 +374,10 @@ class E2ESelfTest(unittest.TestCase):
                      patch.object(e2e, "UPLOAD_FILM", __file__), \
                      patch.object(e2e, "PAUSE_FLAG", tv.pause_flag), \
                      patch.object(e2e.time, "monotonic", side_effect=_fast_clock()), \
+                     patch.object(e2e, "tunnel_up", lambda peer: "Endpoint = " in peer), \
+                     patch.object(e2e, "tunnel_reaches_console",
+                                  lambda timeout: bool(tv.admin["devices"]) and tv.broken != "wg-unreachable"), \
+                     patch.object(e2e, "tunnel_down", lambda: None), \
                      patch("builtins.print"):
                     guest = e2e.Guest(sock, os.path.join(tmp, "shots"), "sim")
                     guest.out.mkdir()
@@ -368,6 +392,17 @@ class E2ESelfTest(unittest.TestCase):
         steps = self.run_against(FakeTv())
         self.assertEqual(len(steps), e2e.TOTAL_STEPS)
         self.assertTrue(all(ok for _, ok in steps), steps)
+
+    def test_wireguard_tunnel_not_reaching_the_console_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="wg-unreachable")))
+        self.assertTrue(steps["remote-wireguard-device"])
+        self.assertFalse(steps["remote-wireguard-tunnel"])
+        self.assertFalse(steps["remote-wireguard-removed"])
+
+    def test_wireguard_device_left_after_removal_is_caught(self):
+        steps = dict(self.run_against(FakeTv(broken="wg-not-removed")))
+        self.assertTrue(steps["remote-wireguard-tunnel"])
+        self.assertFalse(steps["remote-wireguard-removed"])
 
     def test_failed_film_upload_is_caught(self):
         steps = dict(self.run_against(FakeTv(broken="admin-upload-fails")))
