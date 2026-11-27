@@ -348,6 +348,12 @@ class ApplyTests(unittest.TestCase):
         self.assertGreater(report["media_total_mb"], 0)
         self.assertEqual(self.remote("diagnostics", "9" * 32, x=1)["error"], "bad-request")
 
+    def test_update_requests_start_the_update_services(self):
+        for kind in ("update-check", "update-install"):
+            self.assertTrue(self.remote(kind, "c" * 32)["ok"])
+            self.assertTrue(self.units.read_text().endswith(f"start --no-block dede-{kind}.service\n"))
+        self.assertEqual(self.remote("update-install", "c" * 32, x=1)["error"], "bad-request")
+
     def test_restart_tv_and_device(self):
         self.assertTrue(self.remote("restart-tv", "a" * 32)["ok"])
         self.assertTrue(self.restarted.exists())

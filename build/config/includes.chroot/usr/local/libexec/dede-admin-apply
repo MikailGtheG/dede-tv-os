@@ -28,6 +28,8 @@ Request kinds:
   diagnostics       answer a short status report ("report") for the console.
   restart-tv        restart the TV picture (Kodi).
   reboot            restart the whole device.
+  update-check      look for a signed update (dede-update, in the background).
+  update-install    install it; the device restarts into it.
 """
 import importlib.machinery
 import importlib.util
@@ -572,6 +574,14 @@ def apply(request, sync):
         return apply_tailscale(request)
     if request.get("kind") in ("diagnostics", "restart-tv", "reboot"):
         return apply_maintenance(request)
+    if request.get("kind") in ("update-check", "update-install"):
+        if set(request) != {"id", "kind"}:
+            raise Refused("bad-request")
+        # dede-update needs the network, which this helper does not have.
+        subprocess.run([SYSTEMCTL, "start", "--no-block", f"dede-{request['kind']}.service"],
+                       check=True, timeout=30)
+        log(f"{request['kind']} started")
+        return None
     if request.get("kind") == "iptv":
         return apply_iptv(request)
     if request.get("kind") == "language":

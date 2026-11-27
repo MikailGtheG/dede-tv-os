@@ -10,6 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "build/config/includes.chroot/usr/local/libexec/dede-data-setup"
+LIB = ROOT / "build/config/includes.chroot/usr/local/lib/dede-tv"
 CMDLINE = "boot=live components persistence persistence-label=dede-data quiet\n"
 GIB = (1 << 30) // 512
 
@@ -35,6 +36,7 @@ class DataSetupTests(unittest.TestCase):
                 "    if key.startswith(prefix):\n        print(reply)\n        break\n")
             tool.chmod(0o755)
         env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "DEDE_CMDLINE": str(self.tmp / "cmdline"),
+               "DEDE_LIB": str(LIB),
                "DEDE_DATA_REBOOT": str(self.bin / "reboot")}
         old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
@@ -58,18 +60,30 @@ class DataSetupTests(unittest.TestCase):
         }
         (self.tmp / "answers.json").write_text(json.dumps(self.answers))
 
-    def test_plans_a_partition_behind_the_image_on_the_boot_disk(self):
+    def test_plans_boot_and_data_partitions_behind_the_image_on_the_boot_disk(self):
         self.disk(medium="/dev/sda1", kind="part", pkname="sda")
         disk = self.setup.boot_disk()
         self.assertEqual(disk, "/dev/sda")
-        start, size, number = self.setup.plan(disk)
-        self.assertEqual((start % 2048, number), (0, 3))
-        self.assertGreaterEqual(start, 64 + 2278016)
+        (boot_label, boot_start, boot_size, boot_nr), (label, start, size, number) = self.setup.plan(disk)
+        self.assertEqual((boot_label, boot_nr, label, number), ("dede-boot", 3, "dede-data", 4))
+        self.assertEqual(boot_start % 2048, 0)
+        self.assertGreaterEqual(boot_start, 64 + 2278016)
+        self.assertEqual(boot_size, 4 * GIB)
+        self.assertEqual(start, boot_start + boot_size)
         self.assertEqual(start + size, 8 * GIB)
+
+    def test_without_room_for_updates_only_the_data_partition_is_planned(self):
+        self.disk(size=2278080 + 3 * GIB)
+        (label, start, size, number), = self.setup.plan(self.setup.boot_disk())
+        self.assertEqual((label, number), ("dede-data", 3))
+        self.disk(partitions=((64, 100), (200, 100), (2048, 2278016)))
+        (label, _, _, number), = self.setup.plan(self.setup.boot_disk())
+        self.assertEqual((label, number), ("dede-data", 4))
 
     def test_skips_cd_existing_partition_small_disk_and_other_tables(self):
         for kwargs, reason in (
             ({"medium": "/dev/sr0", "kind": "rom"}, "CD"),
+            ({"medium": "/dev/loop0", "kind": "loop"}, "image file"),
             ({"labels": "dede-data\n"}, "data partition"),
             ({"size": 2278080 + GIB // 2}, "not enough free space"),
             ({"label": "gpt"}, "not supported"),
@@ -78,6 +92,7 @@ class DataSetupTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs):
                 self.disk(**kwargs)
                 with self.assertRaises(self.setup.Skip) as caught:
+                    self.setup.existing()
                     self.setup.plan(self.setup.boot_disk())
                 self.assertIn(reason, str(caught.exception))
 
@@ -104,6 +119,31 @@ class DataSetupTests(unittest.TestCase):
                      "/etc/wireguard source=etc-wireguard", "/home/dede source=home-dede"):
             self.assertIn(line + "\n", conf)
         self.assertNotIn("union", conf)
+
+
+class GrubenvTests(unittest.TestCase):
+    def setUp(self):
+        import sys
+        sys.path.insert(0, str(LIB))
+        import dede_grubenv
+        self.env = dede_grubenv
+        self.path = Path(tempfile.mkdtemp()) / "grubenv"
+
+    def test_block_is_1024_bytes_and_round_trips(self):
+        self.env.write(self.path, {})
+        data = self.path.read_bytes()
+        self.assertEqual(len(data), 1024)
+        self.assertTrue(data.startswith(b"# GRUB Environment Block\n###"))
+        self.env.update(self.path, dede_try="b", dede_good="a")
+        self.assertEqual(len(self.path.read_bytes()), 1024)
+        self.assertEqual(self.env.read(self.path), {"dede_good": "a", "dede_try": "b"})
+        self.env.update(self.path, dede_try="")
+        self.assertEqual(self.env.read(self.path), {"dede_good": "a"})
+
+    def test_rejects_values_grub_would_misread(self):
+        for name, value in (("dede try", "a"), ("dede_try", "a\nb"), ("dede_try", "x" * 65)):
+            with self.subTest(name=name, value=value), self.assertRaises(ValueError):
+                self.env.write(self.path, {name: value})
 
 
 if __name__ == "__main__":

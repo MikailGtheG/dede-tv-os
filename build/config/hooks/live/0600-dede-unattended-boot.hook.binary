@@ -1,8 +1,0 @@
-#!/bin/sh
-# The TV must start on its own after a power cut: boot the default entry
-# after one second instead of waiting at the boot menu forever.
-set -eu
-if [ -d binary ]; then cd binary; fi
-sed -i 's/^timeout 0$/timeout 10/' isolinux/isolinux.cfg
-grep -qx 'timeout 10' isolinux/isolinux.cfg
-printf 'set timeout=1\n' >> boot/grub/config.cfg

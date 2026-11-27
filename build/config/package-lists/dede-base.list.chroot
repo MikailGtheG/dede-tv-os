@@ -30,3 +30,5 @@ iproute2
 # First start from a disk: data partition (sfdisk, mkfs.ext4).
 fdisk
 e2fsprogs
+# Signed updates (dede-update verifies Ed25519 signatures).
+openssl

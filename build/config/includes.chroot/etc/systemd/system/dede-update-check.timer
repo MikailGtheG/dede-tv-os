@@ -1,0 +1,10 @@
+[Unit]
+Description=Look for Dede TV updates once a day
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1d
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

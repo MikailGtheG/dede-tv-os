@@ -5,7 +5,9 @@ The image boots with `persistence persistence-label=dede-data`: live-boot
 bind-mounts the folders listed in PERSISTENT from a partition with that
 label. On the first start from a disk (the ISO written to an SSD or USB
 stick) this helper adds that partition in the free space behind the image on
-the same disk, copies the current folders into it and restarts.
+the same disk, copies the current folders into it and restarts. When there is
+room, it first adds the dede-boot partition for the two update images (A/B,
+see dede-update).
 
 It never touches any other disk, and does nothing when booted from a CD,
 when the partition already exists or when there is not enough free space.
@@ -18,8 +20,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, os.environ.get("DEDE_LIB", "/usr/local/lib/dede-tv"))
+import dede_grubenv  # noqa: E402
+
 LABEL = "dede-data"
+BOOT_LABEL = "dede-boot"
 MIN_FREE = 1 << 30
+# Two update images of about 1.2 GB each, with room to grow.
+BOOT_SIZE = 4 << 30
 SECTOR = 512
 # Folder on the TV -> folder on the data partition.
 PERSISTENT = (
@@ -62,17 +70,21 @@ def boot_disk():
     info = json.loads(run("lsblk", "-J", "-b", "-o", "NAME,TYPE,PKNAME,RO,RM,SIZE", source))
     device = info["blockdevices"][0]
     disk = device["name"] if device["type"] == "disk" else device.get("pkname")
-    if device["type"] == "rom" or not disk:
-        raise Skip("started from a CD")
+    if device["type"] != "disk" and not device.get("pkname"):
+        raise Skip("started from a CD or an image file")
     return f"/dev/{disk}"
 
 
-def plan(disk):
-    """Start and size (sectors) of the new partition, or Skip."""
+def existing():
+    """Skip when the data partition exists (also when started from an update)."""
     labels = run("lsblk", "-n", "-o", "LABEL").split()
     if LABEL in labels:
         kept = all(os.path.ismount(target) for target, _ in PERSISTENT)
         raise Skip("data partition in use" if kept else "data partition present but not in use")
+
+
+def plan(disk):
+    """[(label, start, size, number)] of the new partitions (sectors), or Skip."""
     table = json.loads(run("sfdisk", "-J", disk))["partitiontable"]
     if table.get("label") != "dos":
         raise Skip(f"partition table {table.get('label')!r} not supported")
@@ -84,10 +96,14 @@ def plan(disk):
     start = -(-end // 2048) * 2048
     if (size - start) * SECTOR < MIN_FREE:
         raise Skip("not enough free space behind the image")
-    return start, size - start, len(parts) + 1
+    number = len(parts) + 1
+    boot = BOOT_SIZE // SECTOR
+    if number <= 3 and (size - start - boot) * SECTOR >= MIN_FREE:
+        return [(BOOT_LABEL, start, boot, number), (LABEL, start + boot, size - start - boot, number + 1)]
+    return [(LABEL, start, size - start, number)]
 
 
-def create(disk, start, size, number):
+def add_partition(disk, label, start, size, number):
     # The image's own partitions stay mounted, so the kernel learns only the
     # new one (partx) instead of re-reading the whole table.
     run("sfdisk", "--append", "--no-reread", "--no-tell-kernel", disk,
@@ -95,7 +111,23 @@ def create(disk, start, size, number):
     partition = f"{disk}{'p' if disk[-1].isdigit() else ''}{number}"
     run("partx", "--add", "--nr", str(number), disk)
     run("udevadm", "settle")
-    run("mkfs.ext4", "-q", "-F", "-L", LABEL, partition)
+    run("mkfs.ext4", "-q", "-F", "-L", label, partition)
+    return partition
+
+
+def create_boot(partition):
+    """Empty update slots; GRUB reads and clears its environment there."""
+    with tempfile.TemporaryDirectory() as mount:
+        run("mount", partition, mount)
+        try:
+            Path(mount, "images").mkdir()
+            dede_grubenv.write(Path(mount, "grubenv"), {})
+            os.sync()
+        finally:
+            run("umount", mount)
+
+
+def create(partition):
     with tempfile.TemporaryDirectory() as mount:
         run("mount", partition, mount)
         try:
@@ -108,13 +140,15 @@ def create(disk, start, size, number):
             os.sync()
         finally:
             run("umount", mount)
-    return partition
 
 
 def main():
     try:
+        if f"persistence-label={LABEL}" not in CMDLINE.read_text().split():
+            raise Skip("image without data partition support")
+        existing()
         disk = boot_disk()
-        start, size, number = plan(disk)
+        layout = plan(disk)
     except Skip as reason:
         log(f"nothing to do: {reason}")
         return 0
@@ -122,12 +156,19 @@ def main():
         log(f"cannot check the disk: {type(error).__name__}")
         return 0
     try:
-        partition = create(disk, start, size, number)
+        made = []
+        for label, start, size, number in layout:
+            partition = add_partition(disk, label, start, size, number)
+            if label == BOOT_LABEL:
+                create_boot(partition)
+            else:
+                create(partition)
+            made.append(f"{label} {partition} ({size * SECTOR >> 20} MiB)")
     except (OSError, subprocess.SubprocessError) as error:
         detail = error.stderr.strip()[-200:] if isinstance(error, subprocess.CalledProcessError) else ""
         log(f"creating the data partition failed: {type(error).__name__} {detail}")
         return 1
-    log(f"data partition {partition} created ({size * SECTOR >> 20} MiB), restarting")
+    log(f"created {', '.join(made)}, restarting")
     subprocess.run(REBOOT, check=False, timeout=30)
     return 0
 

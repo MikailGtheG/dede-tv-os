@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""Signed A/B updates of the whole image, with automatic rollback.
+
+  dede-update check     look for a newer signed release
+  dede-update install   download it into the inactive slot, try it once, restart
+  dede-update confirm   at every start: mark the running slot good once the TV
+                        is healthy, or restart to the previous image
+
+A release consists of the ISO, `release.json` ({"version", "iso", "sha256",
+"size"}) and `release.json.sig`, an Ed25519 signature of release.json made
+with a key from /usr/share/dede-tv/update-keys. The source is the GitHub
+releases API or, for tests, a folder URL holding those files
+(/etc/dede-tv/update-source.conf, UPDATE_URL=).
+
+The images live on the dede-boot partition as images/a.iso and images/b.iso.
+GRUB (hook 0600) starts `dede_try` once and otherwise `dede_good`; without
+both, the factory image on the disk starts. The state for the console is
+/etc/dede-tv/update.conf (no secrets).
+"""
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, os.environ.get("DEDE_LIB", "/usr/local/lib/dede-tv"))
+import dede_grubenv  # noqa: E402
+
+DEFAULT_SOURCE = "https://api.github.com/repos/MikailGtheG/dede-tv-os/releases"
+SOURCE_CONFIG = Path(os.environ.get("DEDE_UPDATE_SOURCE", "/etc/dede-tv/update-source.conf"))
+STATE = Path(os.environ.get("DEDE_UPDATE_STATE", "/etc/dede-tv/update.conf"))
+KEYS = Path(os.environ.get("DEDE_UPDATE_KEYS", "/usr/share/dede-tv/update-keys"))
+VERSION_FILE = Path(os.environ.get("DEDE_VERSION_FILE", "/usr/share/dede-tv/version"))
+CMDLINE = Path(os.environ.get("DEDE_CMDLINE", "/proc/cmdline"))
+# Tests point this at a folder; on the TV the partition is found by label.
+BOOT_DIR = os.environ.get("DEDE_BOOT_DIR")
+BOOT_LABEL = "dede-boot"
+REBOOT = os.environ.get("DEDE_UPDATE_REBOOT", "systemctl --no-block reboot").split()
+SYSTEMCTL = os.environ.get("DEDE_SYSTEMCTL", "systemctl")
+HEALTH_WAIT = float(os.environ.get("DEDE_HEALTH_WAIT", "60"))
+HEALTH_DEADLINE = float(os.environ.get("DEDE_HEALTH_DEADLINE", "600"))
+MAX_ISO = 3 << 30
+VERSION = re.compile(r"v?(\d{1,4})\.(\d{1,4})\.(\d{1,4})(?:-([0-9A-Za-z.-]{1,40}))?")
+FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.iso")
+SLOTS = ("a", "b")
+
+
+class Failed(Exception):
+    """Short reason for the console (an i18n key there)."""
+
+
+def log(message):
+    print(f"DEDE_UPDATE: {message}", flush=True)
+
+
+def version_key(version):
+    match = VERSION.fullmatch(version or "")
+    if not match:
+        return None
+    major, minor, patch, pre = match.groups()
+    # A release sorts after all of its pre-releases.
+    parts = tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in (pre or "").split(".")) if pre else ()
+    return (int(major), int(minor), int(patch), 0 if pre else 1, parts)
+
+
+# --- state for the console --------------------------------------------------
+
+def read_state():
+    values = {}
+    try:
+        for line in STATE.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and re.fullmatch(r"UPDATE_[A-Z]+", key):
+                values[key] = value
+    except OSError:
+        pass
+    return values
+
+
+def write_state(**values):
+    state = read_state()
+    state.update({f"UPDATE_{k.upper()}": v for k, v in values.items()})
+    for key, value in state.items():
+        if not re.fullmatch(r"[0-9A-Za-z._:+-]{0,64}", value):
+            raise ValueError(f"bad state {key}")
+    lines = ["# Updates, geschrieben von dede-update."]
+    lines += [f"{k}={v}" for k, v in sorted(state.items()) if v != ""]
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    temp = STATE.with_name(f".{STATE.name}.{os.getpid()}")
+    temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        import grp
+        os.chown(temp, 0, grp.getgrnam("dede").gr_gid)
+    except (KeyError, PermissionError):
+        pass
+    os.chmod(temp, 0o640)
+    os.replace(temp, STATE)
+
+
+# --- slots --------------------------------------------------------------------
+
+def running_slot():
+    match = re.search(r"(?:^|\s)findiso=/images/([ab])\.iso(?:\s|$)", CMDLINE.read_text())
+    return match.group(1) if match else None
+
+
+class BootPartition:
+    """dede-boot, writable for the duration of the `with` block."""
+
+    def __enter__(self):
+        self.mounted_here = self.was_ro = False
+        if BOOT_DIR:
+            self.path = Path(BOOT_DIR)
+            return self
+        found = subprocess.run(["findmnt", "-n", "-r", "-o", "TARGET,OPTIONS", "--source",
+                                f"LABEL={BOOT_LABEL}"], capture_output=True, text=True, timeout=10)
+        lines = found.stdout.split("\n")[0].split()
+        if lines:
+            self.path = Path(lines[0])
+            self.was_ro = "ro" in lines[1].split(",")
+            if self.was_ro:
+                subprocess.run(["mount", "-o", "remount,rw", str(self.path)], check=True, timeout=30)
+            return self
+        device = Path(f"/dev/disk/by-label/{BOOT_LABEL}")
+        if not device.exists():
+            raise Failed("no-update-partition")
+        self.path = Path("/run/dede-boot")
+        self.path.mkdir(mode=0o700, exist_ok=True)
+        subprocess.run(["mount", str(device), str(self.path)], check=True, timeout=30)
+        self.mounted_here = True
+        return self
+
+    def __exit__(self, *exc):
+        if BOOT_DIR:
+            return
+        os.sync()
+        if self.mounted_here:
+            subprocess.run(["umount", str(self.path)], check=False, timeout=30)
+        elif self.was_ro:
+            subprocess.run(["mount", "-o", "remount,ro", str(self.path)], check=False, timeout=30)
+
+    @property
+    def grubenv(self):
+        return self.path / "grubenv"
+
+    def slots(self):
+        try:
+            value = json.loads((self.path / "slots.json").read_text())
+        except (OSError, ValueError):
+            return {}
+        return {s: v for s, v in value.items() if s in SLOTS and version_key(v)} if isinstance(value, dict) else {}
+
+    def set_slot(self, slot, version):
+        slots = self.slots()
+        slots[slot] = version
+        temp = self.path / ".slots.json"
+        temp.write_text(json.dumps(slots))
+        os.replace(temp, self.path / "slots.json")
+
+
+def current_version(boot=None):
+    slot = running_slot()
+    if slot and boot is not None and boot.slots().get(slot):
+        return boot.slots()[slot]
+    try:
+        version = VERSION_FILE.read_text().strip()
+    except OSError:
+        return "0.0.0"
+    return version if version_key(version) else "0.0.0"
+
+
+# --- releases -----------------------------------------------------------------
+
+def fetch(url, limit=1 << 20):
+    if urllib.parse.urlsplit(url).scheme not in ("https", "http"):
+        raise Failed("bad-source")
+    request = urllib.request.Request(url, headers={"User-Agent": "dede-tv-update",
+                                                   "Accept": "application/octet-stream, application/json"})
+    with urllib.request.urlopen(request, timeout=30) as reply:
+        data = reply.read(limit + 1)
+    if len(data) > limit:
+        raise Failed("bad-release")
+    return data
+
+
+def verified(manifest, signature):
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "m").write_bytes(manifest)
+        Path(tmp, "s").write_bytes(signature)
+        for key in sorted(KEYS.glob("*.pem")):
+            result = subprocess.run(["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", str(key),
+                                     "-rawin", "-in", f"{tmp}/m", "-sigfile", f"{tmp}/s"],
+                                    capture_output=True, timeout=30)
+            if result.returncode == 0:
+                return True
+    return False
+
+
+def parse_manifest(data):
+    try:
+        manifest = json.loads(data)
+    except ValueError:
+        return None
+    if not isinstance(manifest, dict) or set(manifest) != {"version", "iso", "sha256", "size"}:
+        return None
+    if (not version_key(manifest["version"]) or not isinstance(manifest["iso"], str)
+            or not FILE_NAME.fullmatch(manifest["iso"])
+            or not re.fullmatch(r"[0-9a-f]{64}", str(manifest["sha256"]))
+            or not isinstance(manifest["size"], int) or not 0 < manifest["size"] <= MAX_ISO):
+        return None
+    return manifest
+
+
+def candidates(source):
+    """(manifest bytes, signature bytes, {file name: URL}) per release."""
+    if urllib.parse.urlsplit(source).hostname == "api.github.com":
+        releases = json.loads(fetch(f"{source}?per_page=10", limit=4 << 20))
+        for release in releases if isinstance(releases, list) else []:
+            if not isinstance(release, dict) or release.get("draft"):
+                continue
+            assets = {a.get("name"): a.get("browser_download_url") for a in release.get("assets", [])
+                      if isinstance(a, dict)}
+            if "release.json" in assets and "release.json.sig" in assets:
+                yield fetch(assets["release.json"]), fetch(assets["release.json.sig"]), assets
+    else:
+        base = source if source.endswith("/") else source + "/"
+        manifest = fetch(base + "release.json")
+        parsed = parse_manifest(manifest)
+        names = {parsed["iso"]: base + parsed["iso"]} if parsed else {}
+        yield manifest, fetch(base + "release.json.sig"), names
+
+
+def source_url():
+    try:
+        for line in SOURCE_CONFIG.read_text().splitlines():
+            if line.startswith("UPDATE_URL="):
+                return line.partition("=")[2].strip()
+    except OSError:
+        pass
+    return DEFAULT_SOURCE
+
+
+def newest(current):
+    """(manifest, ISO URL) of the newest signed release after `current`, or None."""
+    best = None
+    for data, signature, urls in candidates(source_url()):
+        manifest = parse_manifest(data)
+        if manifest is None or not verified(data, signature):
+            log("release with an invalid manifest or signature ignored")
+            continue
+        url = urls.get(manifest["iso"])
+        if url and version_key(manifest["version"]) > version_key(current):
+            if best is None or version_key(manifest["version"]) > version_key(best[0]["version"]):
+                best = (manifest, url)
+    return best
+
+
+# --- commands -----------------------------------------------------------------
+
+def stamp():
+    return time.strftime("%Y-%m-%dT%H:%M", time.gmtime())
+
+
+def check():
+    try:
+        with BootPartition() as boot:
+            current = current_version(boot)
+    except Failed:
+        current = current_version()
+    write_state(state="checking", current=current, message="")
+    try:
+        found = newest(current)
+    except (OSError, ValueError, Failed) as error:
+        code = str(error) if isinstance(error, Failed) else "unreachable"
+        write_state(state="failed", message=code, checked=stamp())
+        log(f"check failed: {code}")
+        return 1
+    if found is None:
+        write_state(state="current", available="", checked=stamp())
+        log(f"{current} is up to date")
+    else:
+        write_state(state="available", available=found[0]["version"], checked=stamp())
+        log(f"{found[0]['version']} available (running {current})")
+    return 0
+
+
+def download(url, target, manifest):
+    digest = hashlib.sha256()
+    size = 0
+    request = urllib.request.Request(url, headers={"User-Agent": "dede-tv-update",
+                                                   "Accept": "application/octet-stream"})
+    part = target.with_name(target.name + ".part")
+    last = 0
+    with urllib.request.urlopen(request, timeout=60) as reply, open(part, "wb") as out:
+        while True:
+            chunk = reply.read(1 << 20)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > manifest["size"]:
+                raise Failed("bad-image")
+            digest.update(chunk)
+            out.write(chunk)
+            percent = size * 100 // manifest["size"]
+            if percent >= last + 10:
+                last = percent - percent % 10
+                write_state(progress=str(last))
+        out.flush()
+        os.fsync(out.fileno())
+    if size != manifest["size"] or digest.hexdigest() != manifest["sha256"]:
+        part.unlink(missing_ok=True)
+        raise Failed("bad-image")
+    os.replace(part, target)
+
+
+def install():
+    try:
+        with BootPartition() as boot:
+            current = current_version(boot)
+            write_state(state="downloading", current=current, progress="0", message="")
+            found = newest(current)
+            if found is None:
+                write_state(state="current", available="", progress="")
+                log("nothing to install")
+                return 0
+            manifest, url = found
+            slot = "b" if running_slot() == "a" else "a"
+            images = boot.path / "images"
+            images.mkdir(exist_ok=True)
+            # The slot is overwritten: GRUB must not start it half written.
+            env = dede_grubenv.read(boot.grubenv)
+            dede_grubenv.update(boot.grubenv, dede_try="",
+                                dede_good="" if env.get("dede_good") == slot else env.get("dede_good", ""))
+            if shutil.disk_usage(images).free + _size(images / f"{slot}.iso") < manifest["size"]:
+                raise Failed("no-space")
+            (images / f"{slot}.iso").unlink(missing_ok=True)
+            download(url, images / f"{slot}.iso", manifest)
+            boot.set_slot(slot, manifest["version"])
+            dede_grubenv.update(boot.grubenv, dede_try=slot)
+    except (OSError, ValueError, subprocess.SubprocessError, Failed) as error:
+        code = str(error) if isinstance(error, Failed) else "download-failed"
+        write_state(state="failed", message=code, progress="")
+        log(f"install failed: {code} ({type(error).__name__})")
+        return 1
+    write_state(state="restarting", pending=f"{slot}:{manifest['version']}", progress="100")
+    log(f"{manifest['version']} written to slot {slot}, restarting to try it")
+    subprocess.run(REBOOT, check=False, timeout=30)
+    return 0
+
+
+def _size(path):
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def healthy():
+    """The TV runs (Kodi active) without interruption for HEALTH_WAIT seconds."""
+    deadline = time.monotonic() + HEALTH_DEADLINE
+    since = None
+    while time.monotonic() < deadline:
+        active = subprocess.run([SYSTEMCTL, "is-active", "--quiet", "dede-kodi.service"],
+                                timeout=10).returncode == 0
+        since = (since or time.monotonic()) if active else None
+        if since is not None and time.monotonic() - since >= HEALTH_WAIT:
+            return True
+        time.sleep(min(5, HEALTH_WAIT))
+    return False
+
+
+def confirm():
+    slot = running_slot()
+    state = read_state()
+    pending = state.get("UPDATE_PENDING", "")
+    if slot is None:
+        log("running the factory image")
+        if pending:
+            write_state(state="failed", message="update-did-not-start", pending="")
+            log(f"update {pending} did not start; back on the factory image")
+        return 0
+    with BootPartition() as boot:
+        version = boot.slots().get(slot, "?")
+        env = dede_grubenv.read(boot.grubenv)
+    log(f"running slot {slot} ({version})")
+    if pending and not pending.startswith(f"{slot}:"):
+        write_state(state="failed", message="update-did-not-start", pending="", current=version)
+        log(f"update {pending} did not start; back on slot {slot}")
+    if env.get("dede_good") == slot:
+        if not pending or not pending.startswith(f"{slot}:"):
+            return 0
+    if not healthy():
+        log(f"slot {slot} is not healthy, restarting to the previous image")
+        subprocess.run(REBOOT, check=False, timeout=30)
+        return 1
+    with BootPartition() as boot:
+        dede_grubenv.update(boot.grubenv, dede_good=slot)
+    write_state(state="current", current=version, pending="", available="", progress="", message="")
+    log(f"slot {slot} confirmed")
+    return 0
+
+
+def main(argv):
+    commands = {"check": check, "install": install, "confirm": confirm}
+    if len(argv) != 1 or argv[0] not in commands:
+        print(__doc__, file=sys.stderr)
+        return 2
+    return commands[argv[0]]()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

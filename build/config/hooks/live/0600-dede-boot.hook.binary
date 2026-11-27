@@ -1,0 +1,56 @@
+#!/bin/sh
+# GRUB (BIOS and UEFI) starts on its own and prefers an installed update.
+set -eu
+if [ -d binary ]; then cd binary; fi
+cfg=boot/grub/grub.cfg
+grep -q '^source /boot/grub/config.cfg$' "$cfg"
+# The TV must start on its own after a power cut: one second, then the
+# default entry instead of waiting at the menu forever.
+printf 'set timeout=1\n' >> boot/grub/config.cfg
+
+# A/B updates (dede-update): images a and b live on the dede-boot partition.
+# dede_try is cleared before it is tried, so an update that does not start
+# is not tried again; dede_good is set by dede-boot-confirm after a healthy
+# start. Without either, this factory image starts. Inside a started image
+# iso_path is set and this block is skipped.
+snippet=$(mktemp)
+cat > "$snippet" <<'CFG'
+insmod ext2
+insmod loopback
+insmod iso9660
+insmod loadenv
+function dede_start {
+  if [ -f ($dede_boot)/images/$1.iso ]; then
+    set dede_root="$root"
+    if loopback dede_image ($dede_boot)/images/$1.iso; then
+      set iso_path=/images/$1.iso
+      export iso_path
+      set root=(dede_image)
+      configfile /boot/grub/grub.cfg
+    fi
+    # Only reached when the image could not be started.
+    unset iso_path
+    set root="$dede_root"
+    loopback -d dede_image
+  fi
+}
+if [ -z "$iso_path" ]; then
+  if search --no-floppy --label dede-boot --set=dede_boot; then
+    if [ -f ($dede_boot)/grubenv ]; then
+      load_env --file ($dede_boot)/grubenv dede_try dede_good
+      set dede_first="$dede_try"
+      if [ -n "$dede_try" ]; then
+        set dede_try=
+        save_env --file ($dede_boot)/grubenv dede_try
+      fi
+      if [ "$dede_first" = a ]; then dede_start a; fi
+      if [ "$dede_first" = b ]; then dede_start b; fi
+      if [ "$dede_good" = a ]; then dede_start a; fi
+      if [ "$dede_good" = b ]; then dede_start b; fi
+    fi
+  fi
+fi
+CFG
+sed -i "/^source \/boot\/grub\/config.cfg\$/r $snippet" "$cfg"
+rm -f "$snippet"
+grep -q 'dede_start a' "$cfg"
