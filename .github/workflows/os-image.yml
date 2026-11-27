@@ -2,15 +2,21 @@ name: Debian 13 prototype ISO
 on:
   push:
     branches: [feat/initial-foundation]
-    # A version tag builds the installable image (without the CI test
-    # fixtures) and publishes it as a GitHub pre-release.
-    tags: ['v*']
     paths:
       - 'build/**'
       - '.github/workflows/os-image.yml'
       # Boot/visual test changes must also exercise the real ISO/QEMU gate.
       - 'tests/**'
   workflow_dispatch:
+    inputs:
+      # A version builds the installable image (without the CI test
+      # fixtures) and publishes it as a GitHub pre-release.
+      release:
+        description: 'Version for an installable pre-release, e.g. v0.1.0-test.1 (empty: CI image)'
+        required: false
+        default: ''
+env:
+  DEDE_RELEASE: ${{ inputs.release }}
 # Serialize expensive ISO builds without cancelling a running BIOS/UEFI test.
 # Cancelling the previous run destroys its boot evidence and can indefinitely
 # postpone a complete release-gate result when commits arrive frequently.
@@ -164,7 +170,7 @@ jobs:
             test -s "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv/fonts/$font"
           done
       - name: Inject CI-only test fixtures
-        if: github.ref_type != 'tag'
+        if: env.DEDE_RELEASE == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -900,7 +906,7 @@ jobs:
           grep -q 'persistence persistence-label=dede-data' /tmp/dede-grub.cfg
           echo "ISO integrity, SquashFS and BIOS/UEFI El Torito entries verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Boot smoke test (BIOS and UEFI)
-        if: github.ref_type != 'tag'
+        if: env.DEDE_RELEASE == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -1255,7 +1261,7 @@ jobs:
             echo "Emulated hardware and a local test signal, not real target hardware."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload QEMU boot logs
-        if: always() && github.ref_type != 'tag'
+        if: always() && env.DEDE_RELEASE == ''
         uses: actions/upload-artifact@v4
         with:
           name: dede-tv-qemu-boot-logs
@@ -1263,7 +1269,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
       - name: Reject blank post-boot VGA display
-        if: github.ref_type != 'tag'
+        if: env.DEDE_RELEASE == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -1326,7 +1332,7 @@ jobs:
                   )
           PY
       - name: Reject stock Kodi visual regressions
-        if: github.ref_type != 'tag'
+        if: env.DEDE_RELEASE == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -1535,7 +1541,7 @@ jobs:
     # Installable test image: the same tree as the tested CI image, without
     # the CI-only fixtures. Not yet signed; checksums only.
     needs: image
-    if: github.ref_type == 'tag'
+    if: inputs.release != ''
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1545,11 +1551,13 @@ jobs:
           name: dede-tv-debian13-prototype-iso
           path: iso
       - name: Publish pre-release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ env.DEDE_RELEASE }}
         run: |
           set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$ ]]
           cd iso
           name="dede-tv-$TAG-amd64.iso"
           mv live-image-amd64.hybrid.iso "$name"
