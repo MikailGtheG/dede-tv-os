@@ -1,0 +1,15 @@
+[Unit]
+Description=Create the Dede TV data partition on the first start from a disk
+ConditionKernelCommandLine=persistence-label=dede-data
+After=local-fs.target systemd-udevd.service
+# Decided before the TV and the console write their first state.
+Before=dede-kodi.service dede-tv-admin.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/dede-data-setup
+StandardOutput=journal+console
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

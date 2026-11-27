@@ -879,6 +879,16 @@ jobs:
           # Both firmware modes are mandatory for the target hardware profile.
           grep -Eq -- '(^|[[:space:]])-b[[:space:]]' iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
+          # Unattended boot (BIOS and UEFI menus time out) and the data partition.
+          xorriso -osirrox on -indev live-image-amd64.hybrid.iso \
+            -extract /isolinux/isolinux.cfg /tmp/dede-isolinux.cfg \
+            -extract /boot/grub/config.cfg /tmp/dede-grub-config.cfg \
+            -extract /isolinux/live.cfg /tmp/dede-isolinux-live.cfg \
+            -extract /boot/grub/grub.cfg /tmp/dede-grub.cfg
+          grep -qx 'timeout 10' /tmp/dede-isolinux.cfg
+          grep -qx 'set timeout=1' /tmp/dede-grub-config.cfg
+          grep -q 'persistence persistence-label=dede-data' /tmp/dede-isolinux-live.cfg
+          grep -q 'persistence persistence-label=dede-data' /tmp/dede-grub.cfg
           echo "ISO integrity, SquashFS and BIOS/UEFI El Torito entries verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Boot smoke test (BIOS and UEFI)
         shell: bash
@@ -988,13 +998,8 @@ jobs:
                   except TimeoutError:
                       pass
               print("VGA diagnostic capture requested:", screenshot)
-              # Debian live-build can wait indefinitely at the boot menu.
-              # Confirm the highlighted default entry before checking systemd.
-              with socket.socket(socket.AF_UNIX) as control:
-                  control.settimeout(5)
-                  control.connect(monitor)
-                  control.sendall(b"sendkey ret\n")
-              print("Sent ENTER to boot the default live system")
+              # No key is pressed: the boot menu must start the TV by itself
+              # (unattended boot after a power cut).
           except OSError as exc:
               print("Boot-menu VGA capture/control unavailable:", exc, file=sys.stderr)
               sys.exit(1)
@@ -1179,6 +1184,51 @@ jobs:
               exit 1
             fi
           done
+          # Settings must survive restarts: the ISO written to a disk (as on
+          # an SSD or USB stick) adds its data partition on the first start.
+          echo "Testing persistence on a disk (UEFI)"
+          disk="$RUNNER_TEMP/dede-disk.img"
+          cp "$iso" "$disk"
+          truncate -s 6G "$disk"
+          cp "$vars" boot-logs/disk-vars.fd
+          monitor="$PWD/boot-logs/disk.monitor.sock"
+          set +e
+          timeout --signal=TERM --kill-after=5s 2400s \
+            qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
+            -display none -vga std \
+            -audiodev none,id=ci_audio \
+            -device ich9-intel-hda \
+            -device hda-duplex,audiodev=ci_audio \
+            -nic "user,model=e1000e,hostfwd=tcp:127.0.0.1:18083-:8080" \
+            -monitor "unix:$monitor,server=on,wait=off" -serial stdio \
+            -device ich9-ahci,id=ahci \
+            -drive if=none,id=disk,format=raw,file="$disk" \
+            -device ide-hd,drive=disk,bus=ahci.0,bootindex=0 \
+            -drive "if=pflash,format=raw,unit=0,readonly=on,file=$ovmf" \
+            -drive "if=pflash,format=raw,unit=1,file=$PWD/boot-logs/disk-vars.fd" \
+            > boot-logs/disk.log 2>&1 &
+          qemu_pid=$!
+          DEDE_E2E_SERIAL_LOG="$PWD/boot-logs/disk.log" \
+          DEDE_E2E_ADMIN_URL="http://127.0.0.1:18083" \
+          python3 "$GITHUB_WORKSPACE/tests/qemu_tv_e2e.py" "$monitor" \
+            "$PWD/boot-logs/e2e-disk" disk persistence | tee boot-logs/disk-e2e.log
+          e2e_status=${PIPESTATUS[0]}
+          python3 - "$monitor" <<'PY'
+          import socket, sys
+          with socket.socket(socket.AF_UNIX) as sock:
+              sock.settimeout(5)
+              sock.connect(sys.argv[1])
+              sock.sendall(b"quit\n")
+          PY
+          wait "$qemu_pid"
+          set -e
+          grep -aE 'DEDE_DATA:|DEDE_CI_LANGUAGE: [A-Z]' boot-logs/disk.log || true
+          if [ "$e2e_status" -ne 0 ]; then
+            echo "disk: persistence acceptance failed" >&2
+            grep -aE 'DEDE_E2E(_SUMMARY)?:' boot-logs/disk-e2e.log >&2 || true
+            tail -120 boot-logs/disk.log >&2
+            exit 1
+          fi
           {
             echo "## QEMU boot smoke test"
             echo "| Firmware | Result |"
@@ -1188,7 +1238,7 @@ jobs:
             echo ""
             echo ""
             echo "## TV end-to-end (QEMU, real screen captures)"
-            for mode in bios uefi; do
+            for mode in bios uefi disk; do
               grep -ahE '^DEDE_E2E_SUMMARY:' "boot-logs/$mode-e2e.log" | sed 's/^/- /' || true
             done
             echo ""
@@ -1371,6 +1421,11 @@ jobs:
             usr/bin/wg \
             usr/bin/wg-quick \
             etc/systemd/system/wg-quick@dede0.service.d/dede.conf \
+            usr/local/libexec/dede-data-setup \
+            etc/systemd/system/dede-data-setup.service \
+            etc/systemd/system/multi-user.target.wants/dede-data-setup.service \
+            usr/sbin/sfdisk \
+            usr/sbin/mkfs.ext4 \
             usr/bin/tailscale \
             usr/sbin/tailscaled \
             etc/systemd/system/tailscaled.service.d/dede.conf \

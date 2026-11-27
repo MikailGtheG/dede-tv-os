@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+# Settings, films and sign-ins live on the dede-data partition (live-boot
+# persistence); the first start from a disk creates it.
+chmod 0755 /usr/local/libexec/dede-data-setup
+mkdir -p /etc/systemd/system/multi-user.target.wants
+ln -sfn ../dede-data-setup.service \
+  /etc/systemd/system/multi-user.target.wants/dede-data-setup.service
