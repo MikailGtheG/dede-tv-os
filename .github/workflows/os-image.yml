@@ -2,6 +2,9 @@ name: Debian 13 prototype ISO
 on:
   push:
     branches: [feat/initial-foundation]
+    # A version tag builds the installable image (without the CI test
+    # fixtures) and publishes it as a GitHub pre-release.
+    tags: ['v*']
     paths:
       - 'build/**'
       - '.github/workflows/os-image.yml'
@@ -160,7 +163,8 @@ jobs:
           for font in notosans-regular.ttf notomono-regular.ttf roboto-thin.ttf; do
             test -s "$GITHUB_WORKSPACE/build/config/includes.chroot/usr/share/kodi/addons/skin.dede-tv/fonts/$font"
           done
-      - name: Build prototype live ISO
+      - name: Inject CI-only test fixtures
+        if: github.ref_type != 'tag'
         shell: bash
         run: |
           set -euo pipefail
@@ -851,6 +855,11 @@ jobs:
           mkdir -p config/includes.chroot/etc/dede-tv
           printf 'M3U_URL=http://10.0.2.2:8089/dede-test-faults.m3u\n' \
             > config/includes.chroot/etc/dede-tv/iptv.conf
+      - name: Build prototype live ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd build
           sh build-image.sh
           test -s live-image-amd64.hybrid.iso
           sha256sum live-image-amd64.hybrid.iso > SHA256SUMS
@@ -891,6 +900,7 @@ jobs:
           grep -q 'persistence persistence-label=dede-data' /tmp/dede-grub.cfg
           echo "ISO integrity, SquashFS and BIOS/UEFI El Torito entries verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Boot smoke test (BIOS and UEFI)
+        if: github.ref_type != 'tag'
         shell: bash
         run: |
           set -euo pipefail
@@ -1245,7 +1255,7 @@ jobs:
             echo "Emulated hardware and a local test signal, not real target hardware."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload QEMU boot logs
-        if: always()
+        if: always() && github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: dede-tv-qemu-boot-logs
@@ -1253,6 +1263,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
       - name: Reject blank post-boot VGA display
+        if: github.ref_type != 'tag'
         shell: bash
         run: |
           set -euo pipefail
@@ -1315,6 +1326,7 @@ jobs:
                   )
           PY
       - name: Reject stock Kodi visual regressions
+        if: github.ref_type != 'tag'
         shell: bash
         run: |
           set -euo pipefail
@@ -1518,6 +1530,41 @@ jobs:
             build/SHA256SUMS
           retention-days: 1
           if-no-files-found: warn
+
+  release:
+    # Installable test image: the same tree as the tested CI image, without
+    # the CI-only fixtures. Not yet signed; checksums only.
+    needs: image
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dede-tv-debian13-prototype-iso
+          path: iso
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd iso
+          name="dede-tv-$TAG-amd64.iso"
+          mv live-image-amd64.hybrid.iso "$name"
+          sha256sum "$name" > SHA256SUMS
+          cat > notes.md <<EOF
+          Test image of Dede TV OS ($GITHUB_SHA), built by run $GITHUB_RUN_ID.
+
+          Not signed yet: check the download against SHA256SUMS.
+          Install: write the ISO with balenaEtcher (or dd) to the SSD or USB stick of
+          the TV computer and start from it. The first start adds the data partition
+          on the same disk and restarts once.
+          EOF
+          gh release create "$TAG" "$name" SHA256SUMS --repo "$GITHUB_REPOSITORY" \
+            --prerelease --title "Dede TV $TAG (Testimage)" --notes-file notes.md \
+            --target "$GITHUB_SHA"
 
   report-failure:
     needs: image
