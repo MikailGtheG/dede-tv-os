@@ -904,12 +904,12 @@ jobs:
           xorriso -osirrox on -indev live-image-amd64.hybrid.iso \
             -extract /boot/grub/config.cfg /tmp/dede-grub-config.cfg \
             -extract /boot/grub/grub.cfg /tmp/dede-grub.cfg
+          grep -m1 -- '-b ' iso-boot-options.txt || cat iso-boot-options.txt
           grep -qx 'set timeout=1' /tmp/dede-grub-config.cfg
-          # GRUB also for BIOS, with the A/B start of an installed update.
+          # GRUB also for BIOS (El Torito boot image from GRUB, not isolinux),
+          # with the A/B start of an installed update.
+          grep -Eq -- '(^|[[:space:]])-b[[:space:]]+[^[:space:]]*grub' iso-boot-options.txt
           grep -q 'dede_start a' /tmp/dede-grub.cfg
-          xorriso -indev live-image-amd64.hybrid.iso -find /boot/grub/i386-pc -name eltorito.img \
-            > /tmp/dede-grub-bios.txt 2>&1
-          grep -q eltorito.img /tmp/dede-grub-bios.txt
           grep -q 'persistence persistence-label=dede-data' /tmp/dede-grub.cfg
           echo "ISO integrity, SquashFS and BIOS/UEFI El Torito entries verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Boot smoke test (BIOS and UEFI)

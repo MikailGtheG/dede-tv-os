@@ -55,7 +55,7 @@ class DataSetupTests(unittest.TestCase):
                                                           "pkname": pkname}]}),
                       "-n -o LABEL": labels},
             "sfdisk": {"-J": json.dumps({"partitiontable": {"label": label, "partitions": [
-                {"start": s, "size": n} for s, n in partitions]}})},
+                {"node": f"/dev/sda{i}", "start": s, "size": n} for i, (s, n) in enumerate(partitions, 1)]}})},
             "blockdev": {"": str(size)},
         }
         (self.tmp / "answers.json").write_text(json.dumps(self.answers))
@@ -64,21 +64,29 @@ class DataSetupTests(unittest.TestCase):
         self.disk(medium="/dev/sda1", kind="part", pkname="sda")
         disk = self.setup.boot_disk()
         self.assertEqual(disk, "/dev/sda")
-        (boot_label, boot_start, boot_size, boot_nr), (label, start, size, number) = self.setup.plan(disk)
-        self.assertEqual((boot_label, boot_nr, label, number), ("dede-boot", 3, "dede-data", 4))
+        kind, ((boot_label, boot_start, boot_size), (label, start, size)) = self.setup.plan(disk)
+        self.assertEqual((kind, boot_label, label), ("dos", "dede-boot", "dede-data"))
         self.assertEqual(boot_start % 2048, 0)
         self.assertGreaterEqual(boot_start, 64 + 2278016)
         self.assertEqual(boot_size, 4 * GIB)
         self.assertEqual(start, boot_start + boot_size)
         self.assertEqual(start + size, 8 * GIB)
 
+    def test_gpt_keeps_room_for_the_backup_table(self):
+        self.disk(label="gpt")
+        kind, layout = self.setup.plan(self.setup.boot_disk())
+        self.assertEqual((kind, [label for label, _, _ in layout]), ("gpt", ["dede-boot", "dede-data"]))
+        _, start, size = layout[-1]
+        self.assertLessEqual(start + size, 8 * GIB - 34)
+        self.assertEqual((start + size) % 2048, 0)
+
     def test_without_room_for_updates_only_the_data_partition_is_planned(self):
         self.disk(size=2278080 + 3 * GIB)
-        (label, start, size, number), = self.setup.plan(self.setup.boot_disk())
-        self.assertEqual((label, number), ("dede-data", 3))
+        _, layout = self.setup.plan(self.setup.boot_disk())
+        self.assertEqual([label for label, _, _ in layout], ["dede-data"])
         self.disk(partitions=((64, 100), (200, 100), (2048, 2278016)))
-        (label, _, _, number), = self.setup.plan(self.setup.boot_disk())
-        self.assertEqual((label, number), ("dede-data", 4))
+        _, layout = self.setup.plan(self.setup.boot_disk())
+        self.assertEqual([label for label, _, _ in layout], ["dede-data"])
 
     def test_skips_cd_existing_partition_small_disk_and_other_tables(self):
         for kwargs, reason in (
@@ -86,7 +94,7 @@ class DataSetupTests(unittest.TestCase):
             ({"medium": "/dev/loop0", "kind": "loop"}, "image file"),
             ({"labels": "dede-data\n"}, "data partition"),
             ({"size": 2278080 + GIB // 2}, "not enough free space"),
-            ({"label": "gpt"}, "not supported"),
+            ({"label": "mac"}, "not supported"),
             ({"partitions": ((64, 100), (200, 100), (400, 100), (600, 100))}, "slot"),
         ):
             with self.subTest(kwargs=kwargs):
