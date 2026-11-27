@@ -487,7 +487,12 @@ jobs:
           text = p.read_text()
           document = json.loads(Path("/tmp/dede-image-workflow.json").read_text())
           jobs = document["jobs"]
-          assert set(jobs) == {"image", "report-failure"}, set(jobs)
+          assert set(jobs) == {"image", "release", "report-failure"}, set(jobs)
+          # Only the release job may write, and only for a requested version.
+          assert document["permissions"] == {"contents": "read"}
+          assert jobs["release"]["if"] == "inputs.release != ''", jobs["release"]["if"]
+          assert jobs["release"]["permissions"] == {"contents": "write"}
+          assert "permissions" not in jobs["image"]
           # Validate every embedded Bash step, not only the YAML structure.
           # This catches truncated grep conditions before an expensive ISO build.
           import subprocess
