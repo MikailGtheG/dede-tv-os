@@ -378,7 +378,7 @@ def run(guest):
     return steps
 
 
-PERSISTENCE_STEPS = 9
+PERSISTENCE_STEPS = 15
 IN_USE = "DEDE_DATA: nothing to do: data partition in use"
 
 
@@ -391,8 +391,8 @@ def run_persistence(guest):
         steps.append((step, ok))
         return ok
 
-    if not check("data-partition-created", serial_contains("DEDE_DATA: data partition /dev/",
-                                                           "created", timeout=900)):
+    if not check("data-partition-created", serial_contains("DEDE_DATA: created dede-boot /dev/",
+                                                           "dede-data /dev/", timeout=900)):
         return steps
     if not check("data-partition-in-use", wait_serial_count(IN_USE, 1, timeout=900)):
         return steps
@@ -418,7 +418,91 @@ def run_persistence(guest):
     check("kept-language-turkish", wait_serial_count("DEDE_CI_LANGUAGE: Turkish", turkish + 2,
                                                      timeout=180))
     check("kept-admin-password", kept_admin_password())
+    # Signed A/B update from the console, then a broken one whose TV never
+    # comes up: the TV must come back on the working image by itself.
+    offer_update("good")
+    check("update-found", update_offered("0.0.1-ci.update"))
+    check("update-runs-slot-a", install_update()
+          and serial_contains("DEDE_UPDATE: running slot a (0.0.1-ci.update)", timeout=1500)
+          and serial_contains("DEDE_UPDATE: slot a confirmed", timeout=900))
+    check("update-kept-channel-02", wait_for(guest, "update-02", "atv", timeout=FIRST_PICTURE_TIMEOUT,
+                                             interval=6) and kept_admin_password())
+    offer_update("broken")
+    check("broken-update-found", update_offered("0.0.2-ci.broken"))
+    check("broken-update-rolled-back", install_update()
+          and serial_contains("DEDE_UPDATE: slot b is not healthy", timeout=1500)
+          and serial_contains("DEDE_UPDATE: update b:0.0.2-ci.broken did not start", "slot a",
+                              timeout=900))
+    check("rollback-tv-plays-02", wait_for(guest, "rollback-02", "atv", timeout=FIRST_PICTURE_TIMEOUT,
+                                           interval=6) and update_failure_reported())
     return steps
+
+
+def offer_update(kind):
+    """Point the runner's update server (DEDE_E2E_UPDATES/www) at a release."""
+    root = Path(os.environ.get("DEDE_E2E_UPDATES", "/nonexistent"))
+    for name in ("release.json", "release.json.sig", "dede.iso"):
+        link = root / "www" / name
+        temp = root / "www" / f".{name}"
+        temp.unlink(missing_ok=True)
+        temp.symlink_to(root / kind / name)
+        os.replace(temp, link)
+    print(f"DEDE_E2E: updates: offering {kind}", flush=True)
+
+
+def update_page():
+    session = admin_session()
+    if session is None:
+        return None, ""
+    return session, admin_request("GET", "/updates", cookies=session[0])[2]
+
+
+def update_offered(version):
+    """Check from the console until it offers `version` (with an install button)."""
+    try:
+        session, _ = update_page()
+        if session is None:
+            return False
+        admin_request("POST", "/updates/check", {"csrf": session[1]}, session[0])
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            page = admin_request("GET", "/updates", cookies=session[0])[2]
+            if version in page and "/updates/install" in page:
+                print(f"DEDE_E2E: updates: {version} offered", flush=True)
+                return True
+            time.sleep(4)
+    except OSError as exc:
+        print(f"DEDE_E2E: updates: {type(exc).__name__}: {exc}", flush=True)
+        return False
+    print(f"DEDE_E2E: updates: {version} not offered", flush=True)
+    serial_contains("DEDE_UPDATE:", timeout=0)
+    return False
+
+
+def install_update():
+    """Only the request: the TV downloads and restarts on its own."""
+    try:
+        session, _ = update_page()
+        if session is None:
+            return False
+        status, location, _, _ = admin_request("POST", "/updates/install", {"csrf": session[1]},
+                                               session[0])
+    except OSError as exc:
+        print(f"DEDE_E2E: updates: {type(exc).__name__}: {exc}", flush=True)
+        return False
+    ok = status == 303 and location == "/updates?n=started"
+    print(f"DEDE_E2E: updates: install requested {'PASS' if ok else 'FAIL'} ({status} {location})", flush=True)
+    return ok
+
+
+def update_failure_reported():
+    try:
+        _, page = update_page()
+    except OSError:
+        return False
+    ok = 'role="alert"' in page
+    print(f"DEDE_E2E: updates: rollback reported {'PASS' if ok else 'FAIL'}", flush=True)
+    return ok
 
 
 def request_reboot(session):

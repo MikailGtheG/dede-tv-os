@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+# Signed A/B updates (dede-update): daily check, confirmation at every start.
+chmod 0755 /usr/local/libexec/dede-update
+test -s /usr/share/dede-tv/version
+ls /usr/share/dede-tv/update-keys/*.pem >/dev/null
+mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/timers.target.wants
+ln -sfn ../dede-update-confirm.service \
+  /etc/systemd/system/multi-user.target.wants/dede-update-confirm.service
+ln -sfn ../dede-update-check.timer \
+  /etc/systemd/system/timers.target.wants/dede-update-check.timer

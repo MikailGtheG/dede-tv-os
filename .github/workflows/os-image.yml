@@ -30,7 +30,7 @@ jobs:
     # Privileged build chroots are ONLY allowed from owner-controlled branch.
     # Never run this job with pull_request or pull_request_target events.
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 170
     container:
       image: debian:trixie
       options: --privileged
@@ -45,7 +45,7 @@ jobs:
             live-build debootstrap xorriso squashfs-tools \
             grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common \
             ca-certificates python3 qemu-system-x86 ovmf \
-            ffmpeg fonts-dejavu-core wireguard-tools iproute2
+            ffmpeg fonts-dejavu-core wireguard-tools iproute2 openssl
       - name: Fetch Tailscale from its signed package repository
         shell: bash
         env:
@@ -103,7 +103,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: dbb9861d6d5cd2dfe68ec8ffa3a246704e4db9b7
+          DEDE_WEB_SHA: d12e645780202a9c84e566880ca119560915f78f
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
@@ -861,11 +861,17 @@ jobs:
           mkdir -p config/includes.chroot/etc/dede-tv
           printf 'M3U_URL=http://10.0.2.2:8089/dede-test-faults.m3u\n' \
             > config/includes.chroot/etc/dede-tv/iptv.conf
+          # CI-only update source: signed test releases served by the runner.
+          printf 'UPDATE_URL=http://10.0.2.2:8090/\n' \
+            > config/includes.chroot/etc/dede-tv/update-source.conf
       - name: Build prototype live ISO
         shell: bash
         run: |
           set -euo pipefail
           cd build
+          # Version shown in the console and compared by dede-update.
+          if [ -n "$DEDE_RELEASE" ]; then version="${DEDE_RELEASE#v}"; else version="0.0.0-ci.$GITHUB_RUN_NUMBER"; fi
+          printf '%s\n' "$version" > config/includes.chroot/usr/share/dede-tv/version
           sh build-image.sh
           test -s live-image-amd64.hybrid.iso
           sha256sum live-image-amd64.hybrid.iso > SHA256SUMS
@@ -894,16 +900,18 @@ jobs:
           # Both firmware modes are mandatory for the target hardware profile.
           grep -Eq -- '(^|[[:space:]])-b[[:space:]]' iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
-          # Unattended boot (BIOS and UEFI menus time out) and the data partition.
+          # Unattended boot (both menus time out) and the data partition.
           xorriso -osirrox on -indev live-image-amd64.hybrid.iso \
             -extract /isolinux/isolinux.cfg /tmp/dede-isolinux.cfg \
-            -extract /boot/grub/config.cfg /tmp/dede-grub-config.cfg \
             -extract /isolinux/live.cfg /tmp/dede-isolinux-live.cfg \
+            -extract /boot/grub/config.cfg /tmp/dede-grub-config.cfg \
             -extract /boot/grub/grub.cfg /tmp/dede-grub.cfg
-          grep -qx 'timeout 10' /tmp/dede-isolinux.cfg
           grep -qx 'set timeout=1' /tmp/dede-grub-config.cfg
-          grep -q 'persistence persistence-label=dede-data' /tmp/dede-isolinux-live.cfg
+          grep -qx 'timeout 10' /tmp/dede-isolinux.cfg
+          # UEFI starts an installed update (A/B) before the factory image.
+          grep -q 'dede_start a' /tmp/dede-grub.cfg
           grep -q 'persistence persistence-label=dede-data' /tmp/dede-grub.cfg
+          grep -q 'persistence persistence-label=dede-data' /tmp/dede-isolinux-live.cfg
           echo "ISO integrity, SquashFS and BIOS/UEFI El Torito entries verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Boot smoke test (BIOS and UEFI)
         if: env.DEDE_RELEASE == ''
@@ -1202,14 +1210,48 @@ jobs:
           done
           # Settings must survive restarts: the ISO written to a disk (as on
           # an SSD or USB stick) adds its data partition on the first start.
-          echo "Testing persistence on a disk (UEFI)"
+          echo "Testing persistence and updates on a disk (UEFI)"
           disk="$RUNNER_TEMP/dede-disk.img"
           cp "$iso" "$disk"
-          truncate -s 6G "$disk"
+          truncate -s 8G "$disk"
+          # Signed test releases (tests/keys, trusted by test images only):
+          # "good" is this image again, "broken" a copy whose TV never comes up
+          # (Kodi masked): dede-update confirm gives up after 10 minutes and
+          # restarts, and GRUB then starts the confirmed slot again.
+          # The E2E points www/ at one of them.
+          updates="$RUNNER_TEMP/dede-updates"
+          mkdir -p "$updates/good" "$updates/broken" "$updates/www"
+          ln -s "$iso" "$updates/good/dede.iso"
+          xorriso -osirrox on -indev "$iso" -extract /boot/grub/grub.cfg "$updates/grub-broken.cfg"
+          sed -i 's|boot=live |boot=live systemd.mask=dede-kodi.service |' "$updates/grub-broken.cfg"
+          grep -q 'systemd.mask=dede-kodi.service' "$updates/grub-broken.cfg"
+          xorriso -indev "$iso" -outdev "$updates/broken/dede.iso" -boot_image any replay \
+            -map "$updates/grub-broken.cfg" /boot/grub/grub.cfg -commit
+          for kind in good broken; do
+            case $kind in good) v=0.0.1-ci.update ;; broken) v=0.0.2-ci.broken ;; esac
+            python3 - "$updates/$kind" "$v" <<'PY'
+          import hashlib, json, os, sys
+          folder, version = sys.argv[1:]
+          path = os.path.join(folder, "dede.iso")
+          digest = hashlib.sha256()
+          with open(path, "rb") as image:
+              for chunk in iter(lambda: image.read(1 << 20), b""):
+                  digest.update(chunk)
+          manifest = {"version": version, "iso": "dede.iso", "sha256": digest.hexdigest(),
+                      "size": os.path.getsize(path)}
+          open(os.path.join(folder, "release.json"), "w").write(json.dumps(manifest))
+          PY
+            openssl pkeyutl -sign -inkey "$GITHUB_WORKSPACE/tests/keys/dede-update-test.key" -rawin \
+              -in "$updates/$kind/release.json" -out "$updates/$kind/release.json.sig"
+          done
+          python3 -m http.server 8090 --bind 127.0.0.1 --directory "$updates/www" \
+            > boot-logs/update-server.log 2>&1 &
+          update_server=$!
+          trap 'kill "$iptv_server" "$update_server" 2>/dev/null || true' EXIT
           cp "$vars" boot-logs/disk-vars.fd
           monitor="$PWD/boot-logs/disk.monitor.sock"
           set +e
-          timeout --signal=TERM --kill-after=5s 2400s \
+          timeout --signal=TERM --kill-after=5s 3600s \
             qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
             -display none -vga std \
             -audiodev none,id=ci_audio \
@@ -1226,6 +1268,7 @@ jobs:
           qemu_pid=$!
           DEDE_E2E_SERIAL_LOG="$PWD/boot-logs/disk.log" \
           DEDE_E2E_ADMIN_URL="http://127.0.0.1:18083" \
+          DEDE_E2E_UPDATES="$updates" \
           python3 "$GITHUB_WORKSPACE/tests/qemu_tv_e2e.py" "$monitor" \
             "$PWD/boot-logs/e2e-disk" disk persistence | tee boot-logs/disk-e2e.log
           e2e_status=${PIPESTATUS[0]}
@@ -1238,7 +1281,8 @@ jobs:
           PY
           wait "$qemu_pid"
           set -e
-          grep -aE 'DEDE_DATA:|DEDE_CI_LANGUAGE: [A-Z]' boot-logs/disk.log || true
+          grep -aE 'DEDE_DATA:|DEDE_UPDATE:|DEDE_CI_LANGUAGE: [A-Z]' boot-logs/disk.log || true
+          tail -20 boot-logs/update-server.log || true
           if [ "$e2e_status" -ne 0 ]; then
             echo "disk: persistence acceptance failed" >&2
             grep -aE 'DEDE_E2E(_SUMMARY)?:' boot-logs/disk-e2e.log >&2 || true
@@ -1440,6 +1484,15 @@ jobs:
             usr/bin/wg-quick \
             etc/systemd/system/wg-quick@dede0.service.d/dede.conf \
             usr/local/libexec/dede-data-setup \
+            usr/local/libexec/dede-update \
+            usr/local/lib/dede-tv/dede_grubenv.py \
+            usr/share/dede-tv/version \
+            usr/share/dede-tv/update-keys/dede-test.pem \
+            etc/systemd/system/dede-update-check.service \
+            etc/systemd/system/dede-update-install.service \
+            etc/systemd/system/multi-user.target.wants/dede-update-confirm.service \
+            etc/systemd/system/timers.target.wants/dede-update-check.timer \
+            usr/bin/openssl \
             etc/systemd/system/dede-data-setup.service \
             etc/systemd/system/multi-user.target.wants/dede-data-setup.service \
             usr/sbin/sfdisk \
@@ -1539,13 +1592,16 @@ jobs:
 
   release:
     # Installable test image: the same tree as the tested CI image, without
-    # the CI-only fixtures. Not yet signed; checksums only.
+    # the CI-only fixtures.
     needs: image
     if: inputs.release != ''
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tests/keys
       - uses: actions/download-artifact@v4
         with:
           name: dede-tv-debian13-prototype-iso
@@ -1562,15 +1618,29 @@ jobs:
           name="dede-tv-$TAG-amd64.iso"
           mv live-image-amd64.hybrid.iso "$name"
           sha256sum "$name" > SHA256SUMS
+          # Update manifest for dede-update. Until the production key exists
+          # it is signed with the test key that test images trust.
+          python3 - "$name" "${TAG#v}" <<'PY'
+          import hashlib, json, os, sys
+          name, version = sys.argv[1:]
+          digest = hashlib.sha256()
+          with open(name, "rb") as image:
+              for chunk in iter(lambda: image.read(1 << 20), b""):
+                  digest.update(chunk)
+          json.dump({"version": version, "iso": name, "sha256": digest.hexdigest(),
+                     "size": os.path.getsize(name)}, open("release.json", "w"))
+          PY
+          openssl pkeyutl -sign -inkey "$GITHUB_WORKSPACE/tests/keys/dede-update-test.key" -rawin \
+            -in release.json -out release.json.sig
           cat > notes.md <<EOF
           Test image of Dede TV OS ($GITHUB_SHA), built by run $GITHUB_RUN_ID.
 
-          Not signed yet: check the download against SHA256SUMS.
+          Signed with the TEST key only (release.json.sig); check the download against SHA256SUMS.
           Install: write the ISO with balenaEtcher (or dd) to the SSD or USB stick of
           the TV computer and start from it. The first start adds the data partition
           on the same disk and restarts once.
           EOF
-          gh release create "$TAG" "$name" SHA256SUMS --repo "$GITHUB_REPOSITORY" \
+          gh release create "$TAG" "$name" SHA256SUMS release.json release.json.sig --repo "$GITHUB_REPOSITORY" \
             --prerelease --title "Dede TV $TAG (Testimage)" --notes-file notes.md \
             --target "$GITHUB_SHA"
 

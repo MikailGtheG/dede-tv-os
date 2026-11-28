@@ -1,0 +1,22 @@
+[Unit]
+Description=Dede TV update: install
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/dede-update install
+StandardOutput=journal+console
+TimeoutStartSec=3600
+# Needs the network and, for install, to remount the dede-boot partition.
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native

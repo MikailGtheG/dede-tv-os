@@ -1,0 +1,16 @@
+[Unit]
+Description=Confirm a started update once the TV is healthy (else roll back)
+After=dede-kodi.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/dede-update confirm
+StandardOutput=journal+console
+TimeoutStartSec=900
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+
+[Install]
+WantedBy=multi-user.target

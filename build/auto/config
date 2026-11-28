@@ -1,6 +1,7 @@
 #!/bin/sh
 # Debian 13 (trixie) exploratory live image; target: amd64 UEFI + BIOS.
-# Not an A/B production image. No custom Kodi fork is shipped in this phase.
+# UEFI (GRUB) starts A/B updates from the dede-boot partition (hook 0600);
+# BIOS (isolinux) always starts this image. No custom Kodi fork.
 set -eu
 lb config noauto \
   --mode debian \
@@ -11,5 +12,5 @@ lb config noauto \
   --archive-areas "main non-free-firmware" \
   --apt-recommends false \
   --checksums sha256 \
-  --bootappend-live "boot=live components persistence persistence-label=dede-data quiet loglevel=3 vt.global_cursor_default=0 console=tty0 console=ttyS0,115200n8" \
+  --bootappend-live "boot=live components persistence persistence-label=dede-data panic=10 quiet loglevel=3 vt.global_cursor_default=0 console=tty0 console=ttyS0,115200n8" \
   "${@}"
