@@ -1,20 +1,39 @@
-name: probe live-build bootloaders
+name: probe GPT data partitions
 on:
   push:
     branches: [dev/claude/probe-live-build]
 permissions:
   contents: read
+  actions: read
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    container: debian:trixie
     steps:
-      - run: |
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends live-build grub-common >/dev/null
-          lb config --help 2>&1 | grep -i -A2 'boot' | head -60
-          grep -n -i 'bootloader' /usr/share/live/build/functions/defaults.sh | head -40
-          ls /usr/lib/live/build/ | grep -i -E 'grub|syslinux|loader'
-          echo ===== binary_grub-pc; cat /usr/lib/live/build/binary_grub-pc | head -400
-          echo ===== binary_loadlin_or_bootloaders; ls /usr/share/live/build/bootloaders/grub-pc
-          grub-editenv --help | head -5
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -x
+          gh run download 46082326577 -R "$GITHUB_REPOSITORY" -n dede-tv-debian13-prototype-iso -D iso
+          img=iso/live-image-amd64.hybrid.iso
+          cp "$img" disk.img && truncate -s 8G disk.img
+          sfdisk -d disk.img
+          dev=$(sudo losetup -P --show -f disk.img)
+          lsblk -o NAME,TYPE,FSTYPE,LABEL,START,SIZE "$dev"
+          sudo blkid "$dev" "${dev}"p* || true
+          # live-boot mounts the medium; try the whole disk like it may
+          sudo mkdir -p /mnt/medium
+          sudo mount -o ro "$dev" /mnt/medium && echo "whole disk mounted"
+          findmnt /mnt/medium
+          sudo sfdisk --relocate gpt-bak-std --no-reread --no-tell-kernel "$dev"; echo relocate=$?
+          sudo sfdisk -d "$dev"
+          echo 'start=2281472, size=8388608, type=L' | sudo sfdisk --append --no-reread --no-tell-kernel "$dev"; echo append=$?
+          sudo sfdisk -J "$dev"
+          sudo partx --add --nr 4 "$dev"; echo partx=$?
+          lsblk "$dev"
+          sudo mkfs.ext4 -q -F -L dede-boot "${dev}p4"; echo mkfs1=$?
+          sudo mkfs.ext4 -q -F -F -L dede-boot "${dev}p4"; echo mkfs2=$?
+          sudo mkdir -p /mnt/p4 && sudo mount "${dev}p4" /mnt/p4; echo mountp4=$?
+          sudo umount /mnt/p4 /mnt/medium
+          # the same with partition 1 as medium
+          sudo mount -o ro "${dev}p1" /mnt/medium && echo "p1 mounted"
+          sudo mount "${dev}p4" /mnt/p4; echo mountp4_with_p1=$?
