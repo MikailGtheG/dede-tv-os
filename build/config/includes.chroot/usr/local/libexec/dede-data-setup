@@ -84,40 +84,35 @@ def existing():
 
 
 def plan(disk):
-    """(table label, [(label, start, size)]) of the new partitions (sectors), or Skip."""
+    """[(label, start, size, number)] of the new partitions (sectors), or Skip."""
     table = json.loads(run("sfdisk", "-J", disk))["partitiontable"]
-    kind = table.get("label")
-    if kind not in ("dos", "gpt"):
-        raise Skip(f"partition table {kind!r} not supported")
+    if table.get("label") != "dos":
+        raise Skip(f"partition table {table.get('label')!r} not supported")
     parts = table.get("partitions", [])
-    slots = 4 - len(parts) if kind == "dos" else 128 - len(parts)
-    if slots < 1:
+    if len(parts) >= 4:
         raise Skip("no free partition slot")
     size = int(run("blockdev", "--getsz", disk))
-    # GPT keeps a backup table in the last 33 sectors of the disk.
-    limit = (size - 34 if kind == "gpt" else size) // 2048 * 2048
     end = max(p["start"] + p["size"] for p in parts) if parts else 0
     start = -(-end // 2048) * 2048
-    if (limit - start) * SECTOR < MIN_FREE:
+    if (size - start) * SECTOR < MIN_FREE:
         raise Skip("not enough free space behind the image")
+    number = len(parts) + 1
     boot = BOOT_SIZE // SECTOR
-    if slots >= 2 and (limit - start - boot) * SECTOR >= MIN_FREE:
-        return kind, [(BOOT_LABEL, start, boot), (LABEL, start + boot, limit - start - boot)]
-    return kind, [(LABEL, start, limit - start)]
+    if number <= 3 and (size - start - boot) * SECTOR >= MIN_FREE:
+        return [(BOOT_LABEL, start, boot, number), (LABEL, start + boot, size - start - boot, number + 1)]
+    return [(LABEL, start, size - start, number)]
 
 
-def add_partition(disk, label, start, size):
+def add_partition(disk, label, start, size, number):
     # The image's own partitions stay mounted, so the kernel learns only the
     # new one (partx) instead of re-reading the whole table.
     run("sfdisk", "--append", "--no-reread", "--no-tell-kernel", disk,
-        data=f"start={start}, size={size}, type=L\n")
-    table = json.loads(run("sfdisk", "-J", disk))["partitiontable"]
-    node = next(p["node"] for p in table["partitions"] if p["start"] == start)
-    number = re.search(r"(\d+)$", node).group(1)
-    run("partx", "--add", "--nr", number, disk)
+        data=f"start={start}, size={size}, type=83\n")
+    partition = f"{disk}{'p' if disk[-1].isdigit() else ''}{number}"
+    run("partx", "--add", "--nr", str(number), disk)
     run("udevadm", "settle")
-    run("mkfs.ext4", "-q", "-F", "-L", label, node)
-    return node
+    run("mkfs.ext4", "-q", "-F", "-L", label, partition)
+    return partition
 
 
 def create_boot(partition):
@@ -153,7 +148,7 @@ def main():
             raise Skip("image without data partition support")
         existing()
         disk = boot_disk()
-        kind, layout = plan(disk)
+        layout = plan(disk)
     except Skip as reason:
         log(f"nothing to do: {reason}")
         return 0
@@ -162,12 +157,8 @@ def main():
         return 0
     try:
         made = []
-        if kind == "gpt":
-            # A written ISO has its backup GPT at the end of the image, not
-            # of the disk; move it there before adding partitions.
-            run("sfdisk", "--relocate", "gpt-bak-std", "--no-reread", "--no-tell-kernel", disk)
-        for label, start, size in layout:
-            partition = add_partition(disk, label, start, size)
+        for label, start, size, number in layout:
+            partition = add_partition(disk, label, start, size, number)
             if label == BOOT_LABEL:
                 create_boot(partition)
             else:

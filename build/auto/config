@@ -1,13 +1,13 @@
 #!/bin/sh
 # Debian 13 (trixie) exploratory live image; target: amd64 UEFI + BIOS.
-# A/B updates boot from the dede-boot partition (hook 0600). No custom Kodi fork.
+# UEFI (GRUB) starts A/B updates from the dede-boot partition (hook 0600);
+# BIOS (isolinux) always starts this image. No custom Kodi fork.
 set -eu
 lb config noauto \
   --mode debian \
   --distribution trixie \
   --architectures amd64 \
   --binary-images iso-hybrid \
-  --bootloaders "grub-pc grub-efi" \
   --debian-installer none \
   --archive-areas "main non-free-firmware" \
   --apt-recommends false \

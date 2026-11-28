@@ -391,8 +391,8 @@ def run_persistence(guest):
         steps.append((step, ok))
         return ok
 
-    if not check("data-partition-created", serial_contains("DEDE_DATA: data partition /dev/",
-                                                           "created", timeout=900)):
+    if not check("data-partition-created", serial_contains("DEDE_DATA: created dede-boot /dev/",
+                                                           "dede-data /dev/", timeout=900)):
         return steps
     if not check("data-partition-in-use", wait_serial_count(IN_USE, 1, timeout=900)):
         return steps

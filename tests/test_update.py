@@ -70,7 +70,7 @@ class UpdateTests(unittest.TestCase):
                "DEDE_VERSION_FILE": str(self.tmp / "version"), "DEDE_CMDLINE": str(self.cmdline),
                "DEDE_BOOT_DIR": str(self.boot), "DEDE_UPDATE_REBOOT": str(fake),
                "DEDE_SYSTEMCTL": str(systemctl), "DEDE_HEALTH_WAIT": "0.2",
-               "DEDE_HEALTH_DEADLINE": "1"}
+               "DEDE_HEALTH_DEADLINE": "1", "DEDE_EFI_DIR": str(self.tmp)}
         old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.addCleanup(lambda: [os.environ.pop(k) if v is None else os.environ.__setitem__(k, v)
@@ -169,6 +169,16 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse((self.boot / "images/a.iso").exists())
         self.assertEqual(dede_grubenv.read(self.boot / "grubenv"), {})
         self.assertFalse(self.reboots.exists())
+
+    def test_bios_machines_do_not_install(self):
+        self.publish("0.2.0")
+        os.environ["DEDE_EFI_DIR"] = str(self.tmp / "no-efi")
+        loader = importlib.machinery.SourceFileLoader("dede_update_bios", str(SCRIPT))
+        bios = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(bios)
+        self.assertEqual(bios.install(), 1)
+        self.assertEqual(self.state()["UPDATE_MESSAGE"], "needs-uefi")
+        self.assertFalse((self.boot / "images/a.iso").exists())
 
     def test_factory_start_after_failed_update_is_reported(self):
         self.publish("0.2.0")

@@ -103,7 +103,7 @@ jobs:
       - name: Build pinned administration console
         shell: bash
         env:
-          DEDE_WEB_SHA: c1710b942684f2726771dacf88cf45daf1d85040
+          DEDE_WEB_SHA: d12e645780202a9c84e566880ca119560915f78f
         run: |
           set -euo pipefail
           mkdir -p /tmp/dede-web-source
@@ -900,17 +900,18 @@ jobs:
           # Both firmware modes are mandatory for the target hardware profile.
           grep -Eq -- '(^|[[:space:]])-b[[:space:]]' iso-boot-options.txt
           grep -Eq -- '(^|[[:space:]])-e[[:space:]]' iso-boot-options.txt
-          # Unattended boot (the GRUB menu times out) and the data partition.
+          # Unattended boot (both menus time out) and the data partition.
           xorriso -osirrox on -indev live-image-amd64.hybrid.iso \
+            -extract /isolinux/isolinux.cfg /tmp/dede-isolinux.cfg \
+            -extract /isolinux/live.cfg /tmp/dede-isolinux-live.cfg \
             -extract /boot/grub/config.cfg /tmp/dede-grub-config.cfg \
             -extract /boot/grub/grub.cfg /tmp/dede-grub.cfg
-          grep -m1 -- '-b ' iso-boot-options.txt || cat iso-boot-options.txt
           grep -qx 'set timeout=1' /tmp/dede-grub-config.cfg
-          # GRUB also for BIOS (El Torito boot image from GRUB, not isolinux),
-          # with the A/B start of an installed update.
-          grep -Eq -- '(^|[[:space:]])-b[[:space:]]+[^[:space:]]*grub' iso-boot-options.txt
+          grep -qx 'timeout 10' /tmp/dede-isolinux.cfg
+          # UEFI starts an installed update (A/B) before the factory image.
           grep -q 'dede_start a' /tmp/dede-grub.cfg
           grep -q 'persistence persistence-label=dede-data' /tmp/dede-grub.cfg
+          grep -q 'persistence persistence-label=dede-data' /tmp/dede-isolinux-live.cfg
           echo "ISO integrity, SquashFS and BIOS/UEFI El Torito entries verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Boot smoke test (BIOS and UEFI)
         if: env.DEDE_RELEASE == ''

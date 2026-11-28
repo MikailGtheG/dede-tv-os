@@ -14,7 +14,8 @@ releases API or, for tests, a folder URL holding those files
 
 The images live on the dede-boot partition as images/a.iso and images/b.iso.
 GRUB (hook 0600) starts `dede_try` once and otherwise `dede_good`; without
-both, the factory image on the disk starts. The state for the console is
+both, the factory image on the disk starts. Only UEFI starts updates: BIOS
+machines boot isolinux, which cannot read that partition. The state for the console is
 /etc/dede-tv/update.conf (no secrets).
 """
 import hashlib
@@ -50,6 +51,8 @@ MAX_ISO = 3 << 30
 VERSION = re.compile(r"v?(\d{1,4})\.(\d{1,4})\.(\d{1,4})(?:-([0-9A-Za-z.-]{1,40}))?")
 FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.iso")
 SLOTS = ("a", "b")
+# Only GRUB (UEFI) starts the update slots; isolinux (BIOS) cannot.
+EFI = Path(os.environ.get("DEDE_EFI_DIR", "/sys/firmware/efi"))
 
 
 class Failed(Exception):
@@ -322,6 +325,8 @@ def download(url, target, manifest):
 
 def install():
     try:
+        if not EFI.exists():
+            raise Failed("needs-uefi")
         with BootPartition() as boot:
             current = current_version(boot)
             write_state(state="downloading", current=current, progress="0", message="")
