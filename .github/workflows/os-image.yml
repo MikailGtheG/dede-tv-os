@@ -1215,12 +1215,17 @@ jobs:
           cp "$iso" "$disk"
           truncate -s 8G "$disk"
           # Signed test releases (tests/keys, trusted by test images only):
-          # "good" is this image again, "broken" a truncated copy that GRUB
-          # cannot start. The E2E points www/ at one of them.
+          # "good" is this image again, "broken" a copy whose system does not
+          # start (missing init: the initramfs panics, panic=10 restarts).
+          # The E2E points www/ at one of them.
           updates="$RUNNER_TEMP/dede-updates"
           mkdir -p "$updates/good" "$updates/broken" "$updates/www"
           ln -s "$iso" "$updates/good/dede.iso"
-          head -c 4194304 "$iso" > "$updates/broken/dede.iso"
+          xorriso -osirrox on -indev "$iso" -extract /boot/grub/grub.cfg "$updates/grub-broken.cfg"
+          sed -i 's|boot=live |boot=live init=/dede-broken-init |' "$updates/grub-broken.cfg"
+          grep -q 'init=/dede-broken-init' "$updates/grub-broken.cfg"
+          xorriso -indev "$iso" -outdev "$updates/broken/dede.iso" -boot_image any replay \
+            -map "$updates/grub-broken.cfg" /boot/grub/grub.cfg -commit
           for kind in good broken; do
             case $kind in good) v=0.0.1-ci.update ;; broken) v=0.0.2-ci.broken ;; esac
             python3 - "$updates/$kind" "$v" <<'PY'

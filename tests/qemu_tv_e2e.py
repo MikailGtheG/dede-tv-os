@@ -418,8 +418,8 @@ def run_persistence(guest):
     check("kept-language-turkish", wait_serial_count("DEDE_CI_LANGUAGE: Turkish", turkish + 2,
                                                      timeout=180))
     check("kept-admin-password", kept_admin_password())
-    # Signed A/B update from the console, then a broken one that GRUB cannot
-    # start: the TV must come back on the working image by itself.
+    # Signed A/B update from the console, then a broken one whose system
+    # does not start: the TV must come back on the working image by itself.
     offer_update("good")
     check("update-found", update_offered("0.0.1-ci.update"))
     check("update-runs-slot-a", install_update()
