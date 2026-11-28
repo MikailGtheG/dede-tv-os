@@ -30,7 +30,7 @@ jobs:
     # Privileged build chroots are ONLY allowed from owner-controlled branch.
     # Never run this job with pull_request or pull_request_target events.
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 170
     container:
       image: debian:trixie
       options: --privileged
@@ -1215,15 +1215,16 @@ jobs:
           cp "$iso" "$disk"
           truncate -s 8G "$disk"
           # Signed test releases (tests/keys, trusted by test images only):
-          # "good" is this image again, "broken" a copy whose system does not
-          # start (missing init: the initramfs panics, panic=10 restarts).
+          # "good" is this image again, "broken" a copy whose TV never comes up
+          # (Kodi masked): dede-update confirm gives up after 10 minutes and
+          # restarts, and GRUB then starts the confirmed slot again.
           # The E2E points www/ at one of them.
           updates="$RUNNER_TEMP/dede-updates"
           mkdir -p "$updates/good" "$updates/broken" "$updates/www"
           ln -s "$iso" "$updates/good/dede.iso"
           xorriso -osirrox on -indev "$iso" -extract /boot/grub/grub.cfg "$updates/grub-broken.cfg"
-          sed -i 's|boot=live |boot=live init=/dede-broken-init |' "$updates/grub-broken.cfg"
-          grep -q 'init=/dede-broken-init' "$updates/grub-broken.cfg"
+          sed -i 's|boot=live |boot=live systemd.mask=dede-kodi.service |' "$updates/grub-broken.cfg"
+          grep -q 'systemd.mask=dede-kodi.service' "$updates/grub-broken.cfg"
           xorriso -indev "$iso" -outdev "$updates/broken/dede.iso" -boot_image any replay \
             -map "$updates/grub-broken.cfg" /boot/grub/grub.cfg -commit
           for kind in good broken; do
@@ -1250,7 +1251,7 @@ jobs:
           cp "$vars" boot-logs/disk-vars.fd
           monitor="$PWD/boot-logs/disk.monitor.sock"
           set +e
-          timeout --signal=TERM --kill-after=5s 3000s \
+          timeout --signal=TERM --kill-after=5s 3600s \
             qemu-system-x86_64 -accel tcg -machine q35 -m 2048 -smp 2 \
             -display none -vga std \
             -audiodev none,id=ci_audio \
